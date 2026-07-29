@@ -939,6 +939,30 @@ def generate_boundary_candidates(
                             "core_mask": core_mask_bits,
                             "area": area,
                             "polygon": transformed.copy(),
+                            "corners": sum(
+                                1 << corner_id
+                                for corner_id, corner in enumerate(
+                                    (
+                                        (0.0, 0.0),
+                                        (width - 1.0, 0.0),
+                                        (
+                                            width - 1.0,
+                                            height - 1.0,
+                                        ),
+                                        (0.0, height - 1.0),
+                                    )
+                                )
+                                if float(
+                                    np.min(
+                                        np.linalg.norm(
+                                            transformed
+                                            - np.asarray(corner),
+                                            axis=1,
+                                        )
+                                    )
+                                )
+                                <= 3.5
+                            ),
                         }
                     )
     return candidates
@@ -975,7 +999,7 @@ def search_rectangle_ratio(
         )
 
     piece_order = sorted(
-        range(4),
+        range(len(polygons)),
         key=lambda piece_id: len(candidate_sets[piece_id]),
     )
     rectangle_area = width * height
@@ -985,6 +1009,8 @@ def search_rectangle_ratio(
             "core_union": 0,
             "covered": 0,
             "overlap": 0,
+            "corners": 0,
+            "proximity": 0.0,
             "layout": {},
         }
     ]
@@ -1019,6 +1045,21 @@ def search_rectangle_ratio(
 
                 layout = dict(state["layout"])
                 layout[piece_id] = candidate["polygon"]
+                proximity = state["proximity"]
+                for old_polygon in state["layout"].values():
+                    distance = float(
+                        np.min(
+                            np.linalg.norm(
+                                candidate["polygon"][:, None, :]
+                                - old_polygon[None, :, :],
+                                axis=2,
+                            )
+                        )
+                    )
+                    proximity += max(
+                        0.0,
+                        24.0 - distance,
+                    ) ** 2
                 next_states.append(
                     {
                         "union": state["union"] | candidate["mask"],
@@ -1035,6 +1076,11 @@ def search_rectangle_ratio(
                             state["overlap"]
                             + interior_overlap
                         ),
+                        "corners": (
+                            state["corners"]
+                            | candidate["corners"]
+                        ),
+                        "proximity": proximity,
                         "layout": layout,
                     }
                 )
@@ -1045,7 +1091,11 @@ def search_rectangle_ratio(
         next_states.sort(
             key=lambda state: (
                 state["covered"]
-                - state["overlap"] * 8
+                - state["overlap"] * 12
+                + state["corners"].bit_count()
+                * rectangle_area
+                * 0.18
+                + state["proximity"] * 2.5
             ),
             reverse=True,
         )
@@ -1055,13 +1105,20 @@ def search_rectangle_ratio(
         states,
         key=lambda state: (
             state["covered"]
-            - state["overlap"] * 8
+            - state["overlap"] * 12
+            + state["corners"].bit_count()
+            * rectangle_area
+            * 0.18
+            + state["proximity"] * 2.5
         ),
         reverse=True,
     )
     best_state = None
     for state in ranked_states:
-        if layout_can_be_separated(state["layout"]):
+        if (
+            state["corners"] == 15
+            and not layout_has_interior_overlap(state["layout"])
+        ):
             best_state = state
             break
     if best_state is None:
@@ -1082,14 +1139,16 @@ def search_rectangle_ratio(
 
 def solve_rectangle_by_cover(
     pieces,
-    max_piece_overlap_ratio=0.30,
+    max_piece_overlap_ratio=0.012,
+    target_fill_ratio=0.80,
+    position_step=4,
 ):
     """
     自动搜索允许范围内的目标矩形比例，再用位图束搜索拼接。
 
     返回的solve_info用于把求解坐标恢复为相机像素坐标。
     """
-    if len(pieces) != 4:
+    if not 2 <= len(pieces) <= 4:
         return None, 0.0, 0, None
 
     polygons = [
@@ -1104,7 +1163,7 @@ def solve_rectangle_by_cover(
         return None, 0.0, 0, None
 
     solve_scale = math.sqrt(
-        6000.0 * 0.98 / total_piece_area
+        6000.0 * target_fill_ratio / total_piece_area
     )
     polygons = [
         polygon * solve_scale
@@ -1132,13 +1191,16 @@ def solve_rectangle_by_cover(
     for index, ratio in enumerate(ratios):
         beam_width = 16
         if index == 0:
-            beam_width = 120
+            beam_width = 240
         elif index <= 3:
-            beam_width = 60
+            beam_width = 120
+        else:
+            beam_width = 40
         result = search_rectangle_ratio(
             polygons,
             ratio,
             beam_width,
+            position_step=position_step,
             max_piece_overlap_ratio=max_piece_overlap_ratio,
         )
         total_evaluated += result[4]
@@ -1165,6 +1227,7 @@ def solve_rectangle_by_cover(
                     "coverage": result[2],
                     "overlap": result[3],
                     "forced": False,
+                    "boundary_safe": True,
                 },
             )
         if (
@@ -1176,7 +1239,8 @@ def solve_rectangle_by_cover(
             refined_result = search_rectangle_ratio(
                 polygons,
                 best_ratio,
-                120,
+                240,
+                position_step=position_step,
                 max_piece_overlap_ratio=max_piece_overlap_ratio,
             )
             refined_ratios.add(best_ratio)
@@ -1196,6 +1260,7 @@ def solve_rectangle_by_cover(
                         "coverage": refined_result[2],
                         "overlap": refined_result[3],
                         "forced": False,
+                        "boundary_safe": True,
                     },
                 )
 
@@ -1206,7 +1271,8 @@ def solve_rectangle_by_cover(
         refined_result = search_rectangle_ratio(
             polygons,
             best_ratio,
-            120,
+            240,
+            position_step=position_step,
             max_piece_overlap_ratio=max_piece_overlap_ratio,
         )
         total_evaluated += refined_result[4]
@@ -1225,6 +1291,7 @@ def solve_rectangle_by_cover(
                     "coverage": refined_result[2],
                     "overlap": refined_result[3],
                     "forced": False,
+                    "boundary_safe": True,
                 },
             )
 
@@ -1242,6 +1309,7 @@ def solve_rectangle_by_cover(
             "coverage": best_result[2],
             "overlap": best_result[3],
             "forced": True,
+            "boundary_safe": True,
         },
     )
 
@@ -1446,21 +1514,48 @@ def prepare_layout_for_execution(layout, solve_info, roi):
     gap_pixels = max(1.0, roi[3] / 297.0) * solve_info[
         "solve_scale"
     ]
-    if strict_report["valid"] and not solve_info.get(
+    if solve_info.get("boundary_safe", False):
+        frame_report = evaluate_layout(
+            layout,
+            edge_tolerance_ratio=0.035,
+        )
+        if (
+            frame_report["corners"] < 0.99
+            or frame_report["outer_piece_ratio"] < 0.999
+            or layout_has_interior_overlap(layout)
+        ):
+            return None, {
+                "valid": False,
+                "stage": "rectangle-frame",
+                "reasons": ["four-right-corners"],
+            }
+        prepared = frame_report["normalized_layout"]
+        mode = "RECT"
+        repair_info = {
+            "valid": True,
+            "stage": "rectangle-frame",
+            "reasons": [],
+            "maximum_move": 0.0,
+            "gap": {
+                "applied": False,
+                "reason": "preserve-four-corners",
+            },
+        }
+    elif strict_report["valid"] and not solve_info.get(
         "forced",
         False,
     ):
-        prepared, gap_info = add_adjacency_gap(
-            layout,
-            gap_pixels,
-        )
+        prepared = strict_report["normalized_layout"]
         mode = "EXACT"
         repair_info = {
             "valid": True,
             "stage": "strict",
             "reasons": [],
             "maximum_move": 0.0,
-            "gap": gap_info,
+            "gap": {
+                "applied": False,
+                "reason": "preserve-four-corners",
+            },
         }
     else:
         prepared, repair_info = repair_layout_for_competition(
@@ -1481,6 +1576,16 @@ def prepare_layout_for_execution(layout, solve_info, roi):
         prepared,
         edge_tolerance_ratio=0.05,
     )
+    if (
+        final_report["corners"] < 0.99
+        or final_report["outer_piece_ratio"] < 0.999
+        or layout_has_interior_overlap(prepared)
+    ):
+        return None, {
+            "valid": False,
+            "stage": "final-rectangle",
+            "reasons": ["four-right-corners"],
+        }
     solve_info["width"] = final_report["width"]
     solve_info["height"] = final_report["height"]
     solve_info["ratio"] = (
@@ -2183,7 +2288,7 @@ def solve_piece_set_worker(pieces, roi):
         % [piece["points"] for piece in pieces],
         flush=True,
     )
-    if len(pieces) == 4:
+    if 2 <= len(pieces) <= 4:
         (
             candidate_layout,
             candidate_score,
@@ -2192,6 +2297,37 @@ def solve_piece_set_worker(pieces, roi):
         ) = solve_rectangle_by_cover(pieces)
         solver_nodes += candidate_nodes
         solved_score = max(solved_score, candidate_score)
+        if candidate_layout is None:
+            (
+                candidate_layout,
+                candidate_score,
+                candidate_nodes,
+                candidate_info,
+            ) = solve_rectangle_by_cover(
+                pieces,
+                position_step=3,
+            )
+            solver_nodes += candidate_nodes
+            solved_score = max(
+                solved_score,
+                candidate_score,
+            )
+        if candidate_layout is None:
+            (
+                candidate_layout,
+                candidate_score,
+                candidate_nodes,
+                candidate_info,
+            ) = solve_rectangle_by_cover(
+                pieces,
+                target_fill_ratio=0.72,
+                position_step=4,
+            )
+            solver_nodes += candidate_nodes
+            solved_score = max(
+                solved_score,
+                candidate_score,
+            )
         if candidate_layout is not None:
             candidate_info = dict(candidate_info)
             candidate_info["method"] = "legacy-cover"
@@ -2654,14 +2790,21 @@ def main():
                                     move["place"][1],
                                 )
                         solver_message = (
-                            "SOLVE BEST G1.0"
+                            "SOLVE RECT"
                             if solve_info.get("execution_mode")
-                            == "ASSUME"
+                            == "RECT"
                             else (
-                                "SOLVE COVER G1.0"
-                                if solve_info["method"]
-                                == "legacy-cover"
-                                else "SOLVE HYB G1.0"
+                                "SOLVE BEST G1.0"
+                                if solve_info.get(
+                                    "execution_mode"
+                                )
+                                == "ASSUME"
+                                else (
+                                    "SOLVE COVER G1.0"
+                                    if solve_info["method"]
+                                    == "legacy-cover"
+                                    else "SOLVE HYB G1.0"
+                                )
                             )
                         )
                         print_motion_plan(motion_plan)

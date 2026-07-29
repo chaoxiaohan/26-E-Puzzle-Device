@@ -2,7 +2,12 @@ import concurrent.futures
 import multiprocessing
 import time
 
-from main import build_stable_piece_set, solve_piece_set_worker
+from layout_constraints import evaluate_layout
+from main import (
+    build_stable_piece_set,
+    layout_has_interior_overlap,
+    solve_piece_set_worker,
+)
 
 
 def make_piece(points):
@@ -61,6 +66,19 @@ def main():
         ).result(timeout=15)
     if result["layout"] is None:
         raise RuntimeError("worker did not solve rectangle")
+    report = evaluate_layout(
+        result["layout"],
+        edge_tolerance_ratio=0.035,
+    )
+    if (
+        report["corners"] < 0.99
+        or report["outer_piece_ratio"] < 0.999
+        or layout_has_interior_overlap(result["layout"])
+    ):
+        raise RuntimeError(
+            "worker output is not a four-corner rectangle: %s"
+            % report
+        )
     print(
         "ASYNC_OK pieces=%d nodes=%d time=%.1fms"
         % (
