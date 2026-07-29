@@ -126,6 +126,26 @@ print(
     % repair_info["maximum_move"]
 )
 
+forced, forced_info = repair_layout_for_competition(
+    overlap_layout,
+    gap_pixels=1.0,
+    force=True,
+)
+if forced is None or not forced_info["forced"]:
+    raise RuntimeError("forced repair failed: %s" % forced_info)
+forced_report = evaluate_layout(
+    forced,
+    edge_tolerance_ratio=0.05,
+)
+if forced_report["overlap"] > 0.001:
+    raise RuntimeError(
+        "forced repair kept overlap: %s" % forced_report
+    )
+print(
+    "guaranteed-input repair OK move=%.2f"
+    % forced_info["maximum_move"]
+)
+
 l_shape = {
     0: polygon([(0, 0), (120, 0), (120, 72), (0, 72)]),
     1: polygon([(0, 72), (60, 72), (60, 144), (0, 144)]),

@@ -555,6 +555,7 @@ def _separating_push(first, second):
 def repair_layout_for_competition(
     layout,
     gap_pixels=1.0,
+    force=False,
 ):
     report = evaluate_layout(
         layout,
@@ -575,7 +576,7 @@ def repair_layout_for_competition(
         candidate_reasons.append("disconnected")
     if not 0.98 <= report["aspect"] <= 2.45:
         candidate_reasons.append("aspect")
-    if candidate_reasons:
+    if candidate_reasons and not force:
         return None, {
             "valid": False,
             "stage": "candidate",
@@ -660,23 +661,30 @@ def repair_layout_for_competition(
     final_reasons = []
     if not collision_free:
         final_reasons.append("overlap")
-    if maximum_move > max(6.0, diagonal * 0.10):
+    if (
+        not force
+        and maximum_move > max(6.0, diagonal * 0.10)
+    ):
         final_reasons.append("excessive-move")
-    if final_report["coverage"] < 0.86:
+    if not force and final_report["coverage"] < 0.86:
         final_reasons.append("coverage")
-    if final_report["corners"] < 0.50:
+    if not force and final_report["corners"] < 0.50:
         final_reasons.append("corners")
-    if final_report["outer_piece_ratio"] < 0.75:
+    if not force and final_report["outer_piece_ratio"] < 0.75:
         final_reasons.append("piece-outer-edge")
-    if final_report["internal_match"] < 0.30:
+    if not force and final_report["internal_match"] < 0.30:
         final_reasons.append("internal-edges")
-    if final_report["components"] > len(piece_ids):
+    if (
+        not force
+        and final_report["components"] > len(piece_ids)
+    ):
         final_reasons.append("components")
 
     return (
         moved if not final_reasons else None,
         {
             "valid": not final_reasons,
+            "forced": bool(force),
             "stage": "execution",
             "reasons": final_reasons,
             "maximum_move": maximum_move,

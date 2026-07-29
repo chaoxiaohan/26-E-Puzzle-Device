@@ -16,7 +16,8 @@ from layout_constraints import (
     evaluate_layout,
     repair_layout_for_competition,
 )
-from puzzle_solver import solve_camera_rectangle
+from puzzle_solver import normalize_layout, solve_camera_rectangle
+from solver_v2 import solve as solve_edge_layout
 
 
 def longest_edge(points):
@@ -1227,11 +1228,21 @@ def solve_rectangle_by_cover(
                 },
             )
 
+    if best_result is None or best_result[0] is None:
+        return None, 0.0, total_evaluated, None
     return (
-        None,
-        best_result[1] if best_result is not None else 0.0,
+        best_result[0],
+        best_result[1],
         total_evaluated,
-        None,
+        {
+            "ratio": best_ratio,
+            "solve_scale": solve_scale,
+            "width": best_result[5],
+            "height": best_result[6],
+            "coverage": best_result[2],
+            "overlap": best_result[3],
+            "forced": True,
+        },
     )
 
 
@@ -1435,7 +1446,10 @@ def prepare_layout_for_execution(layout, solve_info, roi):
     gap_pixels = max(1.0, roi[3] / 297.0) * solve_info[
         "solve_scale"
     ]
-    if strict_report["valid"]:
+    if strict_report["valid"] and not solve_info.get(
+        "forced",
+        False,
+    ):
         prepared, gap_info = add_adjacency_gap(
             layout,
             gap_pixels,
@@ -1452,8 +1466,13 @@ def prepare_layout_for_execution(layout, solve_info, roi):
         prepared, repair_info = repair_layout_for_competition(
             layout,
             gap_pixels=gap_pixels,
+            force=solve_info.get("forced", False),
         )
-        mode = "EXEC"
+        mode = (
+            "ASSUME"
+            if solve_info.get("forced", False)
+            else "EXEC"
+        )
 
     if prepared is None or layout_has_interior_overlap(prepared):
         return None, repair_info
@@ -2176,6 +2195,7 @@ def solve_piece_set_worker(pieces, roi):
         if candidate_layout is not None:
             candidate_info = dict(candidate_info)
             candidate_info["method"] = "legacy-cover"
+            measured_layout = candidate_layout
             candidate_layout, repair_info = (
                 prepare_layout_for_execution(
                     candidate_layout,
@@ -2188,7 +2208,15 @@ def solve_piece_set_worker(pieces, roi):
                     "SOLVE_REJECT legacy %s" % repair_info,
                     flush=True,
                 )
-            else:
+                candidate_info["forced"] = True
+                candidate_layout, repair_info = (
+                    prepare_layout_for_execution(
+                        measured_layout,
+                        candidate_info,
+                        roi,
+                    )
+                )
+            if candidate_layout is not None:
                 solved_layout = candidate_layout
                 solved_score = candidate_score
                 solve_info = candidate_info
@@ -2209,6 +2237,58 @@ def solve_piece_set_worker(pieces, roi):
         solved_score = max(solved_score, candidate_score)
         if candidate_layout is not None:
             candidate_info = dict(candidate_info)
+            measured_layout = candidate_layout
+            candidate_layout, repair_info = (
+                prepare_layout_for_execution(
+                    candidate_layout,
+                    candidate_info,
+                    roi,
+                )
+            )
+            if candidate_layout is None:
+                candidate_info["forced"] = True
+                candidate_layout, repair_info = (
+                    prepare_layout_for_execution(
+                        measured_layout,
+                        candidate_info,
+                        roi,
+                    )
+                )
+        if candidate_layout is not None:
+            solved_layout = candidate_layout
+            solved_score = candidate_score
+            solve_info = candidate_info
+
+    if solved_layout is None:
+        (
+            candidate_layout,
+            candidate_score,
+            candidate_nodes,
+            candidate_metrics,
+        ) = solve_edge_layout(
+            pieces,
+            time_limit_s=2.2,
+            return_best=True,
+        )
+        solver_nodes += candidate_nodes
+        solved_score = max(solved_score, candidate_score)
+        if candidate_layout is not None:
+            candidate_layout = normalize_layout(
+                candidate_layout
+            )
+            candidate_info = {
+                "solve_scale": 1.0,
+                "width": candidate_metrics["width"],
+                "height": candidate_metrics["height"],
+                "ratio": (
+                    candidate_metrics["width"]
+                    / max(1.0, candidate_metrics["height"])
+                ),
+                "coverage": candidate_metrics["coverage"],
+                "overlap": candidate_metrics["overlap"],
+                "method": "edge-assumed",
+                "forced": True,
+            }
             candidate_layout, repair_info = (
                 prepare_layout_for_execution(
                     candidate_layout,
@@ -2574,10 +2654,15 @@ def main():
                                     move["place"][1],
                                 )
                         solver_message = (
-                            "SOLVE COVER G1.0"
-                            if solve_info["method"]
-                            == "legacy-cover"
-                            else "SOLVE HYB G1.0"
+                            "SOLVE BEST G1.0"
+                            if solve_info.get("execution_mode")
+                            == "ASSUME"
+                            else (
+                                "SOLVE COVER G1.0"
+                                if solve_info["method"]
+                                == "legacy-cover"
+                                else "SOLVE HYB G1.0"
+                            )
                         )
                         print_motion_plan(motion_plan)
                 print(
