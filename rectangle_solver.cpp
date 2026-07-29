@@ -30,6 +30,7 @@ struct State {
     int overlap = 0;
     int corners = 0;
     double proximity = 0.0;
+    double contact = 0.0;
     double rank = 0.0;
 };
 
@@ -461,6 +462,93 @@ static double vertex_proximity(
     return amount * amount;
 }
 
+static double internal_edge_match(
+    const std::vector<Point>& first,
+    const std::vector<Point>& second
+) {
+    double best = 0.0;
+    for (std::size_t first_id = 0; first_id < first.size(); ++first_id) {
+        const Point& first_start = first[first_id];
+        const Point& first_end = first[(first_id + 1) % first.size()];
+        double first_dx = first_end.x - first_start.x;
+        double first_dy = first_end.y - first_start.y;
+        double first_length = std::hypot(first_dx, first_dy);
+        if (first_length < 5.0) {
+            continue;
+        }
+        double unit_x = first_dx / first_length;
+        double unit_y = first_dy / first_length;
+
+        for (
+            std::size_t second_id = 0;
+            second_id < second.size();
+            ++second_id
+        ) {
+            const Point& second_start = second[second_id];
+            const Point& second_end = second[
+                (second_id + 1) % second.size()
+            ];
+            double second_dx = second_end.x - second_start.x;
+            double second_dy = second_end.y - second_start.y;
+            double second_length = std::hypot(second_dx, second_dy);
+            if (second_length < 5.0) {
+                continue;
+            }
+            double parallel = std::abs(
+                unit_x * second_dx / second_length
+                + unit_y * second_dy / second_length
+            );
+            if (parallel < 0.985) {
+                continue;
+            }
+            double start_offset = std::abs(
+                unit_x * (second_start.y - first_start.y)
+                - unit_y * (second_start.x - first_start.x)
+            );
+            double end_offset = std::abs(
+                unit_x * (second_end.y - first_start.y)
+                - unit_y * (second_end.x - first_start.x)
+            );
+            double line_offset = (start_offset + end_offset) * 0.5;
+            if (line_offset > 3.5) {
+                continue;
+            }
+            double projected_start = (
+                (second_start.x - first_start.x) * unit_x
+                + (second_start.y - first_start.y) * unit_y
+            );
+            double projected_end = (
+                (second_end.x - first_start.x) * unit_x
+                + (second_end.y - first_start.y) * unit_y
+            );
+            double overlap = (
+                std::min(
+                    first_length,
+                    std::max(projected_start, projected_end)
+                )
+                - std::max(
+                    0.0,
+                    std::min(projected_start, projected_end)
+                )
+            );
+            if (overlap <= 4.0) {
+                continue;
+            }
+            double length_similarity = (
+                std::min(first_length, second_length)
+                / std::max(first_length, second_length)
+            );
+            best = std::max(
+                best,
+                overlap
+                * length_similarity
+                * (1.0 - line_offset / 3.5)
+            );
+        }
+    }
+    return best;
+}
+
 struct SearchResult {
     bool valid = false;
     std::vector<std::vector<Point>> layout;
@@ -591,6 +679,7 @@ static SearchResult search_ratio(
                 int overlap = state.overlap + interior_overlap;
                 int corners = state.corners | candidate.corners;
                 double proximity = state.proximity;
+                double contact = state.contact;
                 for (
                     int old_piece_id = 0;
                     old_piece_id < int(polygons.size());
@@ -598,6 +687,12 @@ static SearchResult search_ratio(
                 ) {
                     int old_candidate_id = state.choices[old_piece_id];
                     if (old_candidate_id >= 0) {
+                        contact += internal_edge_match(
+                            candidate.polygon,
+                            candidate_sets[old_piece_id][
+                                old_candidate_id
+                            ].polygon
+                        );
                         proximity += vertex_proximity(
                             candidate.polygon,
                             candidate_sets[old_piece_id][
@@ -613,6 +708,7 @@ static SearchResult search_ratio(
                     * pixel_count
                     * 0.18
                     + proximity * 2.5
+                    + contact * 35.0
                 );
                 if (
                     best_states.size() >= 240
@@ -640,6 +736,7 @@ static SearchResult search_ratio(
                 next.overlap = overlap;
                 next.corners = corners;
                 next.proximity = proximity;
+                next.contact = contact;
                 next.rank = rank;
                 best_states.push(std::move(next));
                 if (best_states.size() > 240) {
@@ -681,7 +778,18 @@ static SearchResult search_ratio(
     }
     result.coverage = double(best->covered) / pixel_count;
     result.overlap = double(best->overlap) / pixel_count;
-    result.score = result.coverage - result.overlap * 2.0;
+    double edge_score = (
+        best->contact
+        / (
+            std::sqrt(double(pixel_count))
+            * std::max(1.0, double(polygons.size() - 1))
+        )
+    );
+    result.score = (
+        result.coverage
+        - result.overlap * 2.0
+        + std::min(1.0, edge_score) * 0.18
+    );
     result.width = width;
     result.height = height;
     return result;
