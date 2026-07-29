@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 
+import concurrent.futures
+import itertools
 import json
 import math
+import multiprocessing
 import os
 import time
 
@@ -2012,6 +2015,224 @@ def save_capture(
     return timestamp
 
 
+def align_polygon_points(reference, points):
+    reference = np.asarray(reference, dtype=np.float64)
+    points = np.asarray(points, dtype=np.float64)
+    best = points
+    best_error = float("inf")
+    for candidate in (points, points[::-1]):
+        for offset in range(len(candidate)):
+            aligned = np.roll(candidate, offset, axis=0)
+            error = float(
+                np.mean((aligned - reference) ** 2)
+            )
+            if error < best_error:
+                best = aligned
+                best_error = error
+    return best
+
+
+def build_stable_piece_set(recent_piece_sets):
+    """从最近的连续画面中生成一组中值轮廓，运动中或顶点跳变时不求解。"""
+    if not recent_piece_sets:
+        return None
+
+    reference = recent_piece_sets[-1][2]
+    if not 2 <= len(reference) <= 4:
+        return None
+
+    aligned_sets = []
+    for _, _, candidate in reversed(recent_piece_sets[-12:]):
+        if len(candidate) != len(reference):
+            continue
+        best_order = None
+        best_error = float("inf")
+        for order in itertools.permutations(range(len(candidate))):
+            distances = []
+            valid = True
+            for piece_id, candidate_id in enumerate(order):
+                if len(candidate[candidate_id]["points"]) != len(
+                    reference[piece_id]["points"]
+                ):
+                    valid = False
+                    break
+                first = np.asarray(
+                    reference[piece_id]["center"],
+                    dtype=np.float64,
+                )
+                second = np.asarray(
+                    candidate[candidate_id]["center"],
+                    dtype=np.float64,
+                )
+                distances.append(
+                    float(np.linalg.norm(first - second))
+                )
+            if not valid or max(distances, default=99.0) > 12.0:
+                continue
+            error = sum(distance * distance for distance in distances)
+            if error < best_error:
+                best_error = error
+                best_order = order
+        if best_order is not None:
+            aligned_sets.append(
+                [candidate[index] for index in best_order]
+            )
+        if len(aligned_sets) >= 8:
+            break
+
+    if len(aligned_sets) < 4:
+        return None
+
+    stable_pieces = []
+    for piece_id, reference_piece in enumerate(reference):
+        reference_points = np.asarray(
+            reference_piece["points"],
+            dtype=np.float64,
+        )
+        point_samples = []
+        area_samples = []
+        solidity_samples = []
+        for pieces in aligned_sets:
+            piece = pieces[piece_id]
+            point_samples.append(
+                align_polygon_points(
+                    reference_points,
+                    piece["points"],
+                )
+            )
+            area_samples.append(float(piece["area"]))
+            solidity_samples.append(float(piece["solidity"]))
+
+        points_array = np.asarray(point_samples)
+        median_points = np.median(points_array, axis=0)
+        point_spread = float(
+            np.max(
+                np.sqrt(
+                    np.mean(
+                        (points_array - median_points) ** 2,
+                        axis=2,
+                    )
+                )
+            )
+        )
+        median_area = float(np.median(area_samples))
+        area_spread = (
+            max(area_samples) - min(area_samples)
+        ) / max(1.0, median_area)
+        if point_spread > 3.5 or area_spread > 0.08:
+            return None
+
+        points = [
+            (int(round(point[0])), int(round(point[1])))
+            for point in median_points
+        ]
+        contour = np.asarray(points, dtype=np.float32)
+        moments = cv2.moments(contour)
+        if abs(moments["m00"]) < 1:
+            return None
+        center = (
+            int(round(moments["m10"] / moments["m00"])),
+            int(round(moments["m01"] / moments["m00"])),
+        )
+        piece_longest_edge, angle = longest_edge(points)
+        stable_pieces.append(
+            {
+                "points": points,
+                "center": center,
+                "area": median_area,
+                "angle": angle,
+                "longest_edge": piece_longest_edge,
+                "solidity": float(
+                    np.median(solidity_samples)
+                ),
+            }
+        )
+    return stable_pieces
+
+
+def solve_piece_set_worker(pieces, roi):
+    """在独立进程中求解，避免搜索期间停止读取摄像头。"""
+    cv2.setNumThreads(1)
+    started = time.monotonic()
+    solved_layout = None
+    solved_score = 0.0
+    solver_nodes = 0
+    solve_info = None
+
+    print(
+        "SOLVE_STABLE %s"
+        % [piece["points"] for piece in pieces],
+        flush=True,
+    )
+    if len(pieces) == 4:
+        (
+            candidate_layout,
+            candidate_score,
+            candidate_nodes,
+            candidate_info,
+        ) = solve_rectangle_by_cover(pieces)
+        solver_nodes += candidate_nodes
+        solved_score = max(solved_score, candidate_score)
+        if candidate_layout is not None:
+            candidate_info = dict(candidate_info)
+            candidate_info["method"] = "legacy-cover"
+            candidate_layout, repair_info = (
+                prepare_layout_for_execution(
+                    candidate_layout,
+                    candidate_info,
+                    roi,
+                )
+            )
+            if candidate_layout is None:
+                print(
+                    "SOLVE_REJECT legacy %s" % repair_info,
+                    flush=True,
+                )
+            else:
+                solved_layout = candidate_layout
+                solved_score = candidate_score
+                solve_info = candidate_info
+
+    if solved_layout is None:
+        (
+            candidate_layout,
+            candidate_score,
+            candidate_nodes,
+            candidate_info,
+        ) = solve_camera_rectangle(
+            pieces,
+            roi,
+            time_limit_s=2.2,
+            allow_relaxed=False,
+        )
+        solver_nodes += candidate_nodes
+        solved_score = max(solved_score, candidate_score)
+        if candidate_layout is not None:
+            candidate_info = dict(candidate_info)
+            candidate_layout, repair_info = (
+                prepare_layout_for_execution(
+                    candidate_layout,
+                    candidate_info,
+                    roi,
+                )
+            )
+        if candidate_layout is not None:
+            solved_layout = candidate_layout
+            solved_score = candidate_score
+            solve_info = candidate_info
+
+    return {
+        "layout": solved_layout,
+        "score": solved_score,
+        "nodes": solver_nodes,
+        "info": solve_info,
+        "pieces": pieces,
+        "elapsed_ms": (
+            time.monotonic() - started
+        ) * 1000.0,
+    }
+
+
 def main():
     portrait_mode = os.environ.get("PUZZLE_PORTRAIT", "0") == "1"
     capture_width = 1280
@@ -2065,6 +2286,12 @@ def main():
     solver_nodes = 0
     solver_ms = 0.0
     recent_piece_sets = []
+    solver_executor = concurrent.futures.ProcessPoolExecutor(
+        max_workers=1,
+        mp_context=multiprocessing.get_context("spawn"),
+    )
+    solver_future = None
+    solve_started_at = 0.0
     last_capture_name = ""
     last_capture_time = 0.0
     button_boxes = get_button_boxes(
@@ -2219,7 +2446,7 @@ def main():
         recent_piece_sets = [
             item
             for item in recent_piece_sets
-            if frame_time - item[0] <= 3.0
+            if frame_time - item[0] <= 0.8
         ]
         if 2 <= len(pieces) <= 4:
             recent_piece_sets.append(
@@ -2234,233 +2461,132 @@ def main():
             )
 
         if solve_requested:
-            solve_piece_sets = []
-            if recent_piece_sets:
-                current_count = (
-                    len(pieces)
-                    if 2 <= len(pieces) <= 4
-                    else len(recent_piece_sets[-1][2])
+            if solver_future is not None and not solver_future.done():
+                solver_message = "SOLVING"
+            else:
+                stable_pieces = build_stable_piece_set(
+                    recent_piece_sets
                 )
-                matching_entries = [
-                    item
-                    for item in recent_piece_sets
-                    if len(item[2]) == current_count
-                ]
-                median_areas = [
-                    float(
-                        np.median(
-                            [
-                                item[2][piece_id]["area"]
-                                for item in matching_entries
-                            ]
-                        )
+                if stable_pieces is None:
+                    solver_message = "HOLD STILL"
+                    solver_ms = 0.0
+                else:
+                    solved_display = None
+                    motion_plan = []
+                    solved_score = 0.0
+                    solved_ratio = 0.0
+                    solver_nodes = 0
+                    solver_message = "SOLVING"
+                    solve_started_at = time.monotonic()
+                    solver_future = solver_executor.submit(
+                        solve_piece_set_worker,
+                        stable_pieces,
+                        (
+                            roi_x,
+                            roi_y,
+                            roi_width,
+                            roi_height,
+                        ),
                     )
-                    for piece_id in range(current_count)
-                ]
-                stable_entry = min(
-                    matching_entries,
-                    key=lambda item: sum(
-                        abs(
-                            item[2][piece_id]["area"]
-                            - median_areas[piece_id]
-                        )
-                        / max(1.0, median_areas[piece_id])
-                        for piece_id in range(current_count)
-                    ),
-                )
-                largest_entry = max(
-                    matching_entries,
-                    key=lambda item: item[1],
-                )
-                representative_entries = [
-                    stable_entry,
-                    largest_entry,
-                    matching_entries[0],
-                    matching_entries[
-                        len(matching_entries) // 2
-                    ],
-                    matching_entries[-1],
-                ]
-                used_entries = set()
-                for entry in representative_entries:
-                    entry_id = id(entry)
-                    if entry_id in used_entries:
-                        continue
-                    used_entries.add(entry_id)
-                    solve_piece_sets.append(entry[2])
-            elif 2 <= len(pieces) <= 4:
-                solve_piece_sets.append(pieces)
 
-            solve_start = time.monotonic()
-            solved_layout = None
-            solved_score = 0.0
-            solver_nodes = 0
-            solve_info = None
-            solve_pieces = pieces
-            for candidate_index, candidate_pieces in enumerate(
-                solve_piece_sets,
-                1,
-            ):
+        if solver_future is not None and not solver_future.done():
+            solver_ms = (
+                time.monotonic() - solve_started_at
+            ) * 1000.0
+
+        if solver_future is not None and solver_future.done():
+            try:
+                result = solver_future.result()
+            except Exception as error:
                 print(
-                    "SOLVE_INPUT %d %s"
-                    % (
-                        candidate_index,
-                        [
-                            piece["points"]
-                            for piece in candidate_pieces
-                        ],
-                    ),
+                    "SOLVE_ERROR %r" % error,
                     flush=True,
                 )
-                if len(candidate_pieces) != 4:
-                    continue
-                (
-                    candidate_layout,
-                    candidate_score,
-                    candidate_nodes,
-                    candidate_info,
-                ) = solve_rectangle_by_cover(
-                    candidate_pieces
-                )
-                solver_nodes += candidate_nodes
-                solved_score = max(
-                    solved_score,
-                    candidate_score,
-                )
-                if candidate_layout is not None:
-                    candidate_info = dict(candidate_info)
-                    candidate_info["method"] = "legacy-cover"
-                    (
-                        candidate_layout,
-                        repair_info,
-                    ) = prepare_layout_for_execution(
-                        candidate_layout,
-                        candidate_info,
-                        (
-                            roi_x,
-                            roi_y,
-                            roi_width,
-                            roi_height,
-                        ),
-                    )
-                    if candidate_layout is None:
-                        print(
-                            "SOLVE_REJECT legacy %s"
-                            % repair_info,
-                            flush=True,
-                        )
-                        continue
-                    solved_layout = candidate_layout
-                    solved_score = candidate_score
-                    solve_info = candidate_info
-                    solve_pieces = candidate_pieces
-                    break
-            if solved_layout is None:
-                for candidate_pieces in solve_piece_sets[:2]:
-                    (
-                        candidate_layout,
-                        candidate_score,
-                        candidate_nodes,
-                        candidate_info,
-                    ) = solve_camera_rectangle(
-                        candidate_pieces,
-                        (
-                            roi_x,
-                            roi_y,
-                            roi_width,
-                            roi_height,
-                        ),
-                        time_limit_s=3.0,
-                        allow_relaxed=False,
-                    )
-                    solver_nodes += candidate_nodes
-                    solved_score = max(
-                        solved_score,
-                        candidate_score,
-                    )
-                    if candidate_layout is not None:
-                        candidate_info = dict(candidate_info)
-                        (
-                            candidate_layout,
-                            repair_info,
-                        ) = prepare_layout_for_execution(
-                            candidate_layout,
-                            candidate_info,
-                            (
-                                roi_x,
-                                roi_y,
-                                roi_width,
-                                roi_height,
-                            ),
-                        )
-                    if candidate_layout is not None:
-                        solved_layout = candidate_layout
-                        solved_score = candidate_score
-                        solve_info = candidate_info
-                        solve_pieces = candidate_pieces
-                        break
-            solver_ms = (time.monotonic() - solve_start) * 1000.0
-            if solved_layout is None:
+                result = None
+            solver_future = None
+
+            if result is None:
                 solved_display = None
                 solved_ratio = 0.0
                 motion_plan = []
-                solver_message = "NO RECT"
+                solver_message = "SOLVE ERROR"
             else:
-                solved_display = place_layout_on_paper(
-                    solved_layout,
-                    solve_info,
-                    (roi_x, roi_y, roi_width, roi_height),
-                )
-                solved_ratio = solve_info["ratio"]
-                safe_layout = {
-                    item["piece_id"]: np.array(
-                        item["points"],
-                        dtype=np.float32,
-                    )
-                    for item in solved_display
-                }
-                if layout_has_interior_overlap(safe_layout):
+                solved_layout = result["layout"]
+                solved_score = result["score"]
+                solver_nodes = result["nodes"]
+                solver_ms = result["elapsed_ms"]
+                solve_info = result["info"]
+                solve_pieces = result["pieces"]
+                if solved_layout is None:
                     solved_display = None
                     solved_ratio = 0.0
                     motion_plan = []
-                    solver_message = "NO SAFE"
+                    solver_message = "NO RECT"
                 else:
-                    motion_plan = build_motion_plan(
-                        solve_pieces,
-                        solved_display,
+                    solved_display = place_layout_on_paper(
+                        solved_layout,
+                        solve_info,
+                        (
+                            roi_x,
+                            roi_y,
+                            roi_width,
+                            roi_height,
+                        ),
                     )
-                    if portrait_mode:
-                        for move in motion_plan:
-                            move["pick"] = (
-                                move["pick"][0] + portrait_crop_x,
-                                move["pick"][1],
-                            )
-                            move["place"] = (
-                                move["place"][0] + portrait_crop_x,
-                                move["place"][1],
-                            )
-                    solver_message = (
-                        "SOLVE COVER G1.0"
-                        if solve_info["method"] == "legacy-cover"
-                        else "SOLVE HYB G1.0"
-                    )
-                    print_motion_plan(motion_plan)
-            print(
-                "%s score=%.3f ratio=%.3f tested=%d time=%.1fms method=%s"
-                % (
-                    solver_message,
-                    solved_score,
-                    solved_ratio,
-                    solver_nodes,
-                    solver_ms,
-                    (
-                        solve_info["method"]
-                        if solve_info is not None
-                        else "-"
+                    solved_ratio = solve_info["ratio"]
+                    safe_layout = {
+                        item["piece_id"]: np.array(
+                            item["points"],
+                            dtype=np.float32,
+                        )
+                        for item in solved_display
+                    }
+                    if layout_has_interior_overlap(safe_layout):
+                        solved_display = None
+                        solved_ratio = 0.0
+                        motion_plan = []
+                        solver_message = "NO SAFE"
+                    else:
+                        motion_plan = build_motion_plan(
+                            solve_pieces,
+                            solved_display,
+                        )
+                        if portrait_mode:
+                            for move in motion_plan:
+                                move["pick"] = (
+                                    move["pick"][0]
+                                    + portrait_crop_x,
+                                    move["pick"][1],
+                                )
+                                move["place"] = (
+                                    move["place"][0]
+                                    + portrait_crop_x,
+                                    move["place"][1],
+                                )
+                        solver_message = (
+                            "SOLVE COVER G1.0"
+                            if solve_info["method"]
+                            == "legacy-cover"
+                            else "SOLVE HYB G1.0"
+                        )
+                        print_motion_plan(motion_plan)
+                print(
+                    "%s score=%.3f ratio=%.3f tested=%d "
+                    "time=%.1fms method=%s"
+                    % (
+                        solver_message,
+                        solved_score,
+                        solved_ratio,
+                        solver_nodes,
+                        solver_ms,
+                        (
+                            solve_info["method"]
+                            if solve_info is not None
+                            else "-"
+                        ),
                     ),
-                ),
-                flush=True,
-            )
+                    flush=True,
+                )
 
         if tuning_open:
             show_binary_preview(
@@ -2571,6 +2697,11 @@ def main():
             last_print_time = now
 
         disp.show(img)
+
+    solver_executor.shutdown(
+        wait=False,
+        cancel_futures=True,
+    )
 
 
 if __name__ == "__main__":
