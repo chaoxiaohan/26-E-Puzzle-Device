@@ -6,6 +6,8 @@ cd /home/pi5/puzzle_card_detector
 g++ \
     -O3 \
     -march=native \
+    -flto \
+    -pthread \
     -std=c++17 \
     -fPIC \
     -shared \

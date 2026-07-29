@@ -1,10 +1,12 @@
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <queue>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -549,12 +551,274 @@ static double internal_edge_match(
     return best;
 }
 
+struct EdgeRecord {
+    int piece_id;
+    Point start;
+    Point end;
+    Point center;
+    double length;
+    int outer_side;
+    std::vector<std::pair<double, double>> matches;
+};
+
+struct DetailedQuality {
+    double internal = 0.0;
+    double boundary = 0.0;
+    double connected = 0.0;
+};
+
+static double interval_union_length(
+    std::vector<std::pair<double, double>> intervals
+) {
+    if (intervals.empty()) {
+        return 0.0;
+    }
+    std::sort(intervals.begin(), intervals.end());
+    double total = 0.0;
+    double start = intervals[0].first;
+    double end = intervals[0].second;
+    for (std::size_t index = 1; index < intervals.size(); ++index) {
+        if (intervals[index].first <= end + 0.5) {
+            end = std::max(end, intervals[index].second);
+        } else {
+            total += end - start;
+            start = intervals[index].first;
+            end = intervals[index].second;
+        }
+    }
+    return total + end - start;
+}
+
+static DetailedQuality evaluate_detailed_quality(
+    const std::vector<std::vector<Point>>& layout,
+    int width,
+    int height
+) {
+    std::vector<EdgeRecord> edges;
+    std::vector<std::pair<double, double>> boundary_intervals[4];
+    for (int piece_id = 0; piece_id < int(layout.size()); ++piece_id) {
+        const std::vector<Point>& polygon = layout[piece_id];
+        Point center{0.0, 0.0};
+        for (const Point& point : polygon) {
+            center.x += point.x;
+            center.y += point.y;
+        }
+        center.x /= polygon.size();
+        center.y /= polygon.size();
+        for (int edge_id = 0; edge_id < int(polygon.size()); ++edge_id) {
+            const Point& start = polygon[edge_id];
+            const Point& end = polygon[
+                (edge_id + 1) % polygon.size()
+            ];
+            double length = distance(start, end);
+            int outer_side = -1;
+            if (
+                std::max(std::abs(start.y), std::abs(end.y)) <= 3.5
+            ) {
+                outer_side = 0;
+                boundary_intervals[0].push_back({
+                    std::max(0.0, std::min(start.x, end.x)),
+                    std::min(double(width - 1), std::max(start.x, end.x)),
+                });
+            } else if (
+                std::max(
+                    std::abs(start.y - height + 1),
+                    std::abs(end.y - height + 1)
+                ) <= 3.5
+            ) {
+                outer_side = 1;
+                boundary_intervals[1].push_back({
+                    std::max(0.0, std::min(start.x, end.x)),
+                    std::min(double(width - 1), std::max(start.x, end.x)),
+                });
+            } else if (
+                std::max(std::abs(start.x), std::abs(end.x)) <= 3.5
+            ) {
+                outer_side = 2;
+                boundary_intervals[2].push_back({
+                    std::max(0.0, std::min(start.y, end.y)),
+                    std::min(double(height - 1), std::max(start.y, end.y)),
+                });
+            } else if (
+                std::max(
+                    std::abs(start.x - width + 1),
+                    std::abs(end.x - width + 1)
+                ) <= 3.5
+            ) {
+                outer_side = 3;
+                boundary_intervals[3].push_back({
+                    std::max(0.0, std::min(start.y, end.y)),
+                    std::min(double(height - 1), std::max(start.y, end.y)),
+                });
+            }
+            edges.push_back({
+                piece_id,
+                start,
+                end,
+                center,
+                length,
+                outer_side,
+                {},
+            });
+        }
+    }
+
+    unsigned int adjacency[4] = {0, 0, 0, 0};
+    for (std::size_t first_id = 0; first_id < edges.size(); ++first_id) {
+        EdgeRecord& first = edges[first_id];
+        if (first.outer_side >= 0 || first.length < 5.0) {
+            continue;
+        }
+        double first_unit_x = (
+            first.end.x - first.start.x
+        ) / first.length;
+        double first_unit_y = (
+            first.end.y - first.start.y
+        ) / first.length;
+        for (
+            std::size_t second_id = first_id + 1;
+            second_id < edges.size();
+            ++second_id
+        ) {
+            EdgeRecord& second = edges[second_id];
+            if (
+                second.outer_side >= 0
+                || second.piece_id == first.piece_id
+                || second.length < 5.0
+            ) {
+                continue;
+            }
+            double second_unit_x = (
+                second.end.x - second.start.x
+            ) / second.length;
+            double second_unit_y = (
+                second.end.y - second.start.y
+            ) / second.length;
+            double parallel = std::abs(
+                first_unit_x * second_unit_x
+                + first_unit_y * second_unit_y
+            );
+            if (parallel < 0.99) {
+                continue;
+            }
+            double start_offset = std::abs(
+                first_unit_x * (second.start.y - first.start.y)
+                - first_unit_y * (second.start.x - first.start.x)
+            );
+            double end_offset = std::abs(
+                first_unit_x * (second.end.y - first.start.y)
+                - first_unit_y * (second.end.x - first.start.x)
+            );
+            if ((start_offset + end_offset) * 0.5 > 3.5) {
+                continue;
+            }
+            if (
+                cross(first.start, first.end, first.center)
+                * cross(first.start, first.end, second.center) >= 0.0
+            ) {
+                continue;
+            }
+
+            double second_start_on_first = (
+                (second.start.x - first.start.x) * first_unit_x
+                + (second.start.y - first.start.y) * first_unit_y
+            );
+            double second_end_on_first = (
+                (second.end.x - first.start.x) * first_unit_x
+                + (second.end.y - first.start.y) * first_unit_y
+            );
+            double first_match_start = std::max(
+                0.0,
+                std::min(second_start_on_first, second_end_on_first)
+            );
+            double first_match_end = std::min(
+                first.length,
+                std::max(second_start_on_first, second_end_on_first)
+            );
+            if (first_match_end - first_match_start <= 4.0) {
+                continue;
+            }
+
+            double first_start_on_second = (
+                (first.start.x - second.start.x) * second_unit_x
+                + (first.start.y - second.start.y) * second_unit_y
+            );
+            double first_end_on_second = (
+                (first.end.x - second.start.x) * second_unit_x
+                + (first.end.y - second.start.y) * second_unit_y
+            );
+            double second_match_start = std::max(
+                0.0,
+                std::min(first_start_on_second, first_end_on_second)
+            );
+            double second_match_end = std::min(
+                second.length,
+                std::max(first_start_on_second, first_end_on_second)
+            );
+            first.matches.push_back({
+                first_match_start,
+                first_match_end,
+            });
+            second.matches.push_back({
+                second_match_start,
+                second_match_end,
+            });
+            adjacency[first.piece_id] |= 1u << second.piece_id;
+            adjacency[second.piece_id] |= 1u << first.piece_id;
+        }
+    }
+
+    double internal_total = 0.0;
+    double internal_matched = 0.0;
+    for (const EdgeRecord& edge : edges) {
+        if (edge.outer_side >= 0) {
+            continue;
+        }
+        internal_total += edge.length;
+        internal_matched += std::min(
+            edge.length,
+            interval_union_length(edge.matches)
+        );
+    }
+
+    unsigned int reached = 1;
+    for (int pass = 0; pass < int(layout.size()); ++pass) {
+        for (int piece_id = 0; piece_id < int(layout.size()); ++piece_id) {
+            if (reached & (1u << piece_id)) {
+                reached |= adjacency[piece_id];
+            }
+        }
+    }
+
+    DetailedQuality quality;
+    quality.internal = (
+        internal_total > 1.0
+        ? internal_matched / internal_total
+        : 1.0
+    );
+    quality.boundary = (
+        interval_union_length(boundary_intervals[0])
+        + interval_union_length(boundary_intervals[1])
+        + interval_union_length(boundary_intervals[2])
+        + interval_union_length(boundary_intervals[3])
+    ) / std::max(1.0, 2.0 * (width + height - 2));
+    quality.connected = (
+        reached == (1u << layout.size()) - 1
+        ? 1.0
+        : 0.0
+    );
+    return quality;
+}
+
 struct SearchResult {
     bool valid = false;
     std::vector<std::vector<Point>> layout;
     double score = 0.0;
     double coverage = 0.0;
     double overlap = 0.0;
+    double internal_quality = 0.0;
+    double boundary_quality = 0.0;
+    double connected = 0.0;
     int width = 0;
     int height = 0;
     std::uint64_t evaluated = 0;
@@ -584,6 +848,64 @@ static SearchResult search_ratio(
             return result;
         }
     }
+
+    std::vector<std::vector<std::vector<float>>> contact_cache(
+        polygons.size(),
+        std::vector<std::vector<float>>(polygons.size())
+    );
+    for (int first = 0; first < int(polygons.size()); ++first) {
+        for (
+            int second = first + 1;
+            second < int(polygons.size());
+            ++second
+        ) {
+            std::size_t count = (
+                candidate_sets[first].size()
+                * candidate_sets[second].size()
+            );
+            if (count <= 1200000) {
+                contact_cache[first][second].assign(count, -1.0f);
+            }
+        }
+    }
+    auto cached_contact = [&](
+        int first_piece,
+        int first_candidate,
+        int second_piece,
+        int second_candidate
+    ) {
+        if (first_piece > second_piece) {
+            std::swap(first_piece, second_piece);
+            std::swap(first_candidate, second_candidate);
+        }
+        std::vector<float>& cache = contact_cache[
+            first_piece
+        ][second_piece];
+        if (cache.empty()) {
+            return internal_edge_match(
+                candidate_sets[first_piece][first_candidate].polygon,
+                candidate_sets[second_piece][second_candidate].polygon
+            );
+        }
+        std::size_t index = (
+            std::size_t(first_candidate)
+            * candidate_sets[second_piece].size()
+            + second_candidate
+        );
+        if (cache[index] < 0.0f) {
+            cache[index] = float(
+                internal_edge_match(
+                    candidate_sets[first_piece][
+                        first_candidate
+                    ].polygon,
+                    candidate_sets[second_piece][
+                        second_candidate
+                    ].polygon
+                )
+            );
+        }
+        return double(cache[index]);
+    };
 
     std::vector<int> piece_order(polygons.size());
     for (int index = 0; index < int(polygons.size()); ++index) {
@@ -687,11 +1009,11 @@ static SearchResult search_ratio(
                 ) {
                     int old_candidate_id = state.choices[old_piece_id];
                     if (old_candidate_id >= 0) {
-                        contact += internal_edge_match(
-                            candidate.polygon,
-                            candidate_sets[old_piece_id][
-                                old_candidate_id
-                            ].polygon
+                        contact += cached_contact(
+                            piece_id,
+                            candidate_id,
+                            old_piece_id,
+                            old_candidate_id
                         );
                         proximity += vertex_proximity(
                             candidate.polygon,
@@ -756,13 +1078,40 @@ static SearchResult search_ratio(
     }
 
     const State* best = nullptr;
+    std::vector<std::vector<Point>> best_layout;
+    DetailedQuality best_quality;
+    double best_score = -std::numeric_limits<double>::infinity();
     for (const State& state : states) {
-        if (
-            state.corners == 15
-            && state.overlap == 0
-            && (best == nullptr || state.rank > best->rank)
+        if (state.corners != 15 || state.overlap != 0) {
+            continue;
+        }
+        std::vector<std::vector<Point>> layout(polygons.size());
+        for (
+            int piece_id = 0;
+            piece_id < int(polygons.size());
+            ++piece_id
         ) {
+            layout[piece_id] = candidate_sets[piece_id][
+                state.choices[piece_id]
+            ].polygon;
+        }
+        DetailedQuality quality = evaluate_detailed_quality(
+            layout,
+            width,
+            height
+        );
+        double coverage = double(state.covered) / pixel_count;
+        double score = (
+            coverage * 1.35
+            + quality.internal * 0.30
+            + quality.boundary * 0.10
+            + quality.connected * 0.06
+        );
+        if (score > best_score) {
             best = &state;
+            best_layout = std::move(layout);
+            best_quality = quality;
+            best_score = score;
         }
     }
     if (best == nullptr) {
@@ -770,26 +1119,13 @@ static SearchResult search_ratio(
     }
 
     result.valid = true;
-    result.layout.resize(polygons.size());
-    for (int piece_id = 0; piece_id < int(polygons.size()); ++piece_id) {
-        result.layout[piece_id] = candidate_sets[piece_id][
-            best->choices[piece_id]
-        ].polygon;
-    }
+    result.layout = std::move(best_layout);
     result.coverage = double(best->covered) / pixel_count;
     result.overlap = double(best->overlap) / pixel_count;
-    double edge_score = (
-        best->contact
-        / (
-            std::sqrt(double(pixel_count))
-            * std::max(1.0, double(polygons.size() - 1))
-        )
-    );
-    result.score = (
-        result.coverage
-        - result.overlap * 2.0
-        + std::min(1.0, edge_score) * 0.18
-    );
+    result.internal_quality = best_quality.internal;
+    result.boundary_quality = best_quality.boundary;
+    result.connected = best_quality.connected;
+    result.score = best_score - result.overlap * 2.0;
     result.width = width;
     result.height = height;
     return result;
@@ -867,23 +1203,42 @@ extern "C" int solve_rectangle_cpp(
         1.00,
         2.40,
     };
+    int ratio_count = int(sizeof(ratios) / sizeof(ratios[0]));
+    std::vector<SearchResult> results(ratio_count);
+    std::atomic<int> next_ratio{0};
+    auto run_ratios = [&]() {
+        while (true) {
+            int ratio_id = next_ratio.fetch_add(1);
+            if (ratio_id >= ratio_count) {
+                return;
+            }
+            results[ratio_id] = search_ratio(
+                polygons,
+                ratios[ratio_id],
+                position_step
+            );
+        }
+    };
+    std::vector<std::thread> workers;
+    for (int worker_id = 0; worker_id < 2; ++worker_id) {
+        workers.emplace_back(run_ratios);
+    }
+    for (std::thread& worker : workers) {
+        worker.join();
+    }
+
     SearchResult best;
-    for (double ratio : ratios) {
-        SearchResult current = search_ratio(
-            polygons,
-            ratio,
-            position_step
-        );
-        best.evaluated += current.evaluated;
+    std::uint64_t evaluated = 0;
+    for (SearchResult& current : results) {
+        evaluated += current.evaluated;
         if (
             current.valid
             && (!best.valid || current.score > best.score)
         ) {
-            std::uint64_t evaluated = best.evaluated;
             best = std::move(current);
-            best.evaluated = evaluated;
         }
     }
+    best.evaluated = evaluated;
     if (!best.valid) {
         output_info[7] = double(best.evaluated);
         return 0;
@@ -908,5 +1263,8 @@ extern "C" int solve_rectangle_cpp(
     );
     output_info[6] = solve_scale;
     output_info[7] = double(best.evaluated);
+    output_info[8] = best.internal_quality;
+    output_info[9] = best.boundary_quality;
+    output_info[10] = best.connected;
     return 1;
 }

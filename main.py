@@ -2289,10 +2289,12 @@ def solve_piece_set_worker(pieces, roi):
         % [piece["points"] for piece in pieces],
         flush=True,
     )
+    best_cpp_result = None
     for fill_ratio, position_step in (
+        (0.96, 4),
+        (0.88, 4),
         (0.80, 4),
         (0.80, 3),
-        (0.72, 4),
     ):
         (
             candidate_layout,
@@ -2317,10 +2319,23 @@ def solve_piece_set_worker(pieces, roi):
             )
         )
         if candidate_layout is not None:
-            solved_layout = candidate_layout
-            solved_score = candidate_score
-            solve_info = candidate_info
-            break
+            if (
+                best_cpp_result is None
+                or candidate_score > best_cpp_result[0]
+            ):
+                best_cpp_result = (
+                    candidate_score,
+                    candidate_layout,
+                    candidate_info,
+                )
+            if (
+                candidate_info.get("internal_quality", 0.0) >= 0.50
+                and candidate_info.get("boundary_quality", 0.0) >= 0.70
+            ):
+                break
+
+    if best_cpp_result is not None:
+        solved_score, solved_layout, solve_info = best_cpp_result
 
     if solved_layout is None and 2 <= len(pieces) <= 4:
         (
