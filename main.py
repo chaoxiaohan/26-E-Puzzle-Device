@@ -1518,17 +1518,30 @@ def prepare_layout_for_execution(layout, solve_info, roi):
     if solve_info.get("boundary_safe", False):
         frame_report = evaluate_layout(
             layout,
-            edge_tolerance_ratio=0.035,
+            edge_tolerance_ratio=0.05,
         )
         if (
             frame_report["corners"] < 0.99
             or frame_report["outer_piece_ratio"] < 0.999
-            or layout_has_interior_overlap(layout)
+            or frame_report["coverage"] < 0.86
+            or frame_report["internal_match"] < 0.50
+            or frame_report["perimeter_error"] > 0.12
+            or frame_report["components"] != 1
+            or frame_report["overlap"] > 0.005
         ):
             return None, {
                 "valid": False,
                 "stage": "rectangle-frame",
-                "reasons": ["four-right-corners"],
+                "reasons": ["incomplete-rectangle"],
+                "metrics": {
+                    "coverage": frame_report["coverage"],
+                    "overlap": frame_report["overlap"],
+                    "corners": frame_report["corners"],
+                    "outer": frame_report["outer_piece_ratio"],
+                    "internal": frame_report["internal_match"],
+                    "perimeter": frame_report["perimeter_error"],
+                    "components": frame_report["components"],
+                },
             }
         prepared = frame_report["normalized_layout"]
         mode = "RECT"
@@ -1570,7 +1583,7 @@ def prepare_layout_for_execution(layout, solve_info, roi):
             else "EXEC"
         )
 
-    if prepared is None or layout_has_interior_overlap(prepared):
+    if prepared is None:
         return None, repair_info
 
     final_report = evaluate_layout(
@@ -1580,12 +1593,16 @@ def prepare_layout_for_execution(layout, solve_info, roi):
     if (
         final_report["corners"] < 0.99
         or final_report["outer_piece_ratio"] < 0.999
-        or layout_has_interior_overlap(prepared)
+        or final_report["coverage"] < 0.86
+        or final_report["internal_match"] < 0.50
+        or final_report["perimeter_error"] > 0.12
+        or final_report["components"] != 1
+        or final_report["overlap"] > 0.005
     ):
         return None, {
             "valid": False,
             "stage": "final-rectangle",
-            "reasons": ["four-right-corners"],
+            "reasons": ["incomplete-rectangle"],
         }
     solve_info["width"] = final_report["width"]
     solve_info["height"] = final_report["height"]
@@ -2321,6 +2338,52 @@ def solve_piece_set_worker(pieces, roi):
             solved_score = candidate_score
             solve_info = candidate_info
             break
+
+    if solved_layout is None:
+        (
+            candidate_layout,
+            candidate_score,
+            candidate_nodes,
+            candidate_metrics,
+        ) = solve_edge_layout(
+            pieces,
+            time_limit_s=10.5,
+            return_best=True,
+        )
+        solver_nodes += candidate_nodes
+        solved_score = max(solved_score, candidate_score)
+        if candidate_layout is not None:
+            candidate_layout = normalize_layout(candidate_layout)
+            candidate_info = {
+                "solve_scale": 1.0,
+                "width": candidate_metrics["width"],
+                "height": candidate_metrics["height"],
+                "ratio": (
+                    candidate_metrics["width"]
+                    / max(1.0, candidate_metrics["height"])
+                ),
+                "coverage": candidate_metrics["coverage"],
+                "overlap": candidate_metrics["overlap"],
+                "method": "edge-geometric",
+                "forced": False,
+                "boundary_safe": True,
+            }
+            candidate_layout, repair_info = (
+                prepare_layout_for_execution(
+                    candidate_layout,
+                    candidate_info,
+                    roi,
+                )
+            )
+            if candidate_layout is not None:
+                solved_layout = candidate_layout
+                solved_score = candidate_score
+                solve_info = candidate_info
+            else:
+                print(
+                    "SOLVE_REJECT edge %s" % repair_info,
+                    flush=True,
+                )
 
     if solved_layout is None and 2 <= len(pieces) <= 4:
         (

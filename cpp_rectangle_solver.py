@@ -53,7 +53,7 @@ def solve(pieces, fill_ratio=0.80, position_step=4):
         dtype=np.float64,
     )
     output = np.zeros_like(points)
-    info = np.zeros(8, dtype=np.float64)
+    info = np.zeros(10, dtype=np.float64)
     status = library.solve_rectangle_cpp(
         points.ctypes.data_as(
             ctypes.POINTER(ctypes.c_double)
@@ -93,8 +93,13 @@ def solve(pieces, fill_ratio=0.80, position_step=4):
             "height": float(min(info[3], info[4])),
             "coverage": float(info[1]),
             "overlap": float(info[2]),
+            "edge_match": float(info[8]),
             "forced": False,
             "boundary_safe": True,
-            "method": "cpp-boundary",
+            "method": (
+                "cpp-edge"
+                if info[9] > 0.5
+                else "cpp-boundary"
+            ),
         },
     )
