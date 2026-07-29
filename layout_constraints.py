@@ -224,7 +224,7 @@ def _raster_metrics(layout, width, height):
     }
 
 
-def evaluate_layout(layout):
+def evaluate_layout(layout, edge_tolerance_ratio=0.012):
     if not layout:
         return {
             "valid": False,
@@ -243,7 +243,7 @@ def evaluate_layout(layout):
         }
 
     diagonal = math.hypot(float(width), float(height))
-    tolerance = max(1.5, diagonal * 0.012)
+    tolerance = max(1.5, diagonal * edge_tolerance_ratio)
     edge_records = []
     piece_has_outer = {
         piece_id: False
@@ -366,9 +366,29 @@ def evaluate_layout(layout):
         + internal_match * 0.08
         - raster["perimeter_error"] * 0.20
     )
+    competition_reasons = []
+    if raster["coverage"] < 0.92:
+        competition_reasons.append("coverage")
+    if raster["overlap"] > 0.075:
+        competition_reasons.append("overlap")
+    if corner_score < 0.75:
+        competition_reasons.append("corners")
+    if outer_piece_ratio < 0.999:
+        competition_reasons.append("piece-outer-edge")
+    if internal_match < 0.35:
+        competition_reasons.append("internal-edges")
+    if raster["perimeter_error"] > 0.25:
+        competition_reasons.append("perimeter")
+    if raster["components"] != 1:
+        competition_reasons.append("disconnected")
+    if not 0.98 <= aspect_ratio <= 2.45:
+        competition_reasons.append("aspect")
+
     return {
         "valid": not reasons,
         "reasons": reasons,
+        "competition_valid": not competition_reasons,
+        "competition_reasons": competition_reasons,
         "score": score,
         "coverage": raster["coverage"],
         "overlap": raster["overlap"],
@@ -387,18 +407,19 @@ def evaluate_layout(layout):
 
 def add_adjacency_gap(layout, gap_pixels):
     report = evaluate_layout(layout)
-    if not report["valid"] or gap_pixels <= 0:
+    if gap_pixels <= 0:
         return layout, {
             "applied": False,
-            "reason": "invalid-layout" if not report["valid"] else "zero-gap",
+            "reason": "zero-gap",
         }
 
     piece_ids = sorted(layout)
+    base_layout = report["normalized_layout"]
     anchor = max(
         piece_ids,
         key=lambda piece_id: abs(
             cv2.contourArea(
-                np.asarray(layout[piece_id], dtype=np.float32)
+                np.asarray(base_layout[piece_id], dtype=np.float32)
             )
         ),
     )
@@ -448,7 +469,7 @@ def add_adjacency_gap(layout, gap_pixels):
 
     moved = {
         piece_id: (
-            np.asarray(layout[piece_id], dtype=np.float64)
+            np.asarray(base_layout[piece_id], dtype=np.float64)
             + translations[piece_id]
         )
         for piece_id in piece_ids
@@ -480,3 +501,195 @@ def add_adjacency_gap(layout, gap_pixels):
             for piece_id in piece_ids
         },
     }
+
+
+def _separating_push(first, second):
+    first = np.asarray(first, dtype=np.float64)
+    second = np.asarray(second, dtype=np.float64)
+    if not cv2.isContourConvex(first.astype(np.float32)):
+        first = cv2.convexHull(
+            first.astype(np.float32)
+        ).reshape(-1, 2)
+    if not cv2.isContourConvex(second.astype(np.float32)):
+        second = cv2.convexHull(
+            second.astype(np.float32)
+        ).reshape(-1, 2)
+
+    best_axis = None
+    best_overlap = float("inf")
+    for polygon in (first, second):
+        for start, end in _edges(polygon):
+            vector = end - start
+            length = float(np.linalg.norm(vector))
+            if length < 1e-6:
+                continue
+            axis = np.array(
+                [-vector[1], vector[0]],
+                dtype=np.float64,
+            ) / length
+            first_projection = first @ axis
+            second_projection = second @ axis
+            overlap = min(
+                float(np.max(first_projection)),
+                float(np.max(second_projection)),
+            ) - max(
+                float(np.min(first_projection)),
+                float(np.min(second_projection)),
+            )
+            if overlap <= 0:
+                return None
+            if overlap < best_overlap:
+                best_overlap = overlap
+                best_axis = axis
+
+    if best_axis is None:
+        return None
+    if np.dot(
+        best_axis,
+        np.mean(second, axis=0) - np.mean(first, axis=0),
+    ) < 0:
+        best_axis = -best_axis
+    return best_axis, best_overlap
+
+
+def repair_layout_for_competition(
+    layout,
+    gap_pixels=1.0,
+):
+    report = evaluate_layout(
+        layout,
+        edge_tolerance_ratio=0.035,
+    )
+    candidate_reasons = []
+    if report["coverage"] < 0.92:
+        candidate_reasons.append("coverage")
+    if report["overlap"] > 0.075:
+        candidate_reasons.append("overlap")
+    if report["corners"] < 0.75:
+        candidate_reasons.append("corners")
+    if report["outer_piece_ratio"] < 0.999:
+        candidate_reasons.append("piece-outer-edge")
+    if report["internal_match"] < 0.35:
+        candidate_reasons.append("internal-edges")
+    if report["components"] != 1:
+        candidate_reasons.append("disconnected")
+    if not 0.98 <= report["aspect"] <= 2.45:
+        candidate_reasons.append("aspect")
+    if candidate_reasons:
+        return None, {
+            "valid": False,
+            "stage": "candidate",
+            "reasons": candidate_reasons,
+        }
+
+    moved, gap_info = add_adjacency_gap(
+        report["normalized_layout"],
+        gap_pixels,
+    )
+    original = {
+        piece_id: polygon.copy()
+        for piece_id, polygon in moved.items()
+    }
+    piece_ids = sorted(moved)
+    anchor = max(
+        piece_ids,
+        key=lambda piece_id: abs(
+            cv2.contourArea(
+                moved[piece_id].astype(np.float32)
+            )
+        ),
+    )
+
+    for _ in range(24):
+        changed = False
+        for first_index in range(len(piece_ids)):
+            for second_index in range(first_index + 1, len(piece_ids)):
+                first_id = piece_ids[first_index]
+                second_id = piece_ids[second_index]
+                push = _separating_push(
+                    moved[first_id],
+                    moved[second_id],
+                )
+                if push is None:
+                    continue
+                axis, overlap = push
+                amount = overlap + max(0.2, gap_pixels * 0.25)
+                if first_id == anchor:
+                    moved[second_id] += axis * amount
+                elif second_id == anchor:
+                    moved[first_id] -= axis * amount
+                else:
+                    moved[first_id] -= axis * amount * 0.5
+                    moved[second_id] += axis * amount * 0.5
+                changed = True
+        if not changed:
+            break
+
+    collision_free = True
+    for first_index in range(len(piece_ids)):
+        for second_index in range(first_index + 1, len(piece_ids)):
+            if _separating_push(
+                moved[piece_ids[first_index]],
+                moved[piece_ids[second_index]],
+            ) is not None:
+                collision_free = False
+                break
+        if not collision_free:
+            break
+
+    all_points = np.vstack(list(report["normalized_layout"].values()))
+    diagonal = float(
+        np.linalg.norm(
+            np.max(all_points, axis=0)
+            - np.min(all_points, axis=0)
+        )
+    )
+    maximum_move = max(
+        float(
+            np.linalg.norm(
+                np.mean(moved[piece_id], axis=0)
+                - np.mean(original[piece_id], axis=0)
+            )
+        )
+        for piece_id in piece_ids
+    )
+    final_report = evaluate_layout(
+        moved,
+        edge_tolerance_ratio=0.05,
+    )
+    final_reasons = []
+    if not collision_free:
+        final_reasons.append("overlap")
+    if maximum_move > max(6.0, diagonal * 0.10):
+        final_reasons.append("excessive-move")
+    if final_report["coverage"] < 0.86:
+        final_reasons.append("coverage")
+    if final_report["corners"] < 0.50:
+        final_reasons.append("corners")
+    if final_report["outer_piece_ratio"] < 0.75:
+        final_reasons.append("piece-outer-edge")
+    if final_report["internal_match"] < 0.30:
+        final_reasons.append("internal-edges")
+    if final_report["components"] > len(piece_ids):
+        final_reasons.append("components")
+
+    return (
+        moved if not final_reasons else None,
+        {
+            "valid": not final_reasons,
+            "stage": "execution",
+            "reasons": final_reasons,
+            "maximum_move": maximum_move,
+            "gap": gap_info,
+            "before": {
+                "coverage": report["coverage"],
+                "overlap": report["overlap"],
+                "internal_match": report["internal_match"],
+            },
+            "after": {
+                "coverage": final_report["coverage"],
+                "overlap": final_report["overlap"],
+                "internal_match": final_report["internal_match"],
+            },
+        },
+    )

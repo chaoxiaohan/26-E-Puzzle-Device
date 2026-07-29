@@ -4,7 +4,10 @@ import os
 import sys
 import time
 
-from layout_constraints import evaluate_layout
+from layout_constraints import (
+    evaluate_layout,
+    repair_layout_for_competition,
+)
 from puzzle_solver import solve_camera_rectangle
 
 
@@ -20,6 +23,14 @@ capture_directory = (
 )
 allow_relaxed = "--relaxed" in sys.argv
 use_legacy = "--legacy" in sys.argv
+competition_mode = "--competition" in sys.argv
+repair_mode = "--repair" in sys.argv
+safe_cover = "--safe-cover" in sys.argv
+safe_cover_ratio = 0.008
+for argument in sys.argv:
+    if argument.startswith("--safe-cover="):
+        safe_cover = True
+        safe_cover_ratio = float(argument.split("=", 1)[1])
 if use_legacy:
     from main import solve_rectangle_by_cover
 attempted = 0
@@ -34,7 +45,14 @@ for path in sorted(glob.glob(os.path.join(capture_directory, "*.json"))):
     attempted += 1
     started = time.perf_counter()
     if use_legacy:
-        layout, score, nodes, info = solve_rectangle_by_cover(pieces)
+        layout, score, nodes, info = solve_rectangle_by_cover(
+            pieces,
+            max_piece_overlap_ratio=(
+                safe_cover_ratio
+                if safe_cover
+                else 0.30
+            ),
+        )
     else:
         layout, score, nodes, info = solve_camera_rectangle(
             pieces,
@@ -50,15 +68,41 @@ for path in sorted(glob.glob(os.path.join(capture_directory, "*.json"))):
         )
         continue
 
-    report = evaluate_layout(layout)
-    if report["valid"]:
+    report = evaluate_layout(
+        layout,
+        edge_tolerance_ratio=(
+            0.035
+            if competition_mode
+            else 0.012
+        ),
+    )
+    repair_info = None
+    if repair_mode:
+        repaired, repair_info = repair_layout_for_competition(
+            layout,
+            gap_pixels=1.0,
+        )
+        if repaired is not None:
+            layout = repaired
+            report = evaluate_layout(
+                layout,
+                edge_tolerance_ratio=0.05,
+            )
+    accepted = (
+        repair_info["valid"]
+        if repair_mode
+        else report["competition_valid"]
+        if competition_mode
+        else report["valid"]
+    )
+    if accepted:
         succeeded += 1
     print(
         "%-4s %-30s method=%s score=%.3f coverage=%.3f "
         "overlap=%.4f outer=%.2f internal=%.3f reasons=%s "
-        "nodes=%d time=%.1fms"
+        "nodes=%d time=%.1fms%s"
         % (
-            "OK" if report["valid"] else "BEST",
+            "OK" if accepted else "BEST",
             os.path.basename(path),
             (
                 "legacy"
@@ -70,9 +114,22 @@ for path in sorted(glob.glob(os.path.join(capture_directory, "*.json"))):
             report["overlap"],
             report["outer_piece_ratio"],
             report["internal_match"],
-            report["reasons"],
+            (
+                report["competition_reasons"]
+                if competition_mode
+                else report["reasons"]
+            ),
             nodes,
             elapsed_ms,
+            (
+                " repair=%s move=%.2f"
+                % (
+                    repair_info["reasons"],
+                    repair_info.get("maximum_move", 0.0),
+                )
+                if repair_info is not None
+                else ""
+            ),
         )
     )
 

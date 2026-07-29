@@ -8,6 +8,11 @@ import time
 import cv2
 import numpy as np
 from maix import app, camera, display, image, touchscreen
+from layout_constraints import (
+    add_adjacency_gap,
+    evaluate_layout,
+    repair_layout_for_competition,
+)
 from puzzle_solver import solve_camera_rectangle
 
 
@@ -940,6 +945,7 @@ def search_rectangle_ratio(
     target_ratio,
     beam_width,
     position_step=4,
+    max_piece_overlap_ratio=0.30,
 ):
     """在一个给定的矩形长宽比下搜索拼片位置。"""
     width = int(round(math.sqrt(6000.0 * target_ratio)))
@@ -1000,7 +1006,10 @@ def search_rectangle_ratio(
                 )
                 if interior_overlap > max(
                     6,
-                    int(candidate["area"] * 0.30),
+                    int(
+                        candidate["area"]
+                        * max_piece_overlap_ratio
+                    ),
                 ):
                     continue
 
@@ -1067,7 +1076,10 @@ def search_rectangle_ratio(
     )
 
 
-def solve_rectangle_by_cover(pieces):
+def solve_rectangle_by_cover(
+    pieces,
+    max_piece_overlap_ratio=0.30,
+):
     """
     自动搜索允许范围内的目标矩形比例，再用位图束搜索拼接。
 
@@ -1123,6 +1135,7 @@ def solve_rectangle_by_cover(pieces):
             polygons,
             ratio,
             beam_width,
+            max_piece_overlap_ratio=max_piece_overlap_ratio,
         )
         total_evaluated += result[4]
         if (
@@ -1160,6 +1173,7 @@ def solve_rectangle_by_cover(pieces):
                 polygons,
                 best_ratio,
                 120,
+                max_piece_overlap_ratio=max_piece_overlap_ratio,
             )
             refined_ratios.add(best_ratio)
             total_evaluated += refined_result[4]
@@ -1189,6 +1203,7 @@ def solve_rectangle_by_cover(pieces):
             polygons,
             best_ratio,
             120,
+            max_piece_overlap_ratio=max_piece_overlap_ratio,
         )
         total_evaluated += refined_result[4]
         if refined_result[1] > best_result[1]:
@@ -1397,20 +1412,6 @@ def place_layout_on_paper(layout, solve_info, roi):
         )
         placed_polygons.append(points)
 
-    gap_pixels = max(2.0, roi_height * 1.5 / 297.0)
-    target_center = np.array(
-        [
-            target_left + target_width * 0.5,
-            target_top + target_height * 0.5,
-        ],
-        dtype=np.float32,
-    )
-    placed_polygons = spread_layout_with_gap(
-        placed_polygons,
-        target_center,
-        gap_pixels,
-    )
-
     fitted = []
     for piece_id, points in zip(piece_ids, placed_polygons):
         fitted.append(
@@ -1423,6 +1424,56 @@ def place_layout_on_paper(layout, solve_info, roi):
             }
         )
     return fitted
+
+
+def prepare_layout_for_execution(layout, solve_info, roi):
+    """把识别误差形成的轻微重叠修正掉，并在相邻边之间保留约1mm缝隙。"""
+    strict_report = evaluate_layout(layout)
+    gap_pixels = max(1.0, roi[3] / 297.0) * solve_info[
+        "solve_scale"
+    ]
+    if strict_report["valid"]:
+        prepared, gap_info = add_adjacency_gap(
+            layout,
+            gap_pixels,
+        )
+        mode = "EXACT"
+        repair_info = {
+            "valid": True,
+            "stage": "strict",
+            "reasons": [],
+            "maximum_move": 0.0,
+            "gap": gap_info,
+        }
+    else:
+        prepared, repair_info = repair_layout_for_competition(
+            layout,
+            gap_pixels=gap_pixels,
+        )
+        mode = "EXEC"
+
+    if prepared is None or layout_has_interior_overlap(prepared):
+        return None, repair_info
+
+    final_report = evaluate_layout(
+        prepared,
+        edge_tolerance_ratio=0.05,
+    )
+    solve_info["width"] = final_report["width"]
+    solve_info["height"] = final_report["height"]
+    solve_info["ratio"] = (
+        final_report["width"]
+        / max(1.0, final_report["height"])
+    )
+    solve_info["execution_mode"] = mode
+    solve_info["constraint_report"] = {
+        "coverage": final_report["coverage"],
+        "overlap": final_report["overlap"],
+        "outer_piece_ratio": final_report["outer_piece_ratio"],
+        "internal_match": final_report["internal_match"],
+    }
+    solve_info["repair"] = repair_info
+    return prepared, repair_info
 
 
 def build_motion_plan(pieces, fitted_layout):
@@ -1886,7 +1937,7 @@ def save_capture(
     roi,
     settings,
 ):
-    capture_dir = "/home/pi5/puzzle_detector/captures"
+    capture_dir = "/home/pi5/puzzle_card_detector/captures"
     os.makedirs(capture_dir, exist_ok=True)
     timestamp = "%s_%03d" % (
         time.strftime("%Y%m%d_%H%M%S"),
@@ -2279,6 +2330,26 @@ def main():
                 if candidate_layout is not None:
                     candidate_info = dict(candidate_info)
                     candidate_info["method"] = "legacy-cover"
+                    (
+                        candidate_layout,
+                        repair_info,
+                    ) = prepare_layout_for_execution(
+                        candidate_layout,
+                        candidate_info,
+                        (
+                            roi_x,
+                            roi_y,
+                            roi_width,
+                            roi_height,
+                        ),
+                    )
+                    if candidate_layout is None:
+                        print(
+                            "SOLVE_REJECT legacy %s"
+                            % repair_info,
+                            flush=True,
+                        )
+                        continue
                     solved_layout = candidate_layout
                     solved_score = candidate_score
                     solve_info = candidate_info
@@ -2307,6 +2378,21 @@ def main():
                         solved_score,
                         candidate_score,
                     )
+                    if candidate_layout is not None:
+                        candidate_info = dict(candidate_info)
+                        (
+                            candidate_layout,
+                            repair_info,
+                        ) = prepare_layout_for_execution(
+                            candidate_layout,
+                            candidate_info,
+                            (
+                                roi_x,
+                                roi_y,
+                                roi_width,
+                                roi_height,
+                            ),
+                        )
                     if candidate_layout is not None:
                         solved_layout = candidate_layout
                         solved_score = candidate_score
@@ -2354,9 +2440,9 @@ def main():
                                 move["place"][1],
                             )
                     solver_message = (
-                        "SOLVE COVER G1.5"
+                        "SOLVE COVER G1.0"
                         if solve_info["method"] == "legacy-cover"
-                        else "SOLVE HYB G1.5"
+                        else "SOLVE HYB G1.0"
                     )
                     print_motion_plan(motion_plan)
             print(

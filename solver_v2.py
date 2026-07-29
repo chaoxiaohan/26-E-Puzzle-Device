@@ -419,6 +419,16 @@ def solve(
                         relative_error = abs(
                             target_length - source_length
                         ) / max(target_length, source_length)
+                        partition_error = residual_partition_error(
+                            target_length,
+                            source_length,
+                            reference_lengths,
+                        )
+                        if (
+                            relative_error > edge_tolerance
+                            and partition_error > 0.12
+                        ):
+                            continue
                         if relative_error <= edge_tolerance:
                             shared = (
                                 target_length + source_length
@@ -507,13 +517,6 @@ def solve(
                                     continue
                                 generated.add(pose_key)
 
-                                partition_error = (
-                                    residual_partition_error(
-                                        target_length,
-                                        source_length,
-                                        reference_lengths,
-                                    )
-                                )
                                 if relative_error <= 0.04:
                                     match_class = 0
                                 elif (
