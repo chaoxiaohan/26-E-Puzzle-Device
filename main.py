@@ -17,6 +17,7 @@ from layout_constraints import (
     repair_layout_for_competition,
 )
 from cpp_rectangle_solver import solve as solve_rectangle_by_cover_cpp
+from card_face_solver import solve_card_face
 from puzzle_solver import normalize_layout, solve_camera_rectangle
 from solver_v2 import solve as solve_edge_layout
 
@@ -1889,8 +1890,9 @@ def get_button_boxes(image_width, image_height):
     """返回右侧调参按钮在摄像头图像中的位置。"""
     if image_height > image_width:
         return {
-            "solve": [20, 760, 330, 70],
-            "tune": [370, 760, 330, 70],
+            "solve": [20, 760, 210, 70],
+            "card_solve": [255, 760, 210, 70],
+            "tune": [490, 760, 210, 70],
             "capture": [20, 840, 680, 70],
             "threshold_down": [20, 810, 330, 70],
             "threshold_up": [370, 810, 330, 70],
@@ -1903,8 +1905,9 @@ def get_button_boxes(image_width, image_height):
 
     panel_x = image_width - 350
     return {
-        "solve": [panel_x + 10, 10, 155, 70],
-        "tune": [panel_x + 175, 10, 155, 70],
+        "solve": [panel_x + 10, 10, 100, 70],
+        "card_solve": [panel_x + 120, 10, 100, 70],
+        "tune": [panel_x + 230, 10, 100, 70],
         "capture": [panel_x + 10, 90, 320, 70],
         "threshold_down": [panel_x + 10, 90, 155, 70],
         "threshold_up": [panel_x + 175, 90, 155, 70],
@@ -2498,6 +2501,34 @@ def solve_piece_set_worker(pieces, roi):
     }
 
 
+def solve_card_piece_set_worker(frame_rgb, pieces, roi):
+    """独立执行扑克牌花纹求解，不调用或改写普通矩形求解链路。"""
+    cv2.setNumThreads(1)
+    started = time.monotonic()
+    result = solve_card_face(
+        frame_rgb,
+        pieces,
+        node_limit=90000,
+        time_limit_s=5.0,
+    )
+    if result["layout"] is not None:
+        prepared, repair_info = prepare_layout_for_execution(
+            result["layout"],
+            result["info"],
+            roi,
+        )
+        result["layout"] = prepared
+        if prepared is None:
+            print(
+                "CARD_REJECT %s" % repair_info,
+                flush=True,
+            )
+    result["elapsed_ms"] = (
+        time.monotonic() - started
+    ) * 1000.0
+    return result
+
+
 def main():
     portrait_mode = os.environ.get("PUZZLE_PORTRAIT", "0") == "1"
     capture_width = 1280
@@ -2543,7 +2574,9 @@ def main():
     polarity_mode = "AUTO"
     tuning_open = False
     solve_requested = False
+    card_requested = False
     solved_display = None
+    solved_mode = ""
     solved_score = 0.0
     solved_ratio = 0.0
     motion_plan = []
@@ -2558,6 +2591,10 @@ def main():
     solver_future = None
     solve_started_at = 0.0
     pending_solve_until = 0.0
+    pending_solve_mode = ""
+    active_solver_mode = ""
+    pending_card_frame = None
+    pending_card_pieces = None
     last_capture_name = ""
     last_capture_time = 0.0
     button_boxes = get_button_boxes(
@@ -2574,6 +2611,7 @@ def main():
 
     while not app.need_exit():
         solve_requested = False
+        card_requested = False
         capture_requested = False
         img = cam.read()
         frame_rgb = image.image2cv(
@@ -2604,6 +2642,12 @@ def main():
                     *touch_args,
                 ):
                     solve_requested = True
+                elif touch_in_box(
+                    touch_status,
+                    button_boxes["card_solve"],
+                    *touch_args,
+                ):
+                    card_requested = True
                 elif touch_in_box(
                     touch_status,
                     button_boxes["tune"],
@@ -2673,6 +2717,9 @@ def main():
         if os.path.exists("/tmp/puzzle_solve_once"):
             os.remove("/tmp/puzzle_solve_once")
             solve_requested = True
+        if os.path.exists("/tmp/puzzle_card_solve_once"):
+            os.remove("/tmp/puzzle_card_solve_once")
+            card_requested = True
         if os.path.exists("/tmp/puzzle_dataset_capture_once"):
             os.remove("/tmp/puzzle_dataset_capture_once")
             capture_requested = True
@@ -2731,8 +2778,27 @@ def main():
                 solver_message = "SOLVING"
             else:
                 pending_solve_until = time.monotonic() + 2.0
+                pending_solve_mode = "NORMAL"
+                pending_card_frame = None
+                pending_card_pieces = None
                 solver_message = "HOLD STILL"
                 solver_ms = 0.0
+
+        if card_requested:
+            if solver_future is not None:
+                solver_message = "CARD BUSY"
+            elif 2 <= len(pieces) <= 4:
+                pending_solve_until = time.monotonic() + 2.0
+                pending_solve_mode = "CARD"
+                pending_card_frame = frame_rgb.copy()
+                pending_card_pieces = [
+                    dict(piece)
+                    for piece in pieces
+                ]
+                solver_message = "CARD HOLD"
+                solver_ms = 0.0
+            else:
+                solver_message = "CARD NEED 2-4"
 
         if (
             pending_solve_until > 0
@@ -2741,28 +2807,59 @@ def main():
             stable_pieces = build_stable_piece_set(
                 recent_piece_sets
             )
-            if stable_pieces is not None:
+            card_ready = (
+                pending_solve_mode == "CARD"
+                and stable_pieces is not None
+                and pending_card_pieces is not None
+                and len(stable_pieces) == len(pending_card_pieces)
+            )
+            if stable_pieces is not None and (
+                pending_solve_mode == "NORMAL"
+                or card_ready
+            ):
                 pending_solve_until = 0.0
                 solved_display = None
+                solved_mode = ""
                 motion_plan = []
                 solved_score = 0.0
                 solved_ratio = 0.0
                 solver_nodes = 0
                 solver_message = "SOLVING"
                 solve_started_at = time.monotonic()
-                solver_future = solver_executor.submit(
-                    solve_piece_set_worker,
-                    stable_pieces,
-                    (
-                        roi_x,
-                        roi_y,
-                        roi_width,
-                        roi_height,
-                    ),
+                active_solver_mode = pending_solve_mode
+                solve_roi = (
+                    roi_x,
+                    roi_y,
+                    roi_width,
+                    roi_height,
                 )
+                if active_solver_mode == "CARD":
+                    solver_message = "CARD SOLVING"
+                    solver_future = solver_executor.submit(
+                        solve_card_piece_set_worker,
+                        pending_card_frame,
+                        pending_card_pieces,
+                        solve_roi,
+                    )
+                else:
+                    solver_future = solver_executor.submit(
+                        solve_piece_set_worker,
+                        stable_pieces,
+                        solve_roi,
+                    )
+                pending_solve_mode = ""
+                pending_card_frame = None
+                pending_card_pieces = None
             elif time.monotonic() >= pending_solve_until:
                 pending_solve_until = 0.0
-                solver_message = "NO STABLE"
+                solver_message = (
+                    "CARD NO STABLE"
+                    if pending_solve_mode == "CARD"
+                    else "NO STABLE"
+                )
+                pending_solve_mode = ""
+                pending_card_frame = None
+                pending_card_pieces = None
 
         if solver_future is not None and not solver_future.done():
             solver_ms = (
@@ -2770,6 +2867,7 @@ def main():
             ) * 1000.0
 
         if solver_future is not None and solver_future.done():
+            result_mode = active_solver_mode
             try:
                 result = solver_future.result()
             except Exception as error:
@@ -2779,13 +2877,20 @@ def main():
                 )
                 result = None
             solver_future = None
+            active_solver_mode = ""
 
             if result is None:
                 solved_display = None
+                solved_mode = ""
                 solved_ratio = 0.0
                 motion_plan = []
-                solver_message = "SOLVE ERROR"
+                solver_message = (
+                    "CARD ERROR"
+                    if result_mode == "CARD"
+                    else "SOLVE ERROR"
+                )
             else:
+                result_mode = result.get("mode", result_mode)
                 solved_layout = result["layout"]
                 solved_score = result["score"]
                 solver_nodes = result["nodes"]
@@ -2794,9 +2899,14 @@ def main():
                 solve_pieces = result["pieces"]
                 if solved_layout is None:
                     solved_display = None
+                    solved_mode = ""
                     solved_ratio = 0.0
                     motion_plan = []
-                    solver_message = "NO RECT"
+                    solver_message = (
+                        "CARD NO RECT"
+                        if result_mode == "CARD"
+                        else "NO RECT"
+                    )
                 else:
                     solved_display = place_layout_on_paper(
                         solved_layout,
@@ -2818,10 +2928,12 @@ def main():
                     }
                     if layout_has_interior_overlap(safe_layout):
                         solved_display = None
+                        solved_mode = ""
                         solved_ratio = 0.0
                         motion_plan = []
                         solver_message = "NO SAFE"
                     else:
+                        solved_mode = result_mode
                         motion_plan = build_motion_plan(
                             solve_pieces,
                             solved_display,
@@ -2838,24 +2950,27 @@ def main():
                                     + portrait_crop_x,
                                     move["place"][1],
                                 )
-                        solver_message = (
-                            "SOLVE RECT"
-                            if solve_info.get("execution_mode")
-                            == "RECT"
-                            else (
-                                "SOLVE BEST G1.0"
-                                if solve_info.get(
-                                    "execution_mode"
-                                )
-                                == "ASSUME"
+                        if result_mode == "CARD":
+                            solver_message = "CARD RECT"
+                        else:
+                            solver_message = (
+                                "SOLVE RECT"
+                                if solve_info.get("execution_mode")
+                                == "RECT"
                                 else (
-                                    "SOLVE COVER G1.0"
-                                    if solve_info["method"]
-                                    == "legacy-cover"
-                                    else "SOLVE HYB G1.0"
+                                    "SOLVE BEST G1.0"
+                                    if solve_info.get(
+                                        "execution_mode"
+                                    )
+                                    == "ASSUME"
+                                    else (
+                                        "SOLVE COVER G1.0"
+                                        if solve_info["method"]
+                                        == "legacy-cover"
+                                        else "SOLVE HYB G1.0"
+                                    )
                                 )
                             )
-                        )
                         print_motion_plan(motion_plan)
                 print(
                     "%s score=%.3f ratio=%.3f tested=%d "
@@ -2922,7 +3037,10 @@ def main():
                     solver_ms,
                 ),
                 image.COLOR_GREEN
-                if solver_message.startswith("SOLVE")
+                if (
+                    solver_message.startswith("SOLVE")
+                    or solver_message == "CARD RECT"
+                )
                 else image.COLOR_YELLOW,
                 scale=2,
             )
@@ -2940,7 +3058,19 @@ def main():
                 img,
                 button_boxes["solve"],
                 "SOLVE",
-                active=solved_display is not None,
+                active=(
+                    solved_display is not None
+                    and solved_mode != "CARD"
+                ),
+            )
+            draw_button(
+                img,
+                button_boxes["card_solve"],
+                "CARD",
+                active=(
+                    solved_display is not None
+                    and solved_mode == "CARD"
+                ),
             )
             draw_button(
                 img,
