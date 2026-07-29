@@ -3,3 +3,4 @@ __pycache__/
 captures/
 run.log
 .deploy_hybrid/
+librectangle_solver.so

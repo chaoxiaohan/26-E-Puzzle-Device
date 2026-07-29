@@ -16,6 +16,7 @@ from layout_constraints import (
     evaluate_layout,
     repair_layout_for_competition,
 )
+from cpp_rectangle_solver import solve as solve_rectangle_by_cover_cpp
 from puzzle_solver import normalize_layout, solve_camera_rectangle
 from solver_v2 import solve as solve_edge_layout
 
@@ -2288,7 +2289,40 @@ def solve_piece_set_worker(pieces, roi):
         % [piece["points"] for piece in pieces],
         flush=True,
     )
-    if 2 <= len(pieces) <= 4:
+    for fill_ratio, position_step in (
+        (0.80, 4),
+        (0.80, 3),
+        (0.72, 4),
+    ):
+        (
+            candidate_layout,
+            candidate_score,
+            candidate_nodes,
+            candidate_info,
+        ) = solve_rectangle_by_cover_cpp(
+            pieces,
+            fill_ratio=fill_ratio,
+            position_step=position_step,
+        )
+        solver_nodes += candidate_nodes
+        solved_score = max(solved_score, candidate_score)
+        if candidate_layout is None:
+            continue
+        candidate_info = dict(candidate_info)
+        candidate_layout, repair_info = (
+            prepare_layout_for_execution(
+                candidate_layout,
+                candidate_info,
+                roi,
+            )
+        )
+        if candidate_layout is not None:
+            solved_layout = candidate_layout
+            solved_score = candidate_score
+            solve_info = candidate_info
+            break
+
+    if solved_layout is None and 2 <= len(pieces) <= 4:
         (
             candidate_layout,
             candidate_score,
