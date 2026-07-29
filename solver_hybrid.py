@@ -1,14 +1,20 @@
 import time
 
 try:
+    from .layout_constraints import evaluate_layout
     from .solver_boundary import solve as solve_by_boundary
     from .solver_v2 import solve as solve_by_edges
 except ImportError:
+    from layout_constraints import evaluate_layout
     from solver_boundary import solve as solve_by_boundary
     from solver_v2 import solve as solve_by_edges
 
 
-def is_strict_rectangle(metrics, dimension_range=None):
+def is_strict_rectangle(
+    metrics,
+    dimension_range=None,
+    layout=None,
+):
     if dimension_range is None:
         dimension_range = (89.0, 121.0, 49.0, 91.0)
     if dimension_range == "auto":
@@ -25,13 +31,16 @@ def is_strict_rectangle(metrics, dimension_range=None):
             and long_min <= metrics["width"] <= long_max
             and short_min <= metrics["height"] <= short_max
         )
-    return bool(
+    geometry_ok = bool(
         metrics
         and metrics["coverage"] >= 0.985
         and metrics["overlap"] <= 0.006
         and metrics["corners"] >= 0.99
         and dimension_ok
     )
+    if not geometry_ok or layout is None:
+        return geometry_ok
+    return evaluate_layout(layout)["valid"]
 
 
 def solve(
@@ -54,6 +63,7 @@ def solve(
     if is_strict_rectangle(
         edge_result[3],
         dimension_range,
+        edge_result[0],
     ):
         return (*edge_result, "edge")
 
@@ -69,6 +79,7 @@ def solve(
     if is_strict_rectangle(
         boundary_result[3],
         dimension_range,
+        boundary_result[0],
     ):
         return (*boundary_result, "boundary")
 

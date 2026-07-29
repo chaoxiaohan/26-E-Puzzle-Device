@@ -705,8 +705,8 @@ def polygon_mask_bits(polygon, width, height):
 
 
 def count_mask_bits(value):
-    """兼容不支持int.bit_count()的Python版本。"""
-    return bin(value).count("1")
+    """统计整数位图中的有效像素。"""
+    return value.bit_count()
 
 
 def polygons_have_interior_overlap(first, second):

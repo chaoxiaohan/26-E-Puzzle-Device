@@ -3,6 +3,7 @@ import math
 import cv2
 import numpy as np
 
+from layout_constraints import evaluate_layout
 from solver_hybrid import solve
 from solver_v2 import layout_metrics
 
@@ -65,6 +66,7 @@ def solve_camera_rectangle(
 
     normalized = normalize_layout(layout)
     normalized_metrics = layout_metrics(normalized)
+    constraint_report = evaluate_layout(normalized)
     aspect_ratio = (
         metrics["width"]
         / max(1.0, metrics["height"])
@@ -76,10 +78,13 @@ def solve_camera_rectangle(
         or not 0.98 <= aspect_ratio <= 2.45
     ):
         return None, score, nodes, None
+    if not allow_relaxed and not constraint_report["valid"]:
+        return None, score, nodes, None
 
     relaxed = bool(
         metrics["coverage"] < 0.94
         or metrics["corners"] < 0.75
+        or not constraint_report["valid"]
     )
 
     info = {
@@ -94,5 +99,10 @@ def solve_camera_rectangle(
         "overlap": metrics["overlap"],
         "method": method + ("-relaxed" if relaxed else ""),
         "relaxed": relaxed,
+        "outer_piece_ratio": constraint_report["outer_piece_ratio"],
+        "internal_match": constraint_report["internal_match"],
+        "perimeter_error": constraint_report["perimeter_error"],
+        "adjacency_count": len(constraint_report["adjacencies"]),
+        "rejection_reasons": constraint_report["reasons"],
     }
     return normalized, score, nodes, info
