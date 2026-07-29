@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import math
+import itertools
 import time
 
 import cv2
@@ -214,6 +215,588 @@ def _texture_summary(seams):
         sum(item[1] for item in seams) / max(1.0, len(seams) * 0.45),
     )
     return 0.5 + (raw_score - 0.5) * confidence, confidence
+
+
+def score_layout_texture(frame_rgb, pieces, layout):
+    """对一个已闭合矩形的所有真实内部接缝进行扑克牌花纹评分。"""
+    source_polygons = [
+        np.asarray(piece["points"], dtype=np.float64)
+        for piece in pieces
+    ]
+    target_polygons = {
+        piece_id: np.asarray(polygon, dtype=np.float64)
+        for piece_id, polygon in layout.items()
+    }
+    seams = []
+    piece_ids = sorted(target_polygons)
+
+    for first_index, first_id in enumerate(piece_ids):
+        first_target = target_polygons[first_id]
+        first_source = source_polygons[first_id]
+        first_center = polygon_center(first_target)
+        for second_id in piece_ids[first_index + 1:]:
+            second_target = target_polygons[second_id]
+            second_source = source_polygons[second_id]
+            second_center = polygon_center(second_target)
+
+            for first_edge in range(len(first_target)):
+                first_start = first_target[first_edge]
+                first_end = first_target[
+                    (first_edge + 1) % len(first_target)
+                ]
+                first_vector = first_end - first_start
+                first_length = float(np.linalg.norm(first_vector))
+                if first_length < 1e-6:
+                    continue
+                first_unit = first_vector / first_length
+
+                for second_edge in range(len(second_target)):
+                    second_start = second_target[second_edge]
+                    second_end = second_target[
+                        (second_edge + 1) % len(second_target)
+                    ]
+                    second_vector = second_end - second_start
+                    second_length = float(
+                        np.linalg.norm(second_vector)
+                    )
+                    if second_length < 1e-6:
+                        continue
+                    second_unit = second_vector / second_length
+                    if float(np.dot(first_unit, second_unit)) > -0.94:
+                        continue
+
+                    normal = np.array(
+                        [-first_unit[1], first_unit[0]],
+                        dtype=np.float64,
+                    )
+                    line_distance = max(
+                        abs(float(np.dot(second_start - first_start, normal))),
+                        abs(float(np.dot(second_end - first_start, normal))),
+                    )
+                    if line_distance > max(
+                        5.0,
+                        min(first_length, second_length) * 0.12,
+                    ):
+                        continue
+                    first_side = float(
+                        np.cross(first_vector, first_center - first_start)
+                    )
+                    second_side = float(
+                        np.cross(first_vector, second_center - first_start)
+                    )
+                    if first_side * second_side >= 0.0:
+                        continue
+
+                    second_projection = sorted(
+                        (
+                            float(
+                                np.dot(
+                                    second_start - first_start,
+                                    first_unit,
+                                )
+                            ),
+                            float(
+                                np.dot(
+                                    second_end - first_start,
+                                    first_unit,
+                                )
+                            ),
+                        )
+                    )
+                    overlap_start = max(0.0, second_projection[0])
+                    overlap_end = min(
+                        first_length,
+                        second_projection[1],
+                    )
+                    overlap = overlap_end - overlap_start
+                    if overlap < max(
+                        3.0,
+                        min(first_length, second_length) * 0.18,
+                    ):
+                        continue
+
+                    physical_start = (
+                        first_start + first_unit * overlap_start
+                    )
+                    physical_end = (
+                        first_start + first_unit * overlap_end
+                    )
+                    second_offsets = (
+                        float(
+                            np.dot(
+                                physical_start - second_start,
+                                second_unit,
+                            )
+                        ),
+                        float(
+                            np.dot(
+                                physical_end - second_start,
+                                second_unit,
+                            )
+                        ),
+                    )
+                    second_target_offset = max(
+                        0.0,
+                        min(second_offsets),
+                    )
+                    first_source_length = edge_length(
+                        first_source,
+                        first_edge,
+                    )
+                    second_source_length = edge_length(
+                        second_source,
+                        second_edge,
+                    )
+                    first_scale = (
+                        first_length / max(1e-6, first_source_length)
+                    )
+                    second_scale = (
+                        second_length / max(1e-6, second_source_length)
+                    )
+                    shared_source = min(
+                        overlap / first_scale,
+                        overlap / second_scale,
+                    )
+                    first_source_offset = overlap_start / first_scale
+                    second_source_offset = (
+                        second_target_offset / second_scale
+                    )
+                    first_strip = _sample_edge_strip(
+                        frame_rgb,
+                        first_source,
+                        first_edge,
+                        first_source_offset,
+                        shared_source,
+                    )
+                    second_strip = _sample_edge_strip(
+                        frame_rgb,
+                        second_source,
+                        second_edge,
+                        second_source_offset,
+                        shared_source,
+                        reverse=True,
+                    )
+                    quality, evidence = _compare_edge_strips(
+                        first_strip,
+                        second_strip,
+                    )
+                    seams.append(
+                        (
+                            quality,
+                            evidence,
+                            first_id,
+                            second_id,
+                            overlap,
+                        )
+                    )
+
+    texture_score, confidence = _texture_summary(seams)
+    return {
+        "score": texture_score,
+        "confidence": confidence,
+        "seam_count": len(seams),
+        "seams": seams,
+    }
+
+
+def _similarity_pose(source, target):
+    source_center = np.mean(source, axis=0)
+    target_center = np.mean(target, axis=0)
+    source_centered = source - source_center
+    target_centered = target - target_center
+    covariance = source_centered.T @ target_centered
+    first, singular_values, second = np.linalg.svd(covariance)
+    rotation = second.T @ first.T
+    if np.linalg.det(rotation) < 0.0:
+        second[-1, :] *= -1.0
+        rotation = second.T @ first.T
+    scale = float(
+        np.sum(singular_values)
+        / max(1e-9, np.sum(source_centered * source_centered))
+    )
+    return target_center, source_center, rotation, scale
+
+
+def score_layout_global_pattern(frame_rgb, pieces, layout):
+    """
+    比较完整牌面与旋转180度后的相似度。
+
+    常规数字牌、A、J/Q/K 的点数和角标通常具有双向阅读布局，这个软
+    约束能区分“几何能闭合，但两个角标被放在同一侧”的错误排列。
+    """
+    targets = {
+        piece_id: np.asarray(polygon, dtype=np.float64)
+        for piece_id, polygon in layout.items()
+    }
+    all_points = np.vstack(list(targets.values()))
+    minimum = np.min(all_points, axis=0)
+    maximum = np.max(all_points, axis=0)
+    size = maximum - minimum
+    if min(size) < 1.0:
+        return {"score": 0.5, "confidence": 0.0}
+
+    render_scale = 280.0 / max(size)
+    canvas_size = np.ceil(size * render_scale + 16.0).astype(int)
+    canvas = np.full(
+        (canvas_size[1], canvas_size[0], 3),
+        245,
+        dtype=np.uint8,
+    )
+    valid_mask = np.zeros(canvas.shape[:2], dtype=np.uint8)
+
+    for piece_id, target in targets.items():
+        source = np.asarray(
+            pieces[piece_id]["points"],
+            dtype=np.float64,
+        )
+        destination = (
+            (target - minimum) * render_scale + 8.0
+        )
+        (
+            target_center,
+            source_center,
+            rotation,
+            scale,
+        ) = _similarity_pose(source, destination)
+        matrix = np.zeros((2, 3), dtype=np.float64)
+        matrix[:, :2] = rotation * scale
+        matrix[:, 2] = (
+            target_center
+            - rotation @ source_center * scale
+        )
+        source_mask = np.zeros(frame_rgb.shape[:2], dtype=np.uint8)
+        cv2.fillPoly(
+            source_mask,
+            [np.rint(source).astype(np.int32)],
+            255,
+        )
+        warped = cv2.warpAffine(
+            frame_rgb,
+            matrix,
+            (canvas.shape[1], canvas.shape[0]),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=(245, 245, 245),
+        )
+        warped_mask = cv2.warpAffine(
+            source_mask,
+            matrix,
+            (canvas.shape[1], canvas.shape[0]),
+            flags=cv2.INTER_NEAREST,
+        )
+        canvas[warped_mask > 0] = warped[warped_mask > 0]
+        cv2.bitwise_or(
+            valid_mask,
+            warped_mask,
+            dst=valid_mask,
+        )
+
+    valid_mask = cv2.erode(
+        valid_mask,
+        np.ones((5, 5), dtype=np.uint8),
+        iterations=1,
+    )
+    rotated_canvas = cv2.rotate(canvas, cv2.ROTATE_180)
+    rotated_mask = cv2.rotate(valid_mask, cv2.ROTATE_180)
+    valid = (valid_mask > 0) & (rotated_mask > 0)
+    if np.count_nonzero(valid) < 100:
+        return {"score": 0.5, "confidence": 0.0}
+
+    first_features = _profile_features(canvas.astype(np.float32))
+    second_features = _profile_features(
+        rotated_canvas.astype(np.float32)
+    )
+    difference = np.abs(first_features - second_features)
+    feature_error = (
+        difference[:, :, 0] * 0.24
+        + difference[:, :, 1] * 0.34
+        + difference[:, :, 2] * 0.18
+        + difference[:, :, 3] * 0.24
+    )
+    first_ink = np.maximum(
+        first_features[:, :, 1],
+        first_features[:, :, 2] * 0.75,
+    )
+    second_ink = np.maximum(
+        second_features[:, :, 1],
+        second_features[:, :, 2] * 0.75,
+    )
+    ink = np.maximum(first_ink, second_ink)
+    y_grid, x_grid = np.indices(ink.shape, dtype=np.float32)
+    x_distance = np.minimum(
+        x_grid,
+        ink.shape[1] - 1.0 - x_grid,
+    ) / max(1.0, ink.shape[1] * 0.28)
+    y_distance = np.minimum(
+        y_grid,
+        ink.shape[0] - 1.0 - y_grid,
+    ) / max(1.0, ink.shape[0] * 0.28)
+    corner_weight = np.exp(
+        -(x_distance * x_distance + y_distance * y_distance)
+    )
+    weight = (0.08 + ink) * (0.25 + corner_weight * 3.0)
+    error = float(
+        np.sum(feature_error[valid] * weight[valid])
+        / np.sum(weight[valid])
+    )
+    evidence = min(1.0, float(np.mean(ink[valid]) * 4.0))
+    exact_score = math.exp(-error * 6.0)
+
+    patch_height = max(12, int(ink.shape[0] * 0.46))
+    patch_width = max(12, int(ink.shape[1] * 0.46))
+    corner_patches = (
+        first_ink[:patch_height, :patch_width],
+        first_ink[:patch_height, -patch_width:],
+        first_ink[-patch_height:, :patch_width],
+        first_ink[-patch_height:, -patch_width:],
+    )
+
+    def corner_detail(patch):
+        binary = (patch > 0.24).astype(np.uint8)
+        component_count, _, statistics, _ = (
+            cv2.connectedComponentsWithStats(binary, 8)
+        )
+        components = sum(
+            int(statistics[index, cv2.CC_STAT_AREA])
+            >= max(6, int(patch.size * 0.002))
+            for index in range(1, component_count)
+        )
+        horizontal = cv2.Sobel(
+            patch,
+            cv2.CV_32F,
+            1,
+            0,
+            ksize=3,
+        )
+        vertical = cv2.Sobel(
+            patch,
+            cv2.CV_32F,
+            0,
+            1,
+            ksize=3,
+        )
+        edge_density = float(
+            np.mean(np.hypot(horizontal, vertical))
+        )
+        return (
+            float(np.mean(patch)),
+            float(np.std(patch)),
+            components,
+            edge_density,
+        )
+
+    corner_details = [
+        corner_detail(patch)
+        for patch in corner_patches
+    ]
+
+    def corner_pair_score(first_patch, second_patch):
+        second_patch = cv2.rotate(
+            second_patch,
+            cv2.ROTATE_180,
+        )
+        first_patch = cv2.GaussianBlur(
+            first_patch.astype(np.float32),
+            (5, 5),
+            0,
+        )
+        second_patch = cv2.GaussianBlur(
+            second_patch.astype(np.float32),
+            (5, 5),
+            0,
+        )
+        patch_evidence = min(
+            1.0,
+            (
+                max(
+                    float(np.mean(first_patch)),
+                    float(np.mean(second_patch)),
+                )
+                * 4.0
+                + max(
+                    float(np.std(first_patch)),
+                    float(np.std(second_patch)),
+                )
+                * 2.5
+            ),
+        )
+        margin = max(
+            4,
+            int(min(patch_height, patch_width) * 0.10),
+        )
+        padded = cv2.copyMakeBorder(
+            second_patch,
+            margin,
+            margin,
+            margin,
+            margin,
+            cv2.BORDER_CONSTANT,
+            value=0.0,
+        )
+        correlation = cv2.matchTemplate(
+            padded,
+            first_patch,
+            cv2.TM_CCOEFF_NORMED,
+        )
+        best = float(np.max(correlation))
+        best = max(0.0, min(1.0, (best + 1.0) * 0.5))
+        density_score = math.exp(
+            -abs(
+                float(np.mean(first_patch))
+                - float(np.mean(second_patch))
+            )
+            * 5.0
+        )
+        return best * 0.75 + density_score * 0.25, patch_evidence
+
+    first_corner = corner_pair_score(
+        corner_patches[0],
+        corner_patches[3],
+    )
+    second_corner = corner_pair_score(
+        corner_patches[1],
+        corner_patches[2],
+    )
+    corner_weight_sum = max(
+        0.1,
+        first_corner[1] + second_corner[1],
+    )
+    corner_score = (
+        first_corner[0] * max(0.05, first_corner[1])
+        + second_corner[0] * max(0.05, second_corner[1])
+    ) / corner_weight_sum
+    corner_confidence = min(
+        1.0,
+        (first_corner[1] + second_corner[1]) * 0.65,
+    )
+    component_values = [
+        float(detail[2])
+        for detail in corner_details
+    ]
+    component_error = (
+        abs(component_values[0] - component_values[3])
+        + abs(component_values[1] - component_values[2])
+    ) / max(2.0, sum(component_values))
+    component_score = math.exp(-component_error * 3.2)
+    edge_values = [
+        float(detail[3])
+        for detail in corner_details
+    ]
+    edge_error = (
+        abs(edge_values[0] - edge_values[3])
+        + abs(edge_values[1] - edge_values[2])
+    ) / max(0.05, sum(edge_values))
+    edge_score = math.exp(-edge_error * 3.0)
+    structure_score = (
+        component_score * 0.70
+        + edge_score * 0.30
+    )
+    combined_confidence = max(evidence, corner_confidence)
+    score = (
+        exact_score * 0.20
+        + corner_score * 0.35
+        + structure_score * 0.45
+    )
+    return {
+        "score": (
+            0.5
+            + (score - 0.5) * combined_confidence
+        ),
+        "confidence": combined_confidence,
+        "exact": exact_score,
+        "corners": corner_score,
+        "structure": structure_score,
+        "corner_details": corner_details,
+    }
+
+
+def generate_shape_swap_layouts(pieces, base_layout):
+    """
+    在外形近似的碎片之间交换目标槽位。
+
+    C++ 几何求解器只返回一个最优排列；扑克牌模式需要保留这些几何
+    近似等价的排列，再用花纹连续性决定最终顺序。
+    """
+    source_polygons = [
+        np.asarray(piece["points"], dtype=np.float64)
+        for piece in pieces
+    ]
+    target_polygons = {
+        piece_id: np.asarray(polygon, dtype=np.float64)
+        for piece_id, polygon in base_layout.items()
+    }
+
+    def shape_signature(polygon):
+        area = max(
+            1.0,
+            abs(float(cv2.contourArea(polygon.astype(np.float32)))),
+        )
+        lengths = sorted(
+            edge_length(polygon, edge_id) / math.sqrt(area)
+            for edge_id in range(len(polygon))
+        )
+        return area, np.asarray(lengths, dtype=np.float64)
+
+    signatures = [
+        shape_signature(polygon)
+        for polygon in source_polygons
+    ]
+
+    def shapes_are_similar(first_id, second_id):
+        first = source_polygons[first_id]
+        second = source_polygons[second_id]
+        if len(first) != len(second):
+            return False
+        first_area, first_lengths = signatures[first_id]
+        second_area, second_lengths = signatures[second_id]
+        area_ratio = min(first_area, second_area) / max(
+            first_area,
+            second_area,
+        )
+        if area_ratio < 0.68:
+            return False
+        length_error = float(
+            np.mean(
+                np.abs(first_lengths - second_lengths)
+                / np.maximum(first_lengths, second_lengths)
+            )
+        )
+        return length_error <= 0.18
+
+    slot_poses = {}
+    for piece_id, source in enumerate(source_polygons):
+        target = target_polygons[piece_id]
+        (
+            target_center,
+            _,
+            rotation,
+            scale,
+        ) = _similarity_pose(source, target)
+        slot_poses[piece_id] = (
+            target_center,
+            rotation,
+            scale,
+        )
+
+    layouts = []
+    piece_ids = tuple(range(len(pieces)))
+    for assignment in itertools.permutations(piece_ids):
+        if any(
+            not shapes_are_similar(slot_id, source_id)
+            for slot_id, source_id in enumerate(assignment)
+        ):
+            continue
+        layout = {}
+        for slot_id, source_id in enumerate(assignment):
+            source = source_polygons[source_id]
+            source_center = np.mean(source, axis=0)
+            target_center, rotation, scale = slot_poses[slot_id]
+            layout[source_id] = (
+                (source - source_center) @ rotation.T * scale
+                + target_center
+            )
+        layouts.append((layout, assignment))
+    return layouts
 
 
 def solve_card_face(

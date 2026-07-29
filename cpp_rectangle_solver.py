@@ -43,14 +43,22 @@ def solve(pieces, fill_ratio=0.80, position_step=4):
     )
     if np.any(counts < 3) or np.any(counts > 5):
         return None, 0.0, 0, None
-    points = np.asarray(
-        [
-            coordinate
-            for piece in pieces
-            for point in piece["points"]
-            for coordinate in point
-        ],
-        dtype=np.float64,
+    polygons = [
+        np.asarray(piece["points"], dtype=np.float64)
+        for piece in pieces
+    ]
+    reversed_by_cpp = [
+        float(
+            np.sum(
+                polygon[:, 0] * np.roll(polygon[:, 1], -1)
+                - np.roll(polygon[:, 0], -1) * polygon[:, 1]
+            )
+        )
+        < 0.0
+        for polygon in polygons
+    ]
+    points = np.concatenate(
+        [polygon.reshape(-1) for polygon in polygons]
     )
     output = np.zeros_like(points)
     info = np.zeros(11, dtype=np.float64)
@@ -78,9 +86,12 @@ def solve(pieces, fill_ratio=0.80, position_step=4):
     point_offset = 0
     for piece_id, count in enumerate(counts):
         next_offset = point_offset + int(count) * 2
-        layout[piece_id] = output[
+        polygon = output[
             point_offset:next_offset
         ].reshape(-1, 2)
+        if reversed_by_cpp[piece_id]:
+            polygon = polygon[::-1].copy()
+        layout[piece_id] = polygon
         point_offset = next_offset
     return (
         layout,

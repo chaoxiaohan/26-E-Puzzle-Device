@@ -17,7 +17,12 @@ from layout_constraints import (
     repair_layout_for_competition,
 )
 from cpp_rectangle_solver import solve as solve_rectangle_by_cover_cpp
-from card_face_solver import solve_card_face
+from card_face_solver import (
+    generate_shape_swap_layouts,
+    score_layout_global_pattern,
+    score_layout_texture,
+    solve_card_face,
+)
 from puzzle_solver import normalize_layout, solve_camera_rectangle
 from solver_v2 import solve as solve_edge_layout
 
@@ -2505,6 +2510,135 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
     """独立执行扑克牌花纹求解，不调用或改写普通矩形求解链路。"""
     cv2.setNumThreads(1)
     started = time.monotonic()
+    best = None
+    solver_nodes = 0
+    seen = set()
+
+    for fill_ratio, position_step in (
+        (0.92, 3),
+        (0.88, 4),
+        (0.84, 3),
+        (0.80, 4),
+    ):
+        (
+            base_layout,
+            _,
+            candidate_nodes,
+            base_info,
+        ) = solve_rectangle_by_cover_cpp(
+            pieces,
+            fill_ratio=fill_ratio,
+            position_step=position_step,
+        )
+        solver_nodes += candidate_nodes
+        if base_layout is None:
+            continue
+
+        for layout, assignment in generate_shape_swap_layouts(
+            pieces,
+            base_layout,
+        ):
+            signature = tuple(
+                assignment
+            ) + (
+                int(round(fill_ratio * 100)),
+            )
+            if signature in seen:
+                continue
+            seen.add(signature)
+            solve_info = dict(base_info)
+            solve_info["boundary_safe"] = False
+            solve_info["method"] = "card-cpp-rerank"
+            prepared, repair_info = prepare_layout_for_execution(
+                layout,
+                solve_info,
+                roi,
+            )
+            if prepared is None:
+                first_repair = repair_info
+                solve_info["forced"] = True
+                prepared, repair_info = prepare_layout_for_execution(
+                    layout,
+                    solve_info,
+                    roi,
+                )
+                if prepared is None:
+                    print(
+                        "CARD_CANDIDATE_REJECT fill=%.2f order=%s %s %s"
+                        % (
+                            fill_ratio,
+                            assignment,
+                            first_repair,
+                            repair_info,
+                        ),
+                        flush=True,
+                    )
+                    continue
+
+            texture = score_layout_texture(
+                frame_rgb,
+                pieces,
+                prepared,
+            )
+            global_pattern = score_layout_global_pattern(
+                frame_rgb,
+                pieces,
+                prepared,
+            )
+            report = solve_info["constraint_report"]
+            rank = (
+                report["coverage"] * 0.38
+                + report["internal_match"] * 0.20
+                + texture["score"] * 0.17
+                + global_pattern["score"] * 0.25
+            )
+            solve_info["texture_score"] = texture["score"]
+            solve_info["texture_confidence"] = texture["confidence"]
+            solve_info["global_pattern_score"] = (
+                global_pattern["score"]
+            )
+            solve_info["card_assignment"] = tuple(assignment)
+            print(
+                "CARD_CANDIDATE fill=%.2f order=%s rank=%.3f "
+                "coverage=%.3f internal=%.3f texture=%.3f global=%.3f"
+                % (
+                    fill_ratio,
+                    assignment,
+                    rank,
+                    report["coverage"],
+                    report["internal_match"],
+                    texture["score"],
+                    global_pattern["score"],
+                ),
+                flush=True,
+            )
+            if best is None or rank > best[0]:
+                best = (
+                    rank,
+                    prepared,
+                    solve_info,
+                )
+
+        if (
+            best is not None
+            and best[2]["constraint_report"]["coverage"] >= 0.88
+            and best[2]["constraint_report"]["internal_match"] >= 0.80
+        ):
+            break
+
+    if best is not None:
+        return {
+            "layout": best[1],
+            "score": best[0],
+            "nodes": solver_nodes,
+            "info": best[2],
+            "pieces": pieces,
+            "mode": "CARD",
+            "elapsed_ms": (
+                time.monotonic() - started
+            ) * 1000.0,
+        }
+
     result = solve_card_face(
         frame_rgb,
         pieces,
