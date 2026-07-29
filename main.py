@@ -19,6 +19,7 @@ from layout_constraints import (
 from cpp_rectangle_solver import solve as solve_rectangle_by_cover_cpp
 from card_face_solver import (
     generate_shape_swap_layouts,
+    render_layout_preview,
     score_layout_global_pattern,
     score_layout_texture,
     solve_card_face,
@@ -2065,6 +2066,36 @@ def show_binary_preview(frame_rgb, mask, roi):
     preview[:, :, 2] = mask
 
 
+def show_card_assembly_preview(preview_rgb):
+    """在独立窗口中显示带有原始牌面纹理的拼接结果。"""
+    if preview_rgb is None:
+        return
+
+    height, width = preview_rgb.shape[:2]
+    scale = min(1.0, 640.0 / width, 560.0 / height)
+    cv2.namedWindow(
+        "Card Assembly Preview",
+        cv2.WINDOW_NORMAL,
+    )
+    cv2.resizeWindow(
+        "Card Assembly Preview",
+        max(320, int(width * scale)),
+        max(240, int(height * scale)),
+    )
+    cv2.moveWindow(
+        "Card Assembly Preview",
+        760,
+        80,
+    )
+    cv2.imshow(
+        "Card Assembly Preview",
+        cv2.cvtColor(
+            preview_rgb,
+            cv2.COLOR_RGB2BGR,
+        ),
+    )
+
+
 def save_capture(
     frame_rgb,
     mask,
@@ -2633,6 +2664,11 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
             "nodes": solver_nodes,
             "info": best[2],
             "pieces": pieces,
+            "preview_rgb": render_layout_preview(
+                frame_rgb,
+                pieces,
+                best[1],
+            ),
             "mode": "CARD",
             "elapsed_ms": (
                 time.monotonic() - started
@@ -2656,6 +2692,12 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
             print(
                 "CARD_REJECT %s" % repair_info,
                 flush=True,
+            )
+        else:
+            result["preview_rgb"] = render_layout_preview(
+                frame_rgb,
+                pieces,
+                prepared,
             )
     result["elapsed_ms"] = (
         time.monotonic() - started
@@ -3068,6 +3110,10 @@ def main():
                         solver_message = "NO SAFE"
                     else:
                         solved_mode = result_mode
+                        if result_mode == "CARD":
+                            show_card_assembly_preview(
+                                result.get("preview_rgb")
+                            )
                         motion_plan = build_motion_plan(
                             solve_pieces,
                             solved_display,

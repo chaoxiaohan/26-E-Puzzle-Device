@@ -417,6 +417,92 @@ def _similarity_pose(source, target):
     return target_center, source_center, rotation, scale
 
 
+def render_layout_preview(
+    frame_rgb,
+    pieces,
+    layout,
+    long_side=640,
+):
+    """将原图中的碎片纹理按求解结果重建成一张便于检查的牌面图。"""
+    if not layout:
+        return None
+
+    targets = {
+        int(piece_id): np.asarray(polygon, dtype=np.float64)
+        for piece_id, polygon in layout.items()
+    }
+    all_points = np.vstack(list(targets.values()))
+    minimum = np.min(all_points, axis=0)
+    maximum = np.max(all_points, axis=0)
+    size = maximum - minimum
+    if min(size) < 1.0:
+        return None
+
+    margin = 24
+    render_scale = max(
+        1.0,
+        (float(long_side) - margin * 2.0) / max(size),
+    )
+    canvas_size = np.ceil(
+        size * render_scale + margin * 2.0
+    ).astype(int)
+    preview = np.full(
+        (canvas_size[1], canvas_size[0], 3),
+        48,
+        dtype=np.uint8,
+    )
+
+    for piece_id, target in targets.items():
+        if piece_id < 0 or piece_id >= len(pieces):
+            return None
+        source = np.asarray(
+            pieces[piece_id]["points"],
+            dtype=np.float64,
+        )
+        destination = (
+            (target - minimum) * render_scale + margin
+        )
+        (
+            target_center,
+            source_center,
+            rotation,
+            scale,
+        ) = _similarity_pose(source, destination)
+        matrix = np.zeros((2, 3), dtype=np.float64)
+        matrix[:, :2] = rotation * scale
+        matrix[:, 2] = (
+            target_center
+            - rotation @ source_center * scale
+        )
+
+        source_mask = np.zeros(
+            frame_rgb.shape[:2],
+            dtype=np.uint8,
+        )
+        cv2.fillPoly(
+            source_mask,
+            [np.rint(source).astype(np.int32)],
+            255,
+        )
+        warped = cv2.warpAffine(
+            frame_rgb,
+            matrix,
+            (preview.shape[1], preview.shape[0]),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=(48, 48, 48),
+        )
+        warped_mask = cv2.warpAffine(
+            source_mask,
+            matrix,
+            (preview.shape[1], preview.shape[0]),
+            flags=cv2.INTER_NEAREST,
+        )
+        preview[warped_mask > 0] = warped[warped_mask > 0]
+
+    return preview
+
+
 def score_layout_global_pattern(frame_rgb, pieces, layout):
     """
     比较完整牌面与旋转180度后的相似度。

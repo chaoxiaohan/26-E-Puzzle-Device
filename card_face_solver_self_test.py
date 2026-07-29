@@ -3,7 +3,7 @@ import math
 import cv2
 import numpy as np
 
-from card_face_solver import solve_card_face
+from card_face_solver import render_layout_preview, solve_card_face
 
 
 def transform_points(points, angle, center):
@@ -130,6 +130,16 @@ def main():
         frozenset((0, 3)),
         frozenset((1, 2)),
     }, diagonal_pairs
+    preview = render_layout_preview(
+        frame,
+        pieces,
+        result["layout"],
+    )
+    assert preview is not None
+    assert max(preview.shape[:2]) == 640, preview.shape
+    assert np.count_nonzero(
+        np.any(preview != 48, axis=2)
+    ) > 1000
     print(
         "CARD_FACE_OK score=%.3f texture=%.3f confidence=%.3f "
         "coverage=%.3f nodes=%d best_at=%d time=%.1fms"
