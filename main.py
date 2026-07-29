@@ -2275,7 +2275,7 @@ def main():
     auto_threshold = True
     manual_threshold = 128
     current_threshold = 128
-    polarity_mode = "DARK"
+    polarity_mode = "AUTO"
     tuning_open = False
     solve_requested = False
     solved_display = None
@@ -2292,6 +2292,7 @@ def main():
     )
     solver_future = None
     solve_started_at = 0.0
+    pending_solve_until = 0.0
     last_capture_name = ""
     last_capture_time = 0.0
     button_boxes = get_button_boxes(
@@ -2461,33 +2462,42 @@ def main():
             )
 
         if solve_requested:
-            if solver_future is not None and not solver_future.done():
+            if solver_future is not None:
                 solver_message = "SOLVING"
             else:
-                stable_pieces = build_stable_piece_set(
-                    recent_piece_sets
+                pending_solve_until = time.monotonic() + 2.0
+                solver_message = "HOLD STILL"
+                solver_ms = 0.0
+
+        if (
+            pending_solve_until > 0
+            and solver_future is None
+        ):
+            stable_pieces = build_stable_piece_set(
+                recent_piece_sets
+            )
+            if stable_pieces is not None:
+                pending_solve_until = 0.0
+                solved_display = None
+                motion_plan = []
+                solved_score = 0.0
+                solved_ratio = 0.0
+                solver_nodes = 0
+                solver_message = "SOLVING"
+                solve_started_at = time.monotonic()
+                solver_future = solver_executor.submit(
+                    solve_piece_set_worker,
+                    stable_pieces,
+                    (
+                        roi_x,
+                        roi_y,
+                        roi_width,
+                        roi_height,
+                    ),
                 )
-                if stable_pieces is None:
-                    solver_message = "HOLD STILL"
-                    solver_ms = 0.0
-                else:
-                    solved_display = None
-                    motion_plan = []
-                    solved_score = 0.0
-                    solved_ratio = 0.0
-                    solver_nodes = 0
-                    solver_message = "SOLVING"
-                    solve_started_at = time.monotonic()
-                    solver_future = solver_executor.submit(
-                        solve_piece_set_worker,
-                        stable_pieces,
-                        (
-                            roi_x,
-                            roi_y,
-                            roi_width,
-                            roi_height,
-                        ),
-                    )
+            elif time.monotonic() >= pending_solve_until:
+                pending_solve_until = 0.0
+                solver_message = "NO STABLE"
 
         if solver_future is not None and not solver_future.done():
             solver_ms = (
