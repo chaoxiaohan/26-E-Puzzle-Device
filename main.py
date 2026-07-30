@@ -22,6 +22,7 @@ from card_face_solver import (
     generate_shape_swap_layouts,
     render_layout_preview,
     score_layout_global_pattern,
+    score_rank_index_diagonal,
     score_layout_texture,
     solve_card_face,
 )
@@ -2747,12 +2748,25 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
                 pieces,
                 pattern_layout,
             )
+            rank_index = score_rank_index_diagonal(
+                frame_rgb,
+                pieces,
+                pattern_layout,
+            )
             report = solve_info["constraint_report"]
-            rank = (
+            base_rank = (
                 report["coverage"] * 0.38
                 + report["internal_match"] * 0.20
                 + texture["score"] * 0.17
                 + global_pattern["score"] * 0.25
+            )
+            rank = (
+                base_rank
+                + (
+                    rank_index["score"] - 0.5
+                )
+                * rank_index["confidence"]
+                * 0.32
             )
             solve_info["texture_score"] = texture["score"]
             solve_info["texture_confidence"] = texture["confidence"]
@@ -2762,11 +2776,17 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
             solve_info["corner_diagonal_score"] = (
                 global_pattern.get("diagonal", 0.5)
             )
+            solve_info["rank_index_score"] = rank_index["score"]
+            solve_info["rank_index_confidence"] = (
+                rank_index["confidence"]
+            )
+            solve_info["rank_index_valid"] = rank_index["valid"]
+            solve_info["rank_index_pair"] = rank_index["pair"]
             solve_info["card_assignment"] = tuple(assignment)
             print(
                 "CARD_CANDIDATE fill=%.2f order=%s rank=%.3f "
                 "coverage=%.3f internal=%.3f texture=%.3f "
-                "global=%.3f diagonal=%.3f"
+                "global=%.3f diagonal=%.3f index=%.3f/%.3f/%s"
                 % (
                     fill_ratio,
                     assignment,
@@ -2776,6 +2796,9 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
                     texture["score"],
                     global_pattern["score"],
                     global_pattern.get("diagonal", 0.5),
+                    rank_index["score"],
+                    rank_index["confidence"],
+                    rank_index["valid"],
                 ),
                 flush=True,
             )
@@ -2792,6 +2815,10 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
             and best[2]["constraint_report"]["coverage"] >= 0.88
             and best[2]["constraint_report"]["internal_match"] >= 0.80
             and best[2].get("corner_diagonal_score", 0.0) >= 0.80
+            and (
+                best[2].get("rank_index_confidence", 0.0) < 0.55
+                or best[2].get("rank_index_valid") is True
+            )
         ):
             break
 

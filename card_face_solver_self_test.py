@@ -7,6 +7,7 @@ from card_face_solver import (
     close_card_pattern_layout,
     render_layout_preview,
     score_layout_global_pattern,
+    score_rank_index_diagonal,
     solve_card_face,
 )
 
@@ -27,6 +28,76 @@ def transform_points(points, angle, center):
 
 
 def main():
+    rank_card = np.full((160, 250, 3), 245, dtype=np.uint8)
+    red = (220, 25, 35)
+    cv2.putText(
+        rank_card,
+        "5",
+        (8, 34),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.9,
+        red,
+        3,
+        cv2.LINE_AA,
+    )
+    top_suit = np.array(
+        [[43, 13], [52, 22], [43, 31], [34, 22]],
+        dtype=np.int32,
+    )
+    cv2.fillPoly(rank_card, [top_suit], red)
+    corner_patch = cv2.rotate(
+        rank_card[:48, :64],
+        cv2.ROTATE_180,
+    )
+    rank_card[-48:, -64:] = corner_patch
+    for center in ((82, 48), (168, 48), (125, 80), (82, 112), (168, 112)):
+        diamond = np.array(
+            [
+                [center[0], center[1] - 13],
+                [center[0] + 13, center[1]],
+                [center[0], center[1] + 13],
+                [center[0] - 13, center[1]],
+            ],
+            dtype=np.int32,
+        )
+        cv2.fillPoly(rank_card, [diamond], red)
+
+    rank_polygons = [
+        np.array([[0, 0], [125, 0], [125, 80], [0, 80]], np.float32),
+        np.array([[125, 0], [250, 0], [250, 80], [125, 80]], np.float32),
+        np.array([[0, 80], [125, 80], [125, 160], [0, 160]], np.float32),
+        np.array([[125, 80], [250, 80], [250, 160], [125, 160]], np.float32),
+    ]
+    rank_pieces = [
+        {"points": polygon.copy()}
+        for polygon in rank_polygons
+    ]
+    correct_rank_layout = {
+        piece_id: polygon.copy()
+        for piece_id, polygon in enumerate(rank_polygons)
+    }
+    same_side_card = rank_card.copy()
+    same_side_card[-48:, -64:] = 245
+    same_side_card[-48:, :64] = corner_patch
+    correct_rank = score_rank_index_diagonal(
+        rank_card,
+        rank_pieces,
+        correct_rank_layout,
+    )
+    same_side_rank = score_rank_index_diagonal(
+        same_side_card,
+        rank_pieces,
+        correct_rank_layout,
+    )
+    assert correct_rank["confidence"] >= 0.55, correct_rank
+    assert correct_rank["valid"] is True, correct_rank
+    assert same_side_rank["confidence"] >= 0.55, same_side_rank
+    assert same_side_rank["valid"] is False, same_side_rank
+    assert correct_rank["score"] > same_side_rank["score"] + 0.5, (
+        correct_rank,
+        same_side_rank,
+    )
+
     card = np.full((160, 250, 3), 245, dtype=np.uint8)
     cv2.line(card, (18, 20), (232, 142), (170, 20, 25), 11)
     cv2.line(card, (25, 135), (218, 28), (15, 20, 20), 8)

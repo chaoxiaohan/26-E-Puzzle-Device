@@ -851,6 +851,206 @@ def score_layout_global_pattern(frame_rgb, pieces, layout):
     }
 
 
+def score_rank_index_diagonal(frame_rgb, pieces, layout):
+    """
+    检查扑克牌的数字或字母角标是否出现在一对对角角区。
+
+    这里不做牌面模板匹配，也不尝试识别具体是 5、K 还是大小王。普通牌的
+    角标由较小的数字/字母和花色组成，而中央花色通常更大、更靠近牌面中心。
+    只有同时找到两组清晰的小角标时才形成强约束；证据不足时返回中性分，
+    让几何与拼缝纹理继续决定结果，避免人物牌、大小王或反光造成误拒绝。
+    """
+    preview = render_layout_preview(
+        frame_rgb,
+        pieces,
+        layout,
+        long_side=420,
+        fill_rectangle=True,
+    )
+    if preview is None or min(preview.shape[:2]) <= 52:
+        return {
+            "score": 0.5,
+            "confidence": 0.0,
+            "valid": None,
+            "corners": (0.0, 0.0, 0.0, 0.0),
+            "pair": (),
+        }
+
+    card = preview[24:-24, 24:-24]
+    height, width = card.shape[:2]
+    card_area = height * width
+    if min(height, width) < 40:
+        return {
+            "score": 0.5,
+            "confidence": 0.0,
+            "valid": None,
+            "corners": (0.0, 0.0, 0.0, 0.0),
+            "pair": (),
+        }
+
+    hsv = cv2.cvtColor(card, cv2.COLOR_RGB2HSV)
+    gray = cv2.cvtColor(card, cv2.COLOR_RGB2GRAY)
+    ink = (
+        ((hsv[:, :, 1] > 38) & (hsv[:, :, 2] < 252))
+        | (gray < 105)
+    ).astype(np.uint8)
+    ink[:3, :] = 0
+    ink[-3:, :] = 0
+    ink[:, :3] = 0
+    ink[:, -3:] = 0
+
+    count, _, statistics, centers = (
+        cv2.connectedComponentsWithStats(ink, 8)
+    )
+    components = []
+    minimum_area = max(12, int(card_area * 0.00012))
+    maximum_area = max(minimum_area + 1, int(card_area * 0.009))
+    for component_id in range(1, count):
+        x, y, item_width, item_height, area = (
+            int(value)
+            for value in statistics[component_id]
+        )
+        center_x, center_y = centers[component_id]
+        if area < minimum_area or area > maximum_area:
+            continue
+        if item_width > width * 0.18 or item_height > height * 0.19:
+            continue
+        if min(item_width, item_height) < 3:
+            continue
+        fill_ratio = area / float(item_width * item_height)
+        if fill_ratio < 0.10:
+            continue
+        side_distance = min(
+            center_x / width,
+            1.0 - center_x / width,
+        )
+        if side_distance > 0.31:
+            continue
+
+        corner_id = (
+            (0 if center_y < height * 0.5 else 2)
+            + (0 if center_x < width * 0.5 else 1)
+        )
+        size_score = min(
+            1.0,
+            area / max(1.0, card_area * 0.0015),
+        ) * min(
+            1.0,
+            card_area * 0.007 / max(1.0, area),
+        )
+        quality = (
+            (1.0 - side_distance / 0.31) * 0.45
+            + min(1.0, fill_ratio / 0.35) * 0.25
+            + size_score * 0.30
+        )
+        components.append(
+            {
+                "area": area,
+                "center": (float(center_x), float(center_y)),
+                "corner": corner_id,
+                "quality": quality,
+            }
+        )
+
+    corner_scores = []
+    corner_pairs = []
+    for corner_id in range(4):
+        items = [
+            item
+            for item in components
+            if item["corner"] == corner_id
+        ]
+        best_score = 0.0
+        best_pair = ()
+        for first_id in range(len(items)):
+            for second_id in range(first_id + 1, len(items)):
+                first = items[first_id]
+                second = items[second_id]
+                distance = math.hypot(
+                    (
+                        first["center"][0]
+                        - second["center"][0]
+                    ) / max(1.0, width * 0.24),
+                    (
+                        first["center"][1]
+                        - second["center"][1]
+                    ) / max(1.0, height * 0.24),
+                )
+                if distance > 1.25:
+                    continue
+                area_ratio = max(
+                    first["area"],
+                    second["area"],
+                ) / max(
+                    1.0,
+                    min(first["area"], second["area"]),
+                )
+                balance = math.exp(
+                    -abs(math.log(area_ratio)) * 0.35
+                )
+                pair_score = (
+                    (
+                        first["quality"]
+                        + second["quality"]
+                    )
+                    * 0.5
+                    * (0.65 + balance * 0.35)
+                    * math.exp(
+                        -max(0.0, distance - 0.25) * 0.22
+                    )
+                )
+                if pair_score > best_score:
+                    best_score = pair_score
+                    best_pair = (
+                        first["center"],
+                        second["center"],
+                    )
+        corner_scores.append(float(best_score))
+        corner_pairs.append(best_pair)
+
+    ordered = sorted(
+        range(4),
+        key=lambda corner_id: corner_scores[corner_id],
+        reverse=True,
+    )
+    strongest = corner_scores[ordered[0]]
+    second = corner_scores[ordered[1]]
+    third = corner_scores[ordered[2]]
+    strength = max(
+        0.0,
+        min(1.0, (second - 0.45) / 0.25),
+    )
+    separation = max(
+        0.0,
+        min(1.0, (second - third) / 0.25),
+    )
+    confidence = float(
+        strength * 0.65 + separation * 0.35
+    )
+    if strongest < 0.52 or second < 0.52:
+        confidence = 0.0
+
+    pair = tuple(sorted(ordered[:2]))
+    valid = None
+    score = 0.5
+    if confidence >= 0.55:
+        valid = pair in ((0, 3), (1, 2))
+        direction = 1.0 if valid else -1.0
+        score = float(
+            0.5 + direction * confidence * 0.48
+        )
+
+    return {
+        "score": score,
+        "confidence": confidence,
+        "valid": valid,
+        "corners": tuple(corner_scores),
+        "pair": pair,
+        "component_count": len(components),
+        "corner_pairs": tuple(corner_pairs),
+    }
+
+
 def generate_shape_swap_layouts(pieces, base_layout):
     """
     在外形近似的碎片之间交换目标槽位。
