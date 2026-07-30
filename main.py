@@ -58,6 +58,212 @@ def longest_edge(points):
     return (best_start, best_end), angle
 
 
+def intersect_fitted_lines(first, second):
+    """计算两条拟合直线的交点，近平行时返回None。"""
+    first_point, first_direction = first
+    second_point, second_direction = second
+    cross = (
+        first_direction[0] * second_direction[1]
+        - first_direction[1] * second_direction[0]
+    )
+    if abs(cross) < 1e-5:
+        return None
+    delta = second_point - first_point
+    distance = (
+        delta[0] * second_direction[1]
+        - delta[1] * second_direction[0]
+    ) / cross
+    return first_point + first_direction * distance
+
+
+def refine_polygon_corners(contour, polygon):
+    """用原始轮廓逐边拟合直线，再以相邻直线交点精修角点。"""
+    contour_points = contour.reshape(-1, 2).astype(np.float32)
+    vertices = polygon.reshape(-1, 2).astype(np.float32)
+    edge_count = len(vertices)
+    if edge_count < 3 or len(contour_points) < edge_count * 6:
+        return polygon
+
+    distances = np.empty(
+        (len(contour_points), edge_count),
+        dtype=np.float32,
+    )
+    positions = np.empty_like(distances)
+    for edge_index, start in enumerate(vertices):
+        end = vertices[(edge_index + 1) % edge_count]
+        vector = end - start
+        length_squared = float(np.dot(vector, vector))
+        if length_squared < 1:
+            distances[:, edge_index] = float("inf")
+            positions[:, edge_index] = 0
+            continue
+        position = (contour_points - start) @ vector / length_squared
+        projection = start + np.clip(position, 0, 1)[:, None] * vector
+        positions[:, edge_index] = position
+        distances[:, edge_index] = np.linalg.norm(
+            contour_points - projection,
+            axis=1,
+        )
+    assigned_edges = np.argmin(distances, axis=1)
+
+    fitted_lines = []
+    for edge_index, start in enumerate(vertices):
+        end = vertices[(edge_index + 1) % edge_count]
+        edge_length = float(np.linalg.norm(end - start))
+        edge_positions = positions[:, edge_index]
+        middle_points = contour_points[
+            (assigned_edges == edge_index)
+            & (edge_positions >= 0.08)
+            & (edge_positions <= 0.92)
+        ]
+        if len(middle_points) < 6:
+            middle_points = contour_points[
+                (assigned_edges == edge_index)
+                & (edge_positions >= -0.05)
+                & (edge_positions <= 1.05)
+            ]
+        if len(middle_points) < 4:
+            direction = (end - start) / max(edge_length, 1.0)
+            fitted_lines.append(((start + end) * 0.5, direction))
+            continue
+
+        points = np.asarray(middle_points, dtype=np.float32)
+        vx, vy, x, y = cv2.fitLine(
+            points,
+            cv2.DIST_HUBER,
+            0,
+            0.01,
+            0.01,
+        ).reshape(-1)
+        direction = np.array([vx, vy], dtype=np.float32)
+        direction /= max(float(np.linalg.norm(direction)), 1e-6)
+        if float(np.dot(direction, end - start)) < 0:
+            direction = -direction
+        line_point = np.array([x, y], dtype=np.float32)
+        distances = np.abs(
+            (points[:, 0] - line_point[0]) * direction[1]
+            - (points[:, 1] - line_point[1]) * direction[0]
+        )
+        if float(np.median(distances)) > max(2.5, edge_length * 0.035):
+            direction = (end - start) / max(edge_length, 1.0)
+            line_point = (start + end) * 0.5
+        fitted_lines.append((line_point, direction))
+
+    refined = []
+    for vertex_index, vertex in enumerate(vertices):
+        intersection = intersect_fitted_lines(
+            fitted_lines[(vertex_index - 1) % edge_count],
+            fitted_lines[vertex_index],
+        )
+        if intersection is None:
+            return polygon
+        previous_length = float(
+            np.linalg.norm(
+                vertex - vertices[(vertex_index - 1) % edge_count]
+            )
+        )
+        next_length = float(
+            np.linalg.norm(
+                vertices[(vertex_index + 1) % edge_count] - vertex
+            )
+        )
+        allowed_shift = max(
+            5.0,
+            min(18.0, min(previous_length, next_length) * 0.18),
+        )
+        if float(np.linalg.norm(intersection - vertex)) > allowed_shift:
+            return polygon
+        refined.append(intersection)
+
+    refined = np.asarray(refined, dtype=np.float32).reshape(-1, 1, 2)
+    contour_area = abs(float(cv2.contourArea(contour)))
+    refined_area = abs(float(cv2.contourArea(refined)))
+    if contour_area < 1:
+        return polygon
+    if not 0.82 <= refined_area / contour_area <= 1.18:
+        return polygon
+    return np.rint(refined).astype(np.int32)
+
+
+def green_background_foreground_mask(roi_rgb):
+    """从ROI边缘估计绿色背景，并返回填满内部花纹的碎片掩膜。"""
+    hsv = cv2.cvtColor(roi_rgb, cv2.COLOR_RGB2HSV)
+    height, width = hsv.shape[:2]
+    border_width = max(4, min(height, width) // 45)
+    border = np.concatenate(
+        [
+            hsv[:border_width].reshape(-1, 3),
+            hsv[-border_width:].reshape(-1, 3),
+            hsv[:, :border_width].reshape(-1, 3),
+            hsv[:, -border_width:].reshape(-1, 3),
+        ],
+        axis=0,
+    )
+    green_border = border[
+        (border[:, 0] >= 25)
+        & (border[:, 0] <= 100)
+        & (border[:, 1] >= 35)
+        & (border[:, 2] >= 12)
+    ]
+    if len(green_border) < max(40, len(border) // 8):
+        return None
+
+    reference_hue = float(np.median(green_border[:, 0]))
+    reference_saturation = float(np.median(green_border[:, 1]))
+    hue_distance = np.abs(hsv[:, :, 0].astype(np.float32) - reference_hue)
+    green = (
+        (hue_distance <= 24)
+        & (hsv[:, :, 1] >= max(30, reference_saturation * 0.28))
+        & (hsv[:, :, 2] >= 8)
+    ).astype(np.uint8)
+    green = cv2.morphologyEx(
+        green,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
+        iterations=2,
+    )
+
+    label_count, labels = cv2.connectedComponents(green, connectivity=8)
+    border_labels = np.concatenate(
+        [
+            labels[:border_width].reshape(-1),
+            labels[-border_width:].reshape(-1),
+            labels[:, :border_width].reshape(-1),
+            labels[:, -border_width:].reshape(-1),
+        ]
+    )
+    counts = np.bincount(border_labels, minlength=label_count)
+    connected_labels = np.flatnonzero(counts >= border_width * 2)
+    connected_labels = connected_labels[connected_labels != 0]
+    if len(connected_labels) == 0:
+        return None
+
+    background = np.isin(labels, connected_labels)
+    if float(np.mean(background)) < 0.20:
+        return None
+    foreground = np.where(background, 0, 255).astype(np.uint8)
+    foreground = cv2.morphologyEx(
+        foreground,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
+        iterations=2,
+    )
+    foreground = cv2.morphologyEx(
+        foreground,
+        cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)),
+        iterations=1,
+    )
+    contours, _ = cv2.findContours(
+        foreground,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+    filled = np.zeros_like(foreground)
+    cv2.drawContours(filled, contours, -1, 255, thickness=cv2.FILLED)
+    return filled
+
+
 def find_candidates(
     mask,
     offset_x,
@@ -101,6 +307,7 @@ def find_candidates(
         )
         if len(polygon) < 3 or len(polygon) > 5:
             continue
+        polygon = refine_polygon_corners(contour, polygon)
 
         polygon_area = abs(cv2.contourArea(polygon))
         if polygon_area < min_area or area / polygon_area < 0.72:
@@ -157,6 +364,7 @@ def detect_pieces(
     polygon_epsilon=0.018,
     threshold=None,
     polarity_mode="AUTO",
+    background_mode="BLACK",
 ):
     """检测ROI内的拼图碎片。"""
     roi_x, roi_y, roi_width, roi_height = roi
@@ -213,51 +421,69 @@ def detect_pieces(
     )
 
     max_area = roi_width * roi_height * max_area_ratio
-    bright_candidates = find_candidates(
-        bright_mask,
-        roi_x,
-        roi_y,
-        min_area,
-        max_area,
-        polygon_epsilon,
-    )
-    dark_candidates = find_candidates(
-        dark_mask,
-        roi_x,
-        roi_y,
-        min_area,
-        max_area,
-        polygon_epsilon,
-    )
-
+    background_mode = background_mode.upper()
     polarity_mode = polarity_mode.upper()
-    if polarity_mode == "LIGHT":
-        pieces = bright_candidates[:max_pieces]
-        polarity = "LIGHT"
-        selected_mask = bright_mask
-    elif polarity_mode == "DARK":
-        pieces = dark_candidates[:max_pieces]
-        polarity = "DARK"
-        selected_mask = dark_mask
-    elif candidate_set_score(
-        bright_candidates,
-        max_pieces,
-    ) >= candidate_set_score(
-        dark_candidates,
-        max_pieces,
-    ):
-        pieces = bright_candidates[:max_pieces]
-        polarity = "LIGHT"
-        selected_mask = bright_mask
+    green_mask = (
+        green_background_foreground_mask(roi_rgb)
+        if background_mode == "GREEN"
+        else None
+    )
+    if green_mask is not None:
+        pieces = find_candidates(
+            green_mask,
+            roi_x,
+            roi_y,
+            min_area,
+            max_area,
+            polygon_epsilon,
+        )[:max_pieces]
+        polarity = "GREEN"
+        selected_mask = green_mask
     else:
-        pieces = dark_candidates[:max_pieces]
-        polarity = "DARK"
-        selected_mask = dark_mask
+        bright_candidates = find_candidates(
+            bright_mask,
+            roi_x,
+            roi_y,
+            min_area,
+            max_area,
+            polygon_epsilon,
+        )
+        dark_candidates = find_candidates(
+            dark_mask,
+            roi_x,
+            roi_y,
+            min_area,
+            max_area,
+            polygon_epsilon,
+        )
+        if polarity_mode == "LIGHT":
+            pieces = bright_candidates[:max_pieces]
+            polarity = "LIGHT"
+            selected_mask = bright_mask
+        elif polarity_mode == "DARK":
+            pieces = dark_candidates[:max_pieces]
+            polarity = "DARK"
+            selected_mask = dark_mask
+        elif candidate_set_score(
+            bright_candidates,
+            max_pieces,
+        ) >= candidate_set_score(
+            dark_candidates,
+            max_pieces,
+        ):
+            pieces = bright_candidates[:max_pieces]
+            polarity = "LIGHT"
+            selected_mask = bright_mask
+        else:
+            pieces = dark_candidates[:max_pieces]
+            polarity = "DARK"
+            selected_mask = dark_mask
 
     pieces.sort(key=lambda item: (item["center"][1], item["center"][0]))
     return pieces, {
         "polarity": polarity,
         "polarity_mode": polarity_mode,
+        "background_mode": background_mode,
         "threshold": int(threshold_value),
         "threshold_mode": threshold_mode,
         "mask": selected_mask,
@@ -2933,6 +3159,7 @@ def main():
     manual_threshold = 128
     current_threshold = 128
     polarity_mode = "AUTO"
+    background_mode = "BLACK"
     tuning_open = False
     solve_requested = False
     card_requested = False
@@ -3014,6 +3241,12 @@ def main():
                     "DARK",
                 ):
                     polarity_mode = requested_polarity
+            if "background_mode" in control:
+                requested_background = str(
+                    control["background_mode"]
+                ).upper()
+                if requested_background in ("BLACK", "GREEN"):
+                    background_mode = requested_background
             if "min_piece_area" in control:
                 min_piece_area = min(
                     50000,
@@ -3141,6 +3374,7 @@ def main():
             polygon_epsilon=polygon_epsilon,
             threshold=None if auto_threshold else manual_threshold,
             polarity_mode=polarity_mode,
+            background_mode=background_mode,
         )
         current_threshold = threshold_info["threshold"]
         if capture_requested:
@@ -3154,6 +3388,7 @@ def main():
                     "auto_threshold": bool(auto_threshold),
                     "manual_threshold": int(manual_threshold),
                     "polarity_mode": polarity_mode,
+                    "background_mode": background_mode,
                     "min_piece_area": int(min_piece_area),
                     "max_piece_area_ratio": float(
                         max_piece_area_ratio
@@ -3563,6 +3798,7 @@ def main():
                 "manual_threshold": int(manual_threshold),
                 "current_threshold": int(current_threshold),
                 "polarity_mode": polarity_mode,
+                "background_mode": background_mode,
                 "detected_polarity": threshold_info["polarity"],
                 "min_piece_area": int(min_piece_area),
                 "solving": bool(
