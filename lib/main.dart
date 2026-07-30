@@ -48,14 +48,6 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   int minPieceArea = 1500;
   String polarityMode = 'AUTO';
 
-  String get modeTitle {
-    return switch (mode) {
-      PuzzleMode.firstQuestion => '第一问',
-      PuzzleMode.normalPuzzle => '普通拼图',
-      PuzzleMode.cardPuzzle => '扑克牌',
-    };
-  }
-
   String get resultTitle {
     return switch (mode) {
       PuzzleMode.firstQuestion => '第一问结果',
@@ -177,49 +169,6 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
             children: [
               const ColoredBox(color: Color(0xFF111827)),
               CustomPaint(painter: CameraScenePainter()),
-              Positioned(
-                left: 10,
-                top: 10,
-                child: _DarkBadge(label: modeTitle),
-              ),
-              const Positioned(
-                right: 10,
-                top: 10,
-                child: _DarkBadge(label: '实时识别'),
-              ),
-              Positioned(
-                left: 10,
-                right: 10,
-                bottom: 10,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 7,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xE6111822),
-                    borderRadius: BorderRadius.circular(9),
-                  ),
-                  child: const Row(
-                    children: [
-                      Icon(Icons.circle, size: 7, color: Color(0xFF5EE6BA)),
-                      SizedBox(width: 6),
-                      Text(
-                        '检测稳定',
-                        style: TextStyle(color: Colors.white, fontSize: 11),
-                      ),
-                      Spacer(),
-                      Text(
-                        '4个碎片',
-                        style: TextStyle(
-                          color: Color(0xFFCBD5E1),
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
             ],
           ),
         ),
@@ -275,10 +224,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     return _Panel(
       child: Column(
         children: [
-          _PanelHeader(
-            title: resultTitle,
-            trailing: hasResult ? '真实纹理' : '等待求解',
-          ),
+          _PanelHeader(title: resultTitle, trailing: ''),
           Expanded(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
@@ -682,42 +628,16 @@ class _ResultView extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: Image.asset(
-                  'assets/demo_result.png',
-                  fit: BoxFit.contain,
-                  filterQuality: FilterQuality.medium,
-                ),
-              ),
-            ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Image.asset(
+            'assets/demo_result.png',
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.medium,
           ),
-          Positioned(
-            right: 12,
-            top: 12,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-              decoration: BoxDecoration(
-                color: const Color(0xF2FFFFFF),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFFD7E1EA)),
-              ),
-              child: const Text(
-                '矩形闭合  ·  无重叠',
-                style: TextStyle(
-                  color: Color(0xFF0F766E),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -778,31 +698,6 @@ class _SolvingView extends StatelessWidget {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _DarkBadge extends StatelessWidget {
-  const _DarkBadge({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-      decoration: BoxDecoration(
-        color: const Color(0xE6111822),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: Color(0xFF7CE7C5),
-          fontSize: 10,
-          fontWeight: FontWeight.w800,
         ),
       ),
     );
