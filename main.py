@@ -1800,6 +1800,19 @@ def draw_roi(img, roi):
 def draw_piece(img, piece, piece_id):
     """画出一块碎片的轮廓、中心、最长边和简洁编号。"""
     points = piece["points"]
+
+    # 先画深色底线，再画绿色轮廓。亮、暗碎片都能看清，而且每条边都会被描出。
+    for index, start in enumerate(points):
+        end = points[(index + 1) % len(points)]
+        img.draw_line(
+            start[0],
+            start[1],
+            end[0],
+            end[1],
+            image.COLOR_BLACK,
+            6,
+        )
+
     for index, start in enumerate(points):
         end = points[(index + 1) % len(points)]
         img.draw_line(
@@ -1808,7 +1821,7 @@ def draw_piece(img, piece, piece_id):
             end[0],
             end[1],
             image.COLOR_GREEN,
-            2,
+            3,
         )
 
     edge_start, edge_end = piece["longest_edge"]
