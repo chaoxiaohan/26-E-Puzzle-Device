@@ -13,6 +13,7 @@ class BackendSnapshot {
     required this.manualThreshold,
     required this.currentThreshold,
     required this.polarityMode,
+    required this.backgroundMode,
     required this.minPieceArea,
     required this.solving,
     required this.solverMessage,
@@ -36,6 +37,7 @@ class BackendSnapshot {
       manualThreshold: (json['manual_threshold'] as num?)?.toInt() ?? 128,
       currentThreshold: (json['current_threshold'] as num?)?.toInt() ?? 128,
       polarityMode: json['polarity_mode']?.toString() ?? 'AUTO',
+      backgroundMode: json['background_mode']?.toString() ?? 'BLACK',
       minPieceArea: (json['min_piece_area'] as num?)?.toInt() ?? 1500,
       solving: json['solving'] == true,
       solverMessage: json['solver_message']?.toString() ?? '',
@@ -58,6 +60,7 @@ class BackendSnapshot {
   final int manualThreshold;
   final int currentThreshold;
   final String polarityMode;
+  final String backgroundMode;
   final int minPieceArea;
   final bool solving;
   final String solverMessage;
@@ -150,6 +153,7 @@ class BackendBridge {
     bool? autoThreshold,
     int? manualThreshold,
     String? polarityMode,
+    String? backgroundMode,
     int? minPieceArea,
   }) async {
     final payload = <String, Object>{
@@ -169,6 +173,9 @@ class BackendBridge {
     }
     if (polarityMode != null) {
       payload['polarity_mode'] = polarityMode;
+    }
+    if (backgroundMode != null) {
+      payload['background_mode'] = backgroundMode;
     }
     if (minPieceArea != null) {
       payload['min_piece_area'] = minPieceArea;

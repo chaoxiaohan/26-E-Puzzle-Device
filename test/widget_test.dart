@@ -18,6 +18,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('二值化实时预览'), findsOneWidget);
+    expect(find.text('背景颜色'), findsOneWidget);
+    expect(find.text('黑色'), findsOneWidget);
+    expect(find.text('绿色'), findsOneWidget);
     expect(find.text('自动 OTSU'), findsOneWidget);
     expect(find.text('-5'), findsOneWidget);
     expect(find.text('+5'), findsOneWidget);

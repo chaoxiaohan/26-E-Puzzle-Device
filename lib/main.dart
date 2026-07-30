@@ -55,6 +55,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   int threshold = 128;
   int minPieceArea = 1500;
   String polarityMode = 'AUTO';
+  String backgroundMode = 'BLACK';
   int pieceCount = 0;
   double fps = 0;
   double score = 0;
@@ -158,6 +159,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
             ? snapshot.currentThreshold
             : snapshot.manualThreshold;
         polarityMode = snapshot.polarityMode;
+        backgroundMode = snapshot.backgroundMode;
         minPieceArea = snapshot.minPieceArea;
       }
       lastCaptureName = snapshot.lastCaptureName;
@@ -464,6 +466,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
           autoThreshold: autoThreshold,
           manualThreshold: threshold,
           polarityMode: polarityMode,
+          backgroundMode: backgroundMode,
           minPieceArea: minPieceArea,
         ),
       ),
@@ -481,7 +484,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
           return StatefulBuilder(
             builder: (context, setSheetState) {
               return Container(
-                height: 430,
+                height: 500,
                 margin: const EdgeInsets.all(12),
                 padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
@@ -561,6 +564,29 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                             ],
                           ),
                           const SizedBox(height: 6),
+                          const Text(
+                            '背景颜色',
+                            style: TextStyle(
+                              color: Color(0xFF334155),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 7),
+                          SegmentedButton<String>(
+                            segments: const [
+                              ButtonSegment(value: 'BLACK', label: Text('黑色')),
+                              ButtonSegment(value: 'GREEN', label: Text('绿色')),
+                            ],
+                            selected: {backgroundMode},
+                            showSelectedIcon: false,
+                            onSelectionChanged: (values) {
+                              setSheetState(() {
+                                backgroundMode = values.first;
+                              });
+                              _queueSettings();
+                            },
+                          ),
+                          const SizedBox(height: 12),
                           Row(
                             children: [
                               const Text(
