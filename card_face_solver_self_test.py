@@ -3,7 +3,11 @@ import math
 import cv2
 import numpy as np
 
-from card_face_solver import render_layout_preview, solve_card_face
+from card_face_solver import (
+    close_card_pattern_layout,
+    render_layout_preview,
+    solve_card_face,
+)
 
 
 def transform_points(points, angle, center):
@@ -140,6 +144,28 @@ def main():
     assert np.count_nonzero(
         np.any(preview != 48, axis=2)
     ) > 1000
+    shifted = {
+        piece_id: polygon + np.array([1.5, -0.5])
+        for piece_id, polygon in result["layout"].items()
+    }
+    closed = close_card_pattern_layout(
+        shifted,
+        {
+            "repair": {
+                "gap": {
+                    "translations": {
+                        piece_id: [1.5, -0.5]
+                        for piece_id in shifted
+                    }
+                }
+            }
+        },
+    )
+    for piece_id in shifted:
+        assert np.allclose(
+            closed[piece_id],
+            result["layout"][piece_id],
+        )
     print(
         "CARD_FACE_OK score=%.3f texture=%.3f confidence=%.3f "
         "coverage=%.3f nodes=%d best_at=%d time=%.1fms"

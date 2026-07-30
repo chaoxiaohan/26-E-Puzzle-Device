@@ -18,6 +18,7 @@ from layout_constraints import (
 )
 from cpp_rectangle_solver import solve as solve_rectangle_by_cover_cpp
 from card_face_solver import (
+    close_card_pattern_layout,
     generate_shape_swap_layouts,
     render_layout_preview,
     score_layout_global_pattern,
@@ -2074,21 +2075,21 @@ def show_card_assembly_preview(preview_rgb):
     height, width = preview_rgb.shape[:2]
     scale = min(1.0, 640.0 / width, 560.0 / height)
     cv2.namedWindow(
-        "Card Assembly Preview",
+        "Card Pattern Check - Gap Closed",
         cv2.WINDOW_NORMAL,
     )
     cv2.resizeWindow(
-        "Card Assembly Preview",
+        "Card Pattern Check - Gap Closed",
         max(320, int(width * scale)),
         max(240, int(height * scale)),
     )
     cv2.moveWindow(
-        "Card Assembly Preview",
+        "Card Pattern Check - Gap Closed",
         760,
         80,
     )
     cv2.imshow(
-        "Card Assembly Preview",
+        "Card Pattern Check - Gap Closed",
         cv2.cvtColor(
             preview_rgb,
             cv2.COLOR_RGB2BGR,
@@ -2606,15 +2607,19 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
                     )
                     continue
 
+            pattern_layout = close_card_pattern_layout(
+                prepared,
+                solve_info,
+            )
             texture = score_layout_texture(
                 frame_rgb,
                 pieces,
-                prepared,
+                pattern_layout,
             )
             global_pattern = score_layout_global_pattern(
                 frame_rgb,
                 pieces,
-                prepared,
+                pattern_layout,
             )
             report = solve_info["constraint_report"]
             rank = (
@@ -2648,6 +2653,7 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
                     rank,
                     prepared,
                     solve_info,
+                    pattern_layout,
                 )
 
         if (
@@ -2667,7 +2673,8 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
             "preview_rgb": render_layout_preview(
                 frame_rgb,
                 pieces,
-                best[1],
+                best[3],
+                fill_rectangle=True,
             ),
             "mode": "CARD",
             "elapsed_ms": (
@@ -2694,10 +2701,15 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
                 flush=True,
             )
         else:
+            pattern_layout = close_card_pattern_layout(
+                prepared,
+                result["info"],
+            )
             result["preview_rgb"] = render_layout_preview(
                 frame_rgb,
                 pieces,
-                prepared,
+                pattern_layout,
+                fill_rectangle=True,
             )
     result["elapsed_ms"] = (
         time.monotonic() - started

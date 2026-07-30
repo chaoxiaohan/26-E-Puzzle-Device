@@ -417,11 +417,36 @@ def _similarity_pose(source, target):
     return target_center, source_center, rotation, scale
 
 
+def close_card_pattern_layout(layout, solve_info):
+    """撤销机械臂安全缝，只用于牌面花纹评分和预览。"""
+    closed = {
+        int(piece_id): np.asarray(
+            polygon,
+            dtype=np.float64,
+        ).copy()
+        for piece_id, polygon in layout.items()
+    }
+    translations = (
+        solve_info.get("repair", {})
+        .get("gap", {})
+        .get("translations", {})
+    )
+    for piece_id, translation in translations.items():
+        piece_id = int(piece_id)
+        if piece_id in closed:
+            closed[piece_id] -= np.asarray(
+                translation,
+                dtype=np.float64,
+            )
+    return closed
+
+
 def render_layout_preview(
     frame_rgb,
     pieces,
     layout,
     long_side=640,
+    fill_rectangle=False,
 ):
     """将原图中的碎片纹理按求解结果重建成一张便于检查的牌面图。"""
     if not layout:
@@ -451,6 +476,20 @@ def render_layout_preview(
         48,
         dtype=np.uint8,
     )
+    if fill_rectangle:
+        destination_points = (
+            (all_points - minimum) * render_scale + margin
+        ).astype(np.float32)
+        rectangle = cv2.minAreaRect(destination_points)
+        cv2.fillPoly(
+            preview,
+            [
+                np.rint(
+                    cv2.boxPoints(rectangle)
+                ).astype(np.int32)
+            ],
+            (245, 245, 245),
+        )
 
     for piece_id, target in targets.items():
         if piece_id < 0 or piece_id >= len(pieces):
