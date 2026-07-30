@@ -899,7 +899,7 @@ def score_rank_index_diagonal(frame_rgb, pieces, layout):
     ink[:, :3] = 0
     ink[:, -3:] = 0
 
-    count, labels, statistics, centers = (
+    count, _, statistics, centers = (
         cv2.connectedComponentsWithStats(ink, 8)
     )
     components = []
@@ -945,7 +945,6 @@ def score_rank_index_diagonal(frame_rgb, pieces, layout):
         )
         components.append(
             {
-                "id": component_id,
                 "area": area,
                 "center": (float(center_x), float(center_y)),
                 "corner": corner_id,
@@ -955,7 +954,6 @@ def score_rank_index_diagonal(frame_rgb, pieces, layout):
 
     corner_scores = []
     corner_pairs = []
-    corner_component_pairs = []
     for corner_id in range(4):
         items = [
             item
@@ -1003,15 +1001,12 @@ def score_rank_index_diagonal(frame_rgb, pieces, layout):
                 )
                 if pair_score > best_score:
                     best_score = pair_score
-                    best_pair = (first, second)
+                    best_pair = (
+                        first["center"],
+                        second["center"],
+                    )
         corner_scores.append(float(best_score))
-        corner_component_pairs.append(best_pair)
-        corner_pairs.append(
-            tuple(
-                item["center"]
-                for item in best_pair
-            )
-        )
+        corner_pairs.append(best_pair)
 
     ordered = sorted(
         range(4),
@@ -1036,189 +1031,19 @@ def score_rank_index_diagonal(frame_rgb, pieces, layout):
         confidence = 0.0
 
     pair = tuple(sorted(ordered[:2]))
-    position_valid = None
-    orientation_valid = None
-    orientation_confidence = 0.0
-    orientation_rotation = None
-    rotation_scores = ()
+    valid = None
     score = 0.5
     if confidence >= 0.55:
-        position_valid = pair in ((0, 3), (1, 2))
-
-        def cluster_mask(corner_id):
-            seeds = corner_component_pairs[corner_id]
-            if len(seeds) != 2:
-                return None
-            selected = []
-            for item in components:
-                if item["corner"] != corner_id:
-                    continue
-                distance = min(
-                    math.hypot(
-                        (
-                            item["center"][0]
-                            - seed["center"][0]
-                        ) / max(1.0, width * 0.24),
-                        (
-                            item["center"][1]
-                            - seed["center"][1]
-                        ) / max(1.0, height * 0.24),
-                    )
-                    for seed in seeds
-                )
-                if distance <= 0.90:
-                    selected.append(item["id"])
-            if len(selected) < 2:
-                return None
-
-            selected_mask = np.isin(
-                labels,
-                selected,
-            )
-            rows, columns = np.where(selected_mask)
-            if len(rows) < 12:
-                return None
-            crop = selected_mask[
-                np.min(rows):np.max(rows) + 1,
-                np.min(columns):np.max(columns) + 1,
-            ].astype(np.uint8)
-            normalized = np.zeros((96, 96), dtype=np.uint8)
-            scale = min(
-                72.0 / crop.shape[1],
-                72.0 / crop.shape[0],
-            )
-            target_width = max(
-                1,
-                int(round(crop.shape[1] * scale)),
-            )
-            target_height = max(
-                1,
-                int(round(crop.shape[0] * scale)),
-            )
-            resized = cv2.resize(
-                crop,
-                (target_width, target_height),
-                interpolation=cv2.INTER_AREA,
-            )
-            offset_x = (96 - target_width) // 2
-            offset_y = (96 - target_height) // 2
-            normalized[
-                offset_y:offset_y + target_height,
-                offset_x:offset_x + target_width,
-            ] = resized
-            return normalized
-
-        def cluster_similarity(first, second):
-            first = cv2.GaussianBlur(
-                first.astype(np.float32),
-                (5, 5),
-                0,
-            )
-            second = cv2.GaussianBlur(
-                second.astype(np.float32),
-                (5, 5),
-                0,
-            )
-            padded = cv2.copyMakeBorder(
-                second,
-                8,
-                8,
-                8,
-                8,
-                cv2.BORDER_CONSTANT,
-                value=0.0,
-            )
-            correlation = cv2.matchTemplate(
-                padded,
-                first,
-                cv2.TM_CCOEFF_NORMED,
-            )
-            return float(np.max(correlation))
-
-        first_mask = cluster_mask(ordered[0])
-        second_mask = cluster_mask(ordered[1])
-        if first_mask is not None and second_mask is not None:
-            rotated_masks = (
-                second_mask,
-                cv2.rotate(
-                    second_mask,
-                    cv2.ROTATE_90_CLOCKWISE,
-                ),
-                cv2.rotate(
-                    second_mask,
-                    cv2.ROTATE_180,
-                ),
-                cv2.rotate(
-                    second_mask,
-                    cv2.ROTATE_90_COUNTERCLOCKWISE,
-                ),
-            )
-            rotation_scores = tuple(
-                cluster_similarity(
-                    first_mask,
-                    rotated,
-                )
-                for rotated in rotated_masks
-            )
-            best_rotation_id = int(
-                np.argmax(rotation_scores)
-            )
-            orientation_rotation = (
-                0,
-                90,
-                180,
-                270,
-            )[best_rotation_id]
-            rotated_score = rotation_scores[2]
-            best_other = max(
-                rotation_scores[0],
-                rotation_scores[1],
-                rotation_scores[3],
-            )
-            if best_rotation_id == 2:
-                best_score = rotated_score
-                margin = rotated_score - best_other
-            else:
-                best_score = best_other
-                margin = best_other - rotated_score
-            strength = max(
-                0.0,
-                min(1.0, (best_score - 0.42) / 0.22),
-            )
-            separation = max(
-                0.0,
-                min(1.0, margin / 0.15),
-            )
-            orientation_confidence = (
-                strength * 0.55
-                + separation * 0.45
-            )
-            if orientation_confidence >= 0.55:
-                orientation_valid = best_rotation_id == 2
-
-        valid = position_valid
-        if orientation_valid is not None:
-            valid = position_valid and orientation_valid
-        effective_confidence = max(
-            confidence,
-            orientation_confidence,
-        )
+        valid = pair in ((0, 3), (1, 2))
         direction = 1.0 if valid else -1.0
         score = float(
-            0.5 + direction * effective_confidence * 0.48
+            0.5 + direction * confidence * 0.48
         )
-    else:
-        valid = None
 
     return {
         "score": score,
         "confidence": confidence,
         "valid": valid,
-        "position_valid": position_valid,
-        "orientation_valid": orientation_valid,
-        "orientation_confidence": orientation_confidence,
-        "orientation_rotation": orientation_rotation,
-        "rotation_scores": rotation_scores,
         "corners": tuple(corner_scores),
         "pair": pair,
         "component_count": len(components),

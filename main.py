@@ -2782,24 +2782,11 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
             )
             solve_info["rank_index_valid"] = rank_index["valid"]
             solve_info["rank_index_pair"] = rank_index["pair"]
-            solve_info["rank_index_position_valid"] = (
-                rank_index.get("position_valid")
-            )
-            solve_info["rank_index_orientation_valid"] = (
-                rank_index.get("orientation_valid")
-            )
-            solve_info["rank_index_orientation_confidence"] = (
-                rank_index.get("orientation_confidence", 0.0)
-            )
-            solve_info["rank_index_orientation_rotation"] = (
-                rank_index.get("orientation_rotation")
-            )
             solve_info["card_assignment"] = tuple(assignment)
             print(
                 "CARD_CANDIDATE fill=%.2f order=%s rank=%.3f "
                 "coverage=%.3f internal=%.3f texture=%.3f "
-                "global=%.3f diagonal=%.3f index=%.3f/%.3f/%s "
-                "orient=%s/%.3f/%s"
+                "global=%.3f diagonal=%.3f index=%.3f/%.3f/%s"
                 % (
                     fill_ratio,
                     assignment,
@@ -2812,9 +2799,6 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
                     rank_index["score"],
                     rank_index["confidence"],
                     rank_index["valid"],
-                    rank_index.get("orientation_rotation"),
-                    rank_index.get("orientation_confidence", 0.0),
-                    rank_index.get("orientation_valid"),
                 ),
                 flush=True,
             )
