@@ -72,7 +72,8 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   bool polling = false;
   bool tuningOpen = false;
   bool settingsSyncPending = false;
-  int settingsSyncRevision = 0;
+  bool visionSettingsDirty = false;
+  bool visionSettingsFlushRunning = false;
   bool initializedFromBackend = false;
   bool autoThreshold = true;
   int threshold = 128;
@@ -116,7 +117,6 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   Uint8List? cameraFrame;
   Uint8List? resultFrame;
   Timer? pollTimer;
-  Timer? settingsTimer;
 
   String get resultTitle {
     return switch (mode) {
@@ -153,7 +153,6 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   @override
   void dispose() {
     pollTimer?.cancel();
-    settingsTimer?.cancel();
     binaryPreview.dispose();
     calibrationScrollController.dispose();
     serialPortController.dispose();
@@ -1186,129 +1185,120 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
             const SizedBox(width: 24),
             Expanded(
               flex: 6,
-              child: StatefulBuilder(
-                builder: (context, setSettingsState) {
-                  return SingleChildScrollView(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '检测参数',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    const Text(
+                      '背景颜色',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 8),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(value: 'BLACK', label: Text('黑色')),
+                        ButtonSegment(value: 'GREEN', label: Text('绿色')),
+                      ],
+                      selected: {backgroundMode},
+                      showSelectedIcon: false,
+                      onSelectionChanged: (values) {
+                        setState(() => backgroundMode = values.first);
+                        _queueSettings();
+                      },
+                    ),
+                    const SizedBox(height: 18),
+                    Row(
                       children: [
                         const Text(
-                          '检测参数',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 18),
-                        const Text(
-                          '背景颜色',
+                          '二值化阈值',
                           style: TextStyle(fontWeight: FontWeight.w700),
                         ),
-                        const SizedBox(height: 8),
-                        SegmentedButton<String>(
-                          segments: const [
-                            ButtonSegment(value: 'BLACK', label: Text('黑色')),
-                            ButtonSegment(value: 'GREEN', label: Text('绿色')),
-                          ],
-                          selected: {backgroundMode},
-                          showSelectedIcon: false,
-                          onSelectionChanged: (values) {
-                            setState(() => backgroundMode = values.first);
-                            setSettingsState(() {});
-                            _queueSettings();
-                          },
-                        ),
-                        const SizedBox(height: 18),
-                        Row(
-                          children: [
-                            const Text(
-                              '二值化阈值',
-                              style: TextStyle(fontWeight: FontWeight.w700),
-                            ),
-                            const Spacer(),
-                            FilterChip(
-                              selected: autoThreshold,
-                              label: const Text('自动 OTSU'),
-                              onSelected: (selected) {
-                                setState(() => autoThreshold = selected);
-                                setSettingsState(() {});
-                                _queueSettings();
-                              },
-                            ),
-                          ],
-                        ),
-                        Slider(
-                          value: threshold.toDouble(),
-                          min: 0,
-                          max: 255,
-                          label: threshold.toString(),
-                          onChanged: (value) {
-                            setState(() {
-                              threshold = value.round();
-                              autoThreshold = false;
-                            });
-                            setSettingsState(() {});
-                            _queueSettings();
-                          },
-                        ),
-                        Center(
-                          child: Text(
-                            '当前阈值：$threshold',
-                            style: const TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                        ),
-                        const SizedBox(height: 18),
-                        const Text(
-                          '目标极性',
-                          style: TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        const SizedBox(height: 8),
-                        SegmentedButton<String>(
-                          segments: const [
-                            ButtonSegment(value: 'AUTO', label: Text('自动')),
-                            ButtonSegment(value: 'LIGHT', label: Text('亮色')),
-                            ButtonSegment(value: 'DARK', label: Text('暗色')),
-                          ],
-                          selected: {polarityMode},
-                          showSelectedIcon: false,
-                          onSelectionChanged: (values) {
-                            setState(() => polarityMode = values.first);
-                            setSettingsState(() {});
-                            _queueSettings();
-                          },
-                        ),
-                        const SizedBox(height: 20),
-                        Row(
-                          children: [
-                            const Text(
-                              '最小碎片面积',
-                              style: TextStyle(fontWeight: FontWeight.w700),
-                            ),
-                            const Spacer(),
-                            Text(
-                              minPieceArea.toString(),
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ],
-                        ),
-                        Slider(
-                          value: minPieceArea.toDouble(),
-                          min: 100,
-                          max: 10000,
-                          divisions: 99,
-                          onChanged: (value) {
-                            setState(() => minPieceArea = value.round());
-                            setSettingsState(() {});
+                        const Spacer(),
+                        FilterChip(
+                          selected: autoThreshold,
+                          label: const Text('自动 OTSU'),
+                          onSelected: (selected) {
+                            setState(() => autoThreshold = selected);
                             _queueSettings();
                           },
                         ),
                       ],
                     ),
-                  );
-                },
+                    Slider(
+                      value: threshold.toDouble(),
+                      min: 0,
+                      max: 255,
+                      label: threshold.toString(),
+                      onChanged: (value) {
+                        setState(() {
+                          threshold = value.round();
+                          autoThreshold = false;
+                        });
+                        _queueSettings();
+                      },
+                    ),
+                    Center(
+                      child: Text(
+                        '当前阈值：$threshold',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    const Text(
+                      '目标极性',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 8),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(value: 'AUTO', label: Text('自动')),
+                        ButtonSegment(value: 'LIGHT', label: Text('亮色')),
+                        ButtonSegment(value: 'DARK', label: Text('暗色')),
+                      ],
+                      selected: {polarityMode},
+                      showSelectedIcon: false,
+                      onSelectionChanged: (values) {
+                        setState(() => polarityMode = values.first);
+                        _queueSettings();
+                      },
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        const Text(
+                          '最小碎片面积',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const Spacer(),
+                        Text(
+                          minPieceArea.toString(),
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Slider(
+                      value: minPieceArea.toDouble(),
+                      min: 100,
+                      max: 10000,
+                      divisions: 99,
+                      onChanged: (value) {
+                        setState(() => minPieceArea = value.round());
+                        _queueSettings();
+                      },
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
@@ -1798,50 +1788,34 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   }
 
   void _queueSettings() {
-    settingsTimer?.cancel();
+    visionSettingsDirty = true;
     settingsSyncPending = true;
-    final queuedRevision = ++settingsSyncRevision;
-    final queuedAutoThreshold = autoThreshold;
-    final queuedThreshold = threshold;
-    final queuedPolarityMode = polarityMode;
-    final queuedBackgroundMode = backgroundMode;
-    final queuedMinPieceArea = minPieceArea;
-    settingsTimer = Timer(
-      const Duration(milliseconds: 110),
-      () => unawaited(
-        _flushSettings(
-          revision: queuedRevision,
-          autoThreshold: queuedAutoThreshold,
-          threshold: queuedThreshold,
-          polarityMode: queuedPolarityMode,
-          backgroundMode: queuedBackgroundMode,
-          minPieceArea: queuedMinPieceArea,
-        ),
-      ),
-    );
+    if (!visionSettingsFlushRunning) {
+      unawaited(_flushSettings());
+    }
   }
 
-  Future<void> _flushSettings({
-    required int revision,
-    required bool autoThreshold,
-    required int threshold,
-    required String polarityMode,
-    required String backgroundMode,
-    required int minPieceArea,
-  }) async {
+  Future<void> _flushSettings() async {
+    visionSettingsFlushRunning = true;
     try {
-      await backend.sendControl(
-        autoThreshold: autoThreshold,
-        manualThreshold: threshold,
-        polarityMode: polarityMode,
-        backgroundMode: backgroundMode,
-        minPieceArea: minPieceArea,
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 140));
+      while (mounted && visionSettingsDirty) {
+        visionSettingsDirty = false;
+        await backend.sendControl(
+          autoThreshold: autoThreshold,
+          manualThreshold: threshold,
+          polarityMode: polarityMode,
+          backgroundMode: backgroundMode,
+          minPieceArea: minPieceArea,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+      }
     } finally {
-      if (mounted && revision == settingsSyncRevision) {
+      visionSettingsFlushRunning = false;
+      if (mounted && !visionSettingsDirty) {
         settingsSyncPending = false;
         await _pollBackend();
+      } else if (mounted) {
+        _queueSettings();
       }
     }
   }
