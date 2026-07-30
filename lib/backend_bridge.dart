@@ -176,7 +176,10 @@ class BackendUpdate {
 }
 
 class BackendBridge {
-  final File _control = File('/tmp/puzzle_ui_control.json');
+  BackendBridge({String controlPath = '/tmp/puzzle_ui_control.json'})
+    : _control = File(controlPath);
+
+  final File _control;
   final File _state = File('/tmp/puzzle_ui_state.json');
   final File _frame = File('/tmp/puzzle_ui_frame.jpg');
   final File _binary = File('/tmp/puzzle_ui_binary.jpg');
