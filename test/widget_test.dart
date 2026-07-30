@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:puzzle_flutter_ui/main.dart';
 
 void main() {
-  testWidgets('横屏控制台包含拼图、机械臂和设置页面', (tester) async {
+  testWidgets('横屏控制台包含拼图、平台和设置页面', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1280, 720));
     await tester.pumpWidget(const PuzzleStudioApp());
 
@@ -14,13 +14,15 @@ void main() {
     expect(find.text('扑克牌拼接实图'), findsOneWidget);
     expect(find.text('开始求解'), findsOneWidget);
 
-    await tester.tap(find.text('机械臂'));
+    await tester.tap(find.text('平台'));
     await tester.pump();
 
-    expect(find.text('机械臂手动控制'), findsOneWidget);
-    expect(find.text('移动到绝对位置'), findsOneWidget);
-    expect(find.text('按输入量相对移动'), findsOneWidget);
-    expect(find.text('归零'), findsOneWidget);
+    expect(find.text('平台手动控制'), findsOneWidget);
+    expect(find.text('读取位置'), findsOneWidget);
+    expect(find.text('XY 平面'), findsOneWidget);
+    expect(find.text('Z 轴'), findsOneWidget);
+    expect(find.text('平台旋转'), findsOneWidget);
+    expect(find.text('平台归零'), findsOneWidget);
 
     await tester.tap(find.text('设置').first);
     await tester.pump();
@@ -43,6 +45,14 @@ void main() {
     expect(find.text('自动抓取Z'), findsOneWidget);
     expect(find.text('自动放置Z'), findsOneWidget);
     expect(find.text('保存并连接'), findsOneWidget);
+
+    await tester.tap(find.text('平台标定'));
+    await tester.pump();
+
+    expect(find.text('平台两点标定'), findsOneWidget);
+    expect(find.text('A：右上角'), findsOneWidget);
+    expect(find.text('B：左下角'), findsOneWidget);
+    expect(find.text('计算并保存'), findsOneWidget);
 
     await tester.binding.setSurfaceSize(null);
   });

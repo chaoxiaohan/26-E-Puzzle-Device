@@ -2,6 +2,18 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+List<double>? _pointFromJson(Object? value) {
+  if (value is! List || value.length < 2) {
+    return null;
+  }
+  final x = value[0];
+  final y = value[1];
+  if (x is! num || y is! num) {
+    return null;
+  }
+  return [x.toDouble(), y.toDouble()];
+}
+
 class BackendSnapshot {
   const BackendSnapshot({
     required this.backendAlive,
@@ -32,6 +44,18 @@ class BackendSnapshot {
     required this.serialPlaceZ,
     required this.serialLastReply,
     required this.serialError,
+    required this.platformX,
+    required this.platformY,
+    required this.platformZ,
+    required this.platformRotation,
+    required this.platformPositionValid,
+    required this.calibrationVisualA,
+    required this.calibrationVisualB,
+    required this.calibrationPlatformA,
+    required this.calibrationPlatformB,
+    required this.calibrationValid,
+    required this.calibrationScaleX,
+    required this.calibrationScaleY,
   });
 
   factory BackendSnapshot.fromJson(Map<String, dynamic> json) {
@@ -64,6 +88,18 @@ class BackendSnapshot {
       serialPlaceZ: (json['serial_place_z'] as num?)?.toInt() ?? 0,
       serialLastReply: json['serial_last_reply']?.toString() ?? '',
       serialError: json['serial_error']?.toString() ?? '',
+      platformX: (json['platform_x'] as num?)?.toInt() ?? 0,
+      platformY: (json['platform_y'] as num?)?.toInt() ?? 0,
+      platformZ: (json['platform_z'] as num?)?.toInt() ?? 0,
+      platformRotation: (json['platform_rotation'] as num?)?.toInt() ?? 0,
+      platformPositionValid: json['platform_position_valid'] == true,
+      calibrationVisualA: _pointFromJson(json['calibration_visual_a']),
+      calibrationVisualB: _pointFromJson(json['calibration_visual_b']),
+      calibrationPlatformA: _pointFromJson(json['calibration_platform_a']),
+      calibrationPlatformB: _pointFromJson(json['calibration_platform_b']),
+      calibrationValid: json['calibration_valid'] == true,
+      calibrationScaleX: (json['calibration_scale_x'] as num?)?.toDouble() ?? 0,
+      calibrationScaleY: (json['calibration_scale_y'] as num?)?.toDouble() ?? 0,
     );
   }
 
@@ -95,6 +131,18 @@ class BackendSnapshot {
   final int serialPlaceZ;
   final String serialLastReply;
   final String serialError;
+  final int platformX;
+  final int platformY;
+  final int platformZ;
+  final int platformRotation;
+  final bool platformPositionValid;
+  final List<double>? calibrationVisualA;
+  final List<double>? calibrationVisualB;
+  final List<double>? calibrationPlatformA;
+  final List<double>? calibrationPlatformB;
+  final bool calibrationValid;
+  final double calibrationScaleX;
+  final double calibrationScaleY;
 }
 
 class BackendUpdate {
@@ -187,6 +235,8 @@ class BackendBridge {
     int? armY,
     int? armZ,
     int? armRotationCdeg,
+    int? calibrationPreviewX,
+    int? calibrationPreviewY,
   }) async {
     final payload = <String, Object>{
       'revision': DateTime.now().microsecondsSinceEpoch,
@@ -235,6 +285,12 @@ class BackendBridge {
     }
     if (armRotationCdeg != null) {
       payload['arm_rotation_cdeg'] = armRotationCdeg;
+    }
+    if (calibrationPreviewX != null) {
+      payload['calibration_preview_x'] = calibrationPreviewX;
+    }
+    if (calibrationPreviewY != null) {
+      payload['calibration_preview_y'] = calibrationPreviewY;
     }
 
     final temporary = File('${_control.path}.$pid.tmp');

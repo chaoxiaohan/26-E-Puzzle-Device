@@ -12,7 +12,7 @@ enum PuzzleMode { firstQuestion, normalPuzzle, cardPuzzle }
 
 enum AppPage { puzzle, arm, settings }
 
-enum SettingsPage { vision, serial, logs }
+enum SettingsPage { vision, serial, calibration, logs }
 
 class PuzzleStudioApp extends StatelessWidget {
   const PuzzleStudioApp({super.key});
@@ -48,12 +48,6 @@ class PuzzleDashboard extends StatefulWidget {
 class _PuzzleDashboardState extends State<PuzzleDashboard> {
   final BackendBridge backend = BackendBridge();
   final ValueNotifier<Uint8List?> binaryPreview = ValueNotifier(null);
-  final TextEditingController armXController = TextEditingController(text: '0');
-  final TextEditingController armYController = TextEditingController(text: '0');
-  final TextEditingController armZController = TextEditingController(text: '0');
-  final TextEditingController armRotationController = TextEditingController(
-    text: '0',
-  );
   final TextEditingController serialPortController = TextEditingController(
     text: '/dev/serial0',
   );
@@ -95,6 +89,21 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   int motionPlanCount = 0;
   String serialLastReply = '';
   String serialError = '';
+  int platformX = 0;
+  int platformY = 0;
+  int platformZ = 0;
+  int platformRotation = 0;
+  bool platformPositionValid = false;
+  int moveStep = 10;
+  int rotationStep = 5;
+  List<double>? calibrationVisualA;
+  List<double>? calibrationVisualB;
+  List<double>? calibrationPlatformA;
+  List<double>? calibrationPlatformB;
+  bool calibrationValid = false;
+  double calibrationScaleX = 0;
+  double calibrationScaleY = 0;
+  String calibrationTarget = 'a';
   String backendLog = '正在读取后端日志…';
   DateTime lastLogRead = DateTime.fromMillisecondsSinceEpoch(0);
   Uint8List? cameraFrame;
@@ -139,10 +148,6 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     pollTimer?.cancel();
     settingsTimer?.cancel();
     binaryPreview.dispose();
-    armXController.dispose();
-    armYController.dispose();
-    armZController.dispose();
-    armRotationController.dispose();
     serialPortController.dispose();
     serialBaudController.dispose();
     serialPickZController.dispose();
@@ -205,6 +210,18 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       motionPlanCount = snapshot.motionPlanCount;
       serialLastReply = snapshot.serialLastReply;
       serialError = snapshot.serialError;
+      platformX = snapshot.platformX;
+      platformY = snapshot.platformY;
+      platformZ = snapshot.platformZ;
+      platformRotation = snapshot.platformRotation;
+      platformPositionValid = snapshot.platformPositionValid;
+      calibrationVisualA = snapshot.calibrationVisualA;
+      calibrationVisualB = snapshot.calibrationVisualB;
+      calibrationPlatformA = snapshot.calibrationPlatformA;
+      calibrationPlatformB = snapshot.calibrationPlatformB;
+      calibrationValid = snapshot.calibrationValid;
+      calibrationScaleX = snapshot.calibrationScaleX;
+      calibrationScaleY = snapshot.calibrationScaleY;
       if (!tuningOpen) {
         autoThreshold = snapshot.autoThreshold;
         threshold = snapshot.autoThreshold
@@ -348,10 +365,15 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
           ),
           const SizedBox(width: 6),
           _HeaderNavButton(
-            label: '机械臂',
+            label: '平台',
             icon: Icons.precision_manufacturing_outlined,
             selected: page == AppPage.arm,
-            onTap: () => setState(() => page = AppPage.arm),
+            onTap: () {
+              setState(() => page = AppPage.arm);
+              if (serialConnected) {
+                unawaited(_queryPlatformPosition());
+              }
+            },
           ),
           const SizedBox(width: 6),
           _HeaderNavButton(
@@ -574,27 +596,32 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     await _pollBackend();
   }
 
-  int _readInteger(TextEditingController controller) {
-    return int.tryParse(controller.text.trim()) ?? 0;
-  }
-
-  int _readRotationCdeg() {
-    final degrees = double.tryParse(armRotationController.text.trim()) ?? 0;
-    return (degrees * 100).round().clamp(-18000, 18000);
-  }
-
-  Future<void> _sendArmMove({required bool relative}) async {
+  Future<void> _movePlatform({
+    int x = 0,
+    int y = 0,
+    int z = 0,
+    int rotationCdeg = 0,
+  }) async {
     if (!connected) {
       return;
     }
     await backend.sendControl(
-      action: relative ? 'arm_move_relative' : 'arm_move_absolute',
-      armX: _readInteger(armXController),
-      armY: _readInteger(armYController),
-      armZ: _readInteger(armZController),
-      armRotationCdeg: _readRotationCdeg(),
+      action: 'arm_move_relative',
+      armX: x,
+      armY: y,
+      armZ: z,
+      armRotationCdeg: rotationCdeg,
     );
-    await Future<void>.delayed(const Duration(milliseconds: 160));
+    await Future<void>.delayed(const Duration(milliseconds: 220));
+    await _queryPlatformPosition();
+  }
+
+  Future<void> _queryPlatformPosition() async {
+    if (!connected) {
+      return;
+    }
+    await backend.sendControl(action: 'platform_query_position');
+    await Future<void>.delayed(const Duration(milliseconds: 180));
     await _pollBackend();
   }
 
@@ -603,8 +630,8 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       return;
     }
     await backend.sendControl(action: 'arm_home');
-    await Future<void>.delayed(const Duration(milliseconds: 160));
-    await _pollBackend();
+    await Future<void>.delayed(const Duration(milliseconds: 260));
+    await _queryPlatformPosition();
   }
 
   Future<void> _saveSerialSettings({bool connect = false}) async {
@@ -623,6 +650,59 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     await backend.sendControl(action: 'serial_disconnect');
     await Future<void>.delayed(const Duration(milliseconds: 120));
     await _pollBackend();
+  }
+
+  Future<void> _recordVisualCalibration(
+    TapDownDetails details,
+    Size size,
+  ) async {
+    if (!connected || !cameraOnline || size.width <= 0 || size.height <= 0) {
+      return;
+    }
+    final previewX = (details.localPosition.dx / size.width * 360)
+        .round()
+        .clamp(0, 359);
+    final previewY = (details.localPosition.dy / size.height * 640)
+        .round()
+        .clamp(0, 639);
+    await backend.sendControl(
+      action: calibrationTarget == 'a'
+          ? 'calibration_visual_a'
+          : 'calibration_visual_b',
+      calibrationPreviewX: previewX,
+      calibrationPreviewY: previewY,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    await _pollBackend();
+  }
+
+  Future<void> _recordPlatformCalibration(String point) async {
+    if (!connected || !serialConnected) {
+      return;
+    }
+    await backend.sendControl(
+      action: point == 'a'
+          ? 'calibration_platform_a'
+          : 'calibration_platform_b',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 240));
+    await _pollBackend();
+  }
+
+  Future<void> _computeCalibration() async {
+    if (!connected) {
+      return;
+    }
+    await backend.sendControl(action: 'calibration_compute');
+    await Future<void>.delayed(const Duration(milliseconds: 160));
+    await _pollBackend();
+  }
+
+  String _formatCalibrationPoint(List<double>? point) {
+    if (point == null || point.length < 2) {
+      return '未记录';
+    }
+    return '(${point[0].toStringAsFixed(1)}, ${point[1].toStringAsFixed(1)})';
   }
 
   Widget _buildArmPage() {
@@ -727,134 +807,251 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    '机械臂手动控制',
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    '输入目标坐标后选择绝对移动或相对移动，旋转角单位为度。',
-                    style: TextStyle(color: Color(0xFF64748B)),
-                  ),
-                  const SizedBox(height: 24),
                   Row(
                     children: [
-                      Expanded(
-                        child: _CoordinateField(
-                          label: 'X',
-                          unit: '坐标单位',
-                          controller: armXController,
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: _CoordinateField(
-                          label: 'Y',
-                          unit: '坐标单位',
-                          controller: armYController,
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: _CoordinateField(
-                          label: 'Z',
-                          unit: '坐标单位',
-                          controller: armZController,
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: _CoordinateField(
-                          label: '旋转',
-                          unit: '°',
-                          controller: armRotationController,
-                          allowDecimal: true,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 22),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: SizedBox(
-                          height: 52,
-                          child: FilledButton.icon(
-                            onPressed: connected
-                                ? () => _sendArmMove(relative: false)
-                                : null,
-                            icon: const Icon(Icons.my_location),
-                            label: const Text('移动到绝对位置'),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: SizedBox(
-                          height: 52,
-                          child: OutlinedButton.icon(
-                            onPressed: connected
-                                ? () => _sendArmMove(relative: true)
-                                : null,
-                            icon: const Icon(Icons.open_with),
-                            label: const Text('按输入量相对移动'),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      SizedBox(
-                        height: 52,
-                        width: 150,
-                        child: OutlinedButton.icon(
-                          onPressed: connected ? _homeArm : null,
-                          icon: const Icon(Icons.home_outlined),
-                          label: const Text('归零'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-                  Expanded(
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF8FAFC),
-                        borderRadius: BorderRadius.circular(15),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
-                      ),
-                      child: Column(
+                      const Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            '通信结果',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
                           Text(
-                            serialLastReply.isEmpty
-                                ? '等待发送命令'
-                                : serialLastReply,
+                            '平台手动控制',
                             style: TextStyle(
-                              color: serialError.isEmpty
-                                  ? const Color(0xFF0F766E)
-                                  : const Color(0xFFDC2626),
-                              fontSize: 18,
+                              fontSize: 22,
                               fontWeight: FontWeight.w800,
                             ),
                           ),
-                          if (serialError.isNotEmpty) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              serialError,
-                              style: const TextStyle(color: Color(0xFF64748B)),
-                            ),
-                          ],
+                          SizedBox(height: 5),
+                          Text(
+                            '使用方向键点动平台，每次移动后自动读取当前位置。',
+                            style: TextStyle(color: Color(0xFF64748B)),
+                          ),
                         ],
                       ),
+                      const Spacer(),
+                      OutlinedButton.icon(
+                        onPressed: serialConnected
+                            ? _queryPlatformPosition
+                            : null,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('读取位置'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _PositionCard(
+                          label: 'X',
+                          value: platformPositionValid
+                              ? platformX.toString()
+                              : '--',
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _PositionCard(
+                          label: 'Y',
+                          value: platformPositionValid
+                              ? platformY.toString()
+                              : '--',
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _PositionCard(
+                          label: 'Z',
+                          value: platformPositionValid
+                              ? platformZ.toString()
+                              : '--',
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _PositionCard(
+                          label: '角度',
+                          value: platformPositionValid
+                              ? '${(platformRotation / 100).toStringAsFixed(1)}°'
+                              : '--',
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  Expanded(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(
+                          flex: 5,
+                          child: Container(
+                            padding: const EdgeInsets.all(18),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF8FAFC),
+                              borderRadius: BorderRadius.circular(15),
+                              border: Border.all(
+                                color: const Color(0xFFE2E8F0),
+                              ),
+                            ),
+                            child: Column(
+                              children: [
+                                const Text(
+                                  'XY 平面',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const Spacer(),
+                                _PlatformArrowButton(
+                                  tooltip: 'Y 负方向',
+                                  icon: Icons.keyboard_arrow_up,
+                                  onPressed: serialConnected
+                                      ? () => _movePlatform(y: -moveStep)
+                                      : null,
+                                ),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    _PlatformArrowButton(
+                                      tooltip: 'X 负方向',
+                                      icon: Icons.keyboard_arrow_left,
+                                      onPressed: serialConnected
+                                          ? () => _movePlatform(x: -moveStep)
+                                          : null,
+                                    ),
+                                    const SizedBox(width: 56),
+                                    _PlatformArrowButton(
+                                      tooltip: 'X 正方向',
+                                      icon: Icons.keyboard_arrow_right,
+                                      onPressed: serialConnected
+                                          ? () => _movePlatform(x: moveStep)
+                                          : null,
+                                    ),
+                                  ],
+                                ),
+                                _PlatformArrowButton(
+                                  tooltip: 'Y 正方向',
+                                  icon: Icons.keyboard_arrow_down,
+                                  onPressed: serialConnected
+                                      ? () => _movePlatform(y: moveStep)
+                                      : null,
+                                ),
+                                const Spacer(),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          flex: 6,
+                          child: Column(
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _AxisControlCard(
+                                      title: 'Z 轴',
+                                      negativeLabel: 'Z −',
+                                      positiveLabel: 'Z +',
+                                      onNegative: serialConnected
+                                          ? () => _movePlatform(z: -moveStep)
+                                          : null,
+                                      onPositive: serialConnected
+                                          ? () => _movePlatform(z: moveStep)
+                                          : null,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: _AxisControlCard(
+                                      title: '平台旋转',
+                                      negativeLabel: '↶',
+                                      positiveLabel: '↷',
+                                      onNegative: serialConnected
+                                          ? () => _movePlatform(
+                                              rotationCdeg: -rotationStep * 100,
+                                            )
+                                          : null,
+                                      onPositive: serialConnected
+                                          ? () => _movePlatform(
+                                              rotationCdeg: rotationStep * 100,
+                                            )
+                                          : null,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _DropdownField<int>(
+                                      label: 'XYZ 单次步长',
+                                      value: moveStep,
+                                      items: const [1, 5, 10, 20, 50],
+                                      itemText: (value) => value.toString(),
+                                      onChanged: (value) {
+                                        if (value != null) {
+                                          setState(() => moveStep = value);
+                                        }
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: _DropdownField<int>(
+                                      label: '旋转单次角度',
+                                      value: rotationStep,
+                                      items: const [1, 5, 10, 15, 30],
+                                      itemText: (value) => '$value°',
+                                      onChanged: (value) {
+                                        if (value != null) {
+                                          setState(() => rotationStep = value);
+                                        }
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                width: double.infinity,
+                                height: 48,
+                                child: OutlinedButton.icon(
+                                  onPressed: serialConnected ? _homeArm : null,
+                                  icon: const Icon(Icons.home_outlined),
+                                  label: const Text('平台归零'),
+                                ),
+                              ),
+                              const Spacer(),
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF8FAFC),
+                                  borderRadius: BorderRadius.circular(13),
+                                  border: Border.all(
+                                    color: const Color(0xFFE2E8F0),
+                                  ),
+                                ),
+                                child: Text(
+                                  serialError.isNotEmpty
+                                      ? '$serialLastReply\n$serialError'
+                                      : serialLastReply.isEmpty
+                                      ? '等待平台命令'
+                                      : serialLastReply,
+                                  style: TextStyle(
+                                    color: serialError.isEmpty
+                                        ? const Color(0xFF0F766E)
+                                        : const Color(0xFFDC2626),
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -889,6 +1086,13 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                 ),
                 const SizedBox(width: 8),
                 _SettingsTabButton(
+                  label: '平台标定',
+                  selected: settingsPage == SettingsPage.calibration,
+                  onTap: () =>
+                      setState(() => settingsPage = SettingsPage.calibration),
+                ),
+                const SizedBox(width: 8),
+                _SettingsTabButton(
                   label: '后端日志',
                   selected: settingsPage == SettingsPage.logs,
                   onTap: () async {
@@ -907,6 +1111,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
           child: switch (settingsPage) {
             SettingsPage.vision => _buildVisionSettings(),
             SettingsPage.serial => _buildSerialSettings(),
+            SettingsPage.calibration => _buildCalibrationSettings(),
             SettingsPage.logs => _buildLogSettings(),
           },
         ),
@@ -1128,10 +1333,40 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                 ),
                 const SizedBox(width: 14),
                 Expanded(
-                  child: _CoordinateField(
+                  child: _DropdownField<int>(
                     label: '波特率',
-                    unit: 'bit/s',
-                    controller: serialBaudController,
+                    value:
+                        const [
+                          9600,
+                          19200,
+                          38400,
+                          57600,
+                          115200,
+                          230400,
+                          460800,
+                          921600,
+                        ].contains(serialBaud)
+                        ? serialBaud
+                        : 115200,
+                    items: const [
+                      9600,
+                      19200,
+                      38400,
+                      57600,
+                      115200,
+                      230400,
+                      460800,
+                      921600,
+                    ],
+                    itemText: (value) => '$value bit/s',
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() {
+                          serialBaud = value;
+                          serialBaudController.text = value.toString();
+                        });
+                      }
+                    },
                   ),
                 ),
               ],
@@ -1207,6 +1442,219 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                       ? const Color(0xFF0F766E)
                       : const Color(0xFFDC2626),
                   fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCalibrationSettings() {
+    return _Panel(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              width: 300,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '视觉点选择',
+                    style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    calibrationTarget == 'a'
+                        ? '当前：点击 A4 纸右上角'
+                        : '当前：点击 A4 纸左下角',
+                    style: const TextStyle(
+                      color: Color(0xFF2563EB),
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: Center(
+                      child: AspectRatio(
+                        aspectRatio: 9 / 16,
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            return GestureDetector(
+                              onTapDown: cameraOnline
+                                  ? (details) => _recordVisualCalibration(
+                                      details,
+                                      constraints.biggest,
+                                    )
+                                  : null,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(14),
+                                child: ColoredBox(
+                                  color: const Color(0xFF111827),
+                                  child: cameraFrame == null || !cameraOnline
+                                      ? const Center(
+                                          child: Text(
+                                            '摄像头离线\n上线后可选择视觉点',
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                              color: Color(0xFFCBD5E1),
+                                              height: 1.6,
+                                            ),
+                                          ),
+                                        )
+                                      : Image.memory(
+                                          cameraFrame!,
+                                          fit: BoxFit.fill,
+                                          gaplessPlayback: true,
+                                          filterQuality: FilterQuality.low,
+                                        ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 24),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Text(
+                          '平台两点标定',
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const Spacer(),
+                        _ConnectionRow(
+                          connected: serialConnected,
+                          connectedText: '平台已连接',
+                          disconnectedText: '平台未连接',
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 7),
+                    const Text(
+                      '分别记录 A4 纸右上角与左下角的视觉坐标和平台坐标，再计算像素到平台的换算关系。',
+                      style: TextStyle(color: Color(0xFF64748B), height: 1.5),
+                    ),
+                    const SizedBox(height: 16),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(value: 'a', label: Text('A：右上角')),
+                        ButtonSegment(value: 'b', label: Text('B：左下角')),
+                      ],
+                      selected: {calibrationTarget},
+                      showSelectedIcon: false,
+                      onSelectionChanged: (values) {
+                        setState(() => calibrationTarget = values.first);
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _CalibrationPointCard(
+                            title: 'A · A4 纸右上角',
+                            visualText: _formatCalibrationPoint(
+                              calibrationVisualA,
+                            ),
+                            platformText: _formatCalibrationPoint(
+                              calibrationPlatformA,
+                            ),
+                            selected: calibrationTarget == 'a',
+                            onSelect: () =>
+                                setState(() => calibrationTarget = 'a'),
+                            onRecordPlatform: serialConnected
+                                ? () => _recordPlatformCalibration('a')
+                                : null,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _CalibrationPointCard(
+                            title: 'B · A4 纸左下角',
+                            visualText: _formatCalibrationPoint(
+                              calibrationVisualB,
+                            ),
+                            platformText: _formatCalibrationPoint(
+                              calibrationPlatformB,
+                            ),
+                            selected: calibrationTarget == 'b',
+                            onSelect: () =>
+                                setState(() => calibrationTarget = 'b'),
+                            onRecordPlatform: serialConnected
+                                ? () => _recordPlatformCalibration('b')
+                                : null,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(15),
+                      decoration: BoxDecoration(
+                        color: calibrationValid
+                            ? const Color(0xFFECFDF5)
+                            : const Color(0xFFFFFBEB),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: calibrationValid
+                              ? const Color(0xFFA7F3D0)
+                              : const Color(0xFFFDE68A),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            calibrationValid
+                                ? Icons.check_circle_outline
+                                : Icons.info_outline,
+                            color: calibrationValid
+                                ? const Color(0xFF059669)
+                                : const Color(0xFFD97706),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              calibrationValid
+                                  ? '标定有效：X比例 ${calibrationScaleX.toStringAsFixed(5)}，'
+                                        'Y比例 ${calibrationScaleY.toStringAsFixed(5)}'
+                                  : '尚未完成标定，自动抓取动作不会发送。',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          FilledButton(
+                            onPressed: connected ? _computeCalibration : null,
+                            child: const Text('计算并保存'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      '两点法适合摄像头基本垂直、视觉轴与平台轴基本平行的情况。'
+                      '如果画面有明显透视或旋转，仅用两个点不能完整校正，后续应改用 3 点仿射或 4 点单应性标定。'
+                      'Z 轴高度仍使用串口设置中的抓取 Z 与放置 Z。',
+                      style: TextStyle(color: Color(0xFF64748B), height: 1.55),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -1624,19 +2072,248 @@ class _SettingsTabButton extends StatelessWidget {
   }
 }
 
+class _PositionCard extends StatelessWidget {
+  const _PositionCard({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF64748B),
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const Spacer(),
+          Text(
+            value,
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PlatformArrowButton extends StatelessWidget {
+  const _PlatformArrowButton({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: SizedBox(
+        width: 58,
+        height: 54,
+        child: FilledButton(
+          onPressed: onPressed,
+          style: FilledButton.styleFrom(
+            padding: EdgeInsets.zero,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(13),
+            ),
+          ),
+          child: Icon(icon, size: 32),
+        ),
+      ),
+    );
+  }
+}
+
+class _AxisControlCard extends StatelessWidget {
+  const _AxisControlCard({
+    required this.title,
+    required this.negativeLabel,
+    required this.positiveLabel,
+    required this.onNegative,
+    required this.onPositive,
+  });
+
+  final String title;
+  final String negativeLabel;
+  final String positiveLabel;
+  final VoidCallback? onNegative;
+  final VoidCallback? onPositive;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        children: [
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: onNegative,
+                  child: Text(negativeLabel),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton(
+                  onPressed: onPositive,
+                  child: Text(positiveLabel),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DropdownField<T> extends StatelessWidget {
+  const _DropdownField({
+    required this.label,
+    required this.value,
+    required this.items,
+    required this.itemText,
+    required this.onChanged,
+  });
+
+  final String label;
+  final T value;
+  final List<T> items;
+  final String Function(T value) itemText;
+  final ValueChanged<T?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: Color(0xFF334155),
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<T>(
+          initialValue: value,
+          items: items
+              .map(
+                (item) => DropdownMenuItem<T>(
+                  value: item,
+                  child: Text(itemText(item)),
+                ),
+              )
+              .toList(),
+          onChanged: onChanged,
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: const Color(0xFFF8FAFC),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFFD6DEE8)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFFD6DEE8)),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CalibrationPointCard extends StatelessWidget {
+  const _CalibrationPointCard({
+    required this.title,
+    required this.visualText,
+    required this.platformText,
+    required this.selected,
+    required this.onSelect,
+    required this.onRecordPlatform,
+  });
+
+  final String title;
+  final String visualText;
+  final String platformText;
+  final bool selected;
+  final VoidCallback onSelect;
+  final VoidCallback? onRecordPlatform;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onSelect,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.all(15),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFFEFF6FF) : const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: selected ? const Color(0xFF60A5FA) : const Color(0xFFE2E8F0),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
+            const SizedBox(height: 11),
+            Text('视觉坐标  $visualText'),
+            const SizedBox(height: 6),
+            Text('平台坐标  $platformText'),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: onRecordPlatform,
+                icon: const Icon(Icons.add_location_alt_outlined),
+                label: const Text('读取当前位置并记录'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _CoordinateField extends StatelessWidget {
   const _CoordinateField({
     required this.label,
     required this.unit,
     required this.controller,
-    this.allowDecimal = false,
     this.numeric = true,
   });
 
   final String label;
   final String unit;
   final TextEditingController controller;
-  final bool allowDecimal;
   final bool numeric;
 
   @override
@@ -1655,10 +2332,7 @@ class _CoordinateField extends StatelessWidget {
         TextField(
           controller: controller,
           keyboardType: numeric
-              ? TextInputType.numberWithOptions(
-                  signed: true,
-                  decimal: allowDecimal,
-                )
+              ? const TextInputType.numberWithOptions(signed: true)
               : TextInputType.text,
           decoration: InputDecoration(
             filled: true,
