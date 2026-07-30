@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:puzzle_flutter_ui/backend_bridge.dart';
 
 void main() {
   runApp(const PuzzleStudioApp());
@@ -40,13 +42,29 @@ class PuzzleDashboard extends StatefulWidget {
 }
 
 class _PuzzleDashboardState extends State<PuzzleDashboard> {
+  final BackendBridge backend = BackendBridge();
+  final ValueNotifier<int> tuningRevision = ValueNotifier(0);
   PuzzleMode mode = PuzzleMode.cardPuzzle;
   bool solving = false;
-  bool hasResult = true;
+  bool hasResult = false;
+  bool connected = false;
+  bool polling = false;
+  bool initializedFromBackend = false;
   bool autoThreshold = true;
-  int threshold = 109;
+  int threshold = 128;
   int minPieceArea = 1500;
   String polarityMode = 'AUTO';
+  int pieceCount = 0;
+  double fps = 0;
+  double score = 0;
+  double solverMs = 0;
+  String solverMessage = '';
+  String lastCaptureName = '';
+  Uint8List? cameraFrame;
+  Uint8List? binaryFrame;
+  Uint8List? resultFrame;
+  Timer? pollTimer;
+  Timer? settingsTimer;
 
   String get resultTitle {
     return switch (mode) {
@@ -56,22 +74,129 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     };
   }
 
+  String get resultHint {
+    if (!connected) {
+      return '视觉后端未连接';
+    }
+    return switch (solverMessage) {
+      'NO STABLE' || 'CARD NO STABLE' => '请保持碎片静止后重试',
+      'CARD NEED 2-4' => '需要识别到2至4块碎片',
+      'NO RECT' || 'CARD NO RECT' => '未找到可用矩形',
+      'NO SAFE' => '结果存在重叠，已拒绝',
+      'SOLVE ERROR' || 'CARD ERROR' => '求解异常，请重试',
+      _ => '等待生成拼接实图',
+    };
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _pollBackend();
+    pollTimer = Timer.periodic(
+      const Duration(milliseconds: 80),
+      (_) => _pollBackend(),
+    );
+  }
+
+  @override
+  void dispose() {
+    pollTimer?.cancel();
+    settingsTimer?.cancel();
+    tuningRevision.dispose();
+    super.dispose();
+  }
+
+  String get backendMode {
+    return switch (mode) {
+      PuzzleMode.firstQuestion => 'first',
+      PuzzleMode.normalPuzzle => 'normal',
+      PuzzleMode.cardPuzzle => 'card',
+    };
+  }
+
+  PuzzleMode _parseMode(String value) {
+    return switch (value) {
+      'first' => PuzzleMode.firstQuestion,
+      'normal' => PuzzleMode.normalPuzzle,
+      _ => PuzzleMode.cardPuzzle,
+    };
+  }
+
+  Future<void> _pollBackend() async {
+    if (polling) {
+      return;
+    }
+    polling = true;
+    final update = await backend.poll();
+    polling = false;
+    if (!mounted) {
+      return;
+    }
+    if (update == null) {
+      if (connected) {
+        setState(() => connected = false);
+      }
+      return;
+    }
+
+    final snapshot = update.snapshot;
+    final captureChanged =
+        snapshot.lastCaptureName.isNotEmpty &&
+        snapshot.lastCaptureName != lastCaptureName;
+    setState(() {
+      connected = snapshot.backendAlive && snapshot.cameraOk;
+      solving = snapshot.solving;
+      hasResult = snapshot.resultAvailable;
+      pieceCount = snapshot.pieceCount;
+      fps = snapshot.fps;
+      score = snapshot.score;
+      solverMs = snapshot.solverMs;
+      solverMessage = snapshot.solverMessage;
+      autoThreshold = snapshot.autoThreshold;
+      threshold = snapshot.autoThreshold
+          ? snapshot.currentThreshold
+          : snapshot.manualThreshold;
+      polarityMode = snapshot.polarityMode;
+      minPieceArea = snapshot.minPieceArea;
+      lastCaptureName = snapshot.lastCaptureName;
+      if (!initializedFromBackend) {
+        mode = _parseMode(snapshot.mode);
+        initializedFromBackend = true;
+      }
+      if (update.frame != null) {
+        cameraFrame = update.frame;
+      }
+      if (update.binary != null) {
+        binaryFrame = update.binary;
+      }
+      if (update.result != null) {
+        resultFrame = update.result;
+      } else if (update.clearResult) {
+        resultFrame = null;
+      }
+    });
+    tuningRevision.value++;
+
+    if (captureChanged) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('已保存：${snapshot.lastCaptureName}'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
   Future<void> solve() async {
-    if (solving) {
+    if (solving || !connected) {
       return;
     }
     setState(() {
       solving = true;
       hasResult = false;
+      resultFrame = null;
     });
-    await Future<void>.delayed(const Duration(milliseconds: 1300));
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      solving = false;
-      hasResult = true;
-    });
+    await backend.sendControl(mode: backendMode, action: 'solve');
   }
 
   @override
@@ -127,9 +252,9 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
           ),
         ],
       ),
-      child: const Row(
+      child: Row(
         children: [
-          Text(
+          const Text(
             '拼图装置',
             style: TextStyle(
               color: Color(0xFF111827),
@@ -137,21 +262,27 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
               fontWeight: FontWeight.w800,
             ),
           ),
-          Spacer(),
-          Icon(Icons.circle, size: 9, color: Color(0xFF10A37F)),
-          SizedBox(width: 7),
+          const Spacer(),
+          Icon(
+            Icons.circle,
+            size: 9,
+            color: connected
+                ? const Color(0xFF10A37F)
+                : const Color(0xFFEF4444),
+          ),
+          const SizedBox(width: 7),
           Text(
-            '相机正常',
-            style: TextStyle(
+            connected ? '相机正常' : '后端未连接',
+            style: const TextStyle(
               color: Color(0xFF334155),
               fontSize: 12,
               fontWeight: FontWeight.w700,
             ),
           ),
-          SizedBox(width: 12),
+          const SizedBox(width: 12),
           Text(
-            '30 FPS',
-            style: TextStyle(color: Color(0xFF64748B), fontSize: 12),
+            '${fps.toStringAsFixed(1)} FPS',
+            style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
           ),
         ],
       ),
@@ -164,12 +295,16 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
         aspectRatio: 9 / 16,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(14),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              const ColoredBox(color: Color(0xFF111827)),
-              CustomPaint(painter: CameraScenePainter()),
-            ],
+          child: ColoredBox(
+            color: const Color(0xFF111827),
+            child: cameraFrame == null
+                ? const SizedBox.expand()
+                : Image.memory(
+                    cameraFrame!,
+                    fit: BoxFit.contain,
+                    gaplessPlayback: true,
+                    filterQuality: FilterQuality.low,
+                  ),
           ),
         ),
       ),
@@ -214,10 +349,15 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   }
 
   void _changeMode(PuzzleMode value) {
+    if (value == mode || solving) {
+      return;
+    }
     setState(() {
       mode = value;
-      hasResult = value == PuzzleMode.cardPuzzle;
+      hasResult = false;
+      resultFrame = null;
     });
+    unawaited(backend.sendControl(mode: backendMode));
   }
 
   Widget _buildResultPanel() {
@@ -232,9 +372,9 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                 duration: const Duration(milliseconds: 250),
                 child: solving
                     ? const _SolvingView()
-                    : hasResult
-                    ? const _ResultView()
-                    : const _EmptyResultView(),
+                    : hasResult && resultFrame != null
+                    ? _ResultView(frame: resultFrame!)
+                    : _EmptyResultView(message: resultHint),
               ),
             ),
           ),
@@ -249,11 +389,17 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
         padding: const EdgeInsets.all(11),
         child: Row(
           children: [
-            const _Metric(label: '碎片', value: '4'),
+            _Metric(label: '碎片', value: pieceCount.toString()),
             const SizedBox(width: 15),
-            const _Metric(label: '置信度', value: '92.8%'),
+            _Metric(
+              label: '置信度',
+              value: '${(score * 100).toStringAsFixed(1)}%',
+            ),
             const SizedBox(width: 15),
-            const _Metric(label: '用时', value: '2.31s'),
+            _Metric(
+              label: '用时',
+              value: '${(solverMs / 1000).toStringAsFixed(2)}s',
+            ),
             const Spacer(),
             _ActionButton(label: '拍照', onPressed: _capture),
             const SizedBox(width: 8),
@@ -263,7 +409,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
               height: 50,
               width: 166,
               child: FilledButton(
-                onPressed: solving ? null : solve,
+                onPressed: solving || !connected ? null : solve,
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFF2563EB),
                   foregroundColor: Colors.white,
@@ -286,15 +432,11 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     );
   }
 
-  void _capture() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('已保存原图、二值图和碎片数据'),
-        backgroundColor: const Color(0xFF1E293B),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-    );
+  Future<void> _capture() async {
+    if (!connected) {
+      return;
+    }
+    await backend.sendControl(mode: backendMode, action: 'capture');
   }
 
   void _changeThreshold(int amount, StateSetter setSheetState) {
@@ -303,6 +445,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       autoThreshold = false;
     });
     setSheetState(() {});
+    _queueSettings();
   }
 
   void _changeArea(int amount, StateSetter setSheetState) {
@@ -310,6 +453,22 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       minPieceArea = (minPieceArea + amount).clamp(100, 50000);
     });
     setSheetState(() {});
+    _queueSettings();
+  }
+
+  void _queueSettings() {
+    settingsTimer?.cancel();
+    settingsTimer = Timer(
+      const Duration(milliseconds: 60),
+      () => unawaited(
+        backend.sendControl(
+          autoThreshold: autoThreshold,
+          manualThreshold: threshold,
+          polarityMode: polarityMode,
+          minPieceArea: minPieceArea,
+        ),
+      ),
+    );
   }
 
   Future<void> _showTuningSheet() async {
@@ -318,8 +477,14 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
+        return ValueListenableBuilder<int>(
+          valueListenable: tuningRevision,
+          builder: (context, revision, child) {
+            void setSheetState(VoidCallback callback) {
+              callback();
+              tuningRevision.value++;
+            }
+
             return Container(
               height: 430,
               margin: const EdgeInsets.all(12),
@@ -355,9 +520,16 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                         Expanded(
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(14),
-                            child: CustomPaint(
-                              painter: BinaryPreviewPainter(),
-                              child: const SizedBox.expand(),
+                            child: ColoredBox(
+                              color: const Color(0xFF111827),
+                              child: binaryFrame == null
+                                  ? const SizedBox.expand()
+                                  : Image.memory(
+                                      binaryFrame!,
+                                      fit: BoxFit.contain,
+                                      gaplessPlayback: true,
+                                      filterQuality: FilterQuality.low,
+                                    ),
                             ),
                           ),
                         ),
@@ -404,6 +576,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                               onSelected: (_) {
                                 setState(() => autoThreshold = true);
                                 setSheetState(() {});
+                                _queueSettings();
                               },
                             ),
                           ],
@@ -441,6 +614,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                               autoThreshold = false;
                             });
                             setSheetState(() {});
+                            _queueSettings();
                           },
                         ),
                         const Text(
@@ -464,6 +638,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                               polarityMode = values.first;
                             });
                             setSheetState(() {});
+                            _queueSettings();
                           },
                         ),
                         const SizedBox(height: 15),
@@ -617,7 +792,9 @@ class _ModeButton extends StatelessWidget {
 }
 
 class _ResultView extends StatelessWidget {
-  const _ResultView();
+  const _ResultView({required this.frame});
+
+  final Uint8List frame;
 
   @override
   Widget build(BuildContext context) {
@@ -632,9 +809,10 @@ class _ResultView extends StatelessWidget {
         padding: const EdgeInsets.all(12),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(10),
-          child: Image.asset(
-            'assets/demo_result.png',
+          child: Image.memory(
+            frame,
             fit: BoxFit.contain,
+            gaplessPlayback: true,
             filterQuality: FilterQuality.medium,
           ),
         ),
@@ -644,7 +822,9 @@ class _ResultView extends StatelessWidget {
 }
 
 class _EmptyResultView extends StatelessWidget {
-  const _EmptyResultView();
+  const _EmptyResultView({required this.message});
+
+  final String message;
 
   @override
   Widget build(BuildContext context) {
@@ -655,10 +835,10 @@ class _EmptyResultView extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
-      child: const Center(
+      child: Center(
         child: Text(
-          '等待生成拼接实图',
-          style: TextStyle(
+          message,
+          style: const TextStyle(
             color: Color(0xFF64748B),
             fontWeight: FontWeight.w700,
           ),
@@ -813,159 +993,4 @@ class _ValueBox extends StatelessWidget {
       ),
     );
   }
-}
-
-class CameraScenePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final background = Paint()
-      ..shader = const LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [Color(0xFF2A3541), Color(0xFF121922)],
-      ).createShader(Offset.zero & size);
-    canvas.drawRect(Offset.zero & size, background);
-
-    final paper = RRect.fromRectAndRadius(
-      Rect.fromLTWH(
-        size.width * 0.04,
-        size.height * 0.06,
-        size.width * 0.92,
-        size.height * 0.88,
-      ),
-      const Radius.circular(5),
-    );
-    canvas.drawRRect(paper, Paint()..color = const Color(0xFFE8EBE9));
-
-    final roi = Paint()
-      ..color = const Color(0xFFFFC857)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(
-          size.width * 0.08,
-          size.height * 0.11,
-          size.width * 0.84,
-          size.height * 0.74,
-        ),
-        const Radius.circular(4),
-      ),
-      roi,
-    );
-
-    final fragments = [
-      [
-        Offset(size.width * 0.24, size.height * 0.27),
-        Offset(size.width * 0.48, size.height * 0.25),
-        Offset(size.width * 0.44, size.height * 0.37),
-        Offset(size.width * 0.21, size.height * 0.39),
-      ],
-      [
-        Offset(size.width * 0.55, size.height * 0.26),
-        Offset(size.width * 0.75, size.height * 0.31),
-        Offset(size.width * 0.69, size.height * 0.43),
-        Offset(size.width * 0.51, size.height * 0.39),
-      ],
-      [
-        Offset(size.width * 0.20, size.height * 0.49),
-        Offset(size.width * 0.41, size.height * 0.46),
-        Offset(size.width * 0.46, size.height * 0.59),
-        Offset(size.width * 0.25, size.height * 0.63),
-      ],
-      [
-        Offset(size.width * 0.52, size.height * 0.50),
-        Offset(size.width * 0.74, size.height * 0.48),
-        Offset(size.width * 0.78, size.height * 0.62),
-        Offset(size.width * 0.57, size.height * 0.66),
-      ],
-    ];
-
-    for (var index = 0; index < fragments.length; index++) {
-      final path = Path()..addPolygon(fragments[index], true);
-      canvas.drawPath(path, Paint()..color = const Color(0xFF374151));
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = const Color(0xFF5EE6BA)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2,
-      );
-      final center =
-          fragments[index].reduce((a, b) => a + b) /
-          fragments[index].length.toDouble();
-      final text = TextPainter(
-        text: TextSpan(
-          text: 'P${index + 1}',
-          style: const TextStyle(
-            color: Color(0xFF5EE6BA),
-            fontSize: 11,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      text.paint(canvas, center - Offset(text.width / 2, text.height / 2));
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-class BinaryPreviewPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()..color = const Color(0xFF111111),
-    );
-
-    final paper = RRect.fromRectAndRadius(
-      Rect.fromLTWH(
-        size.width * 0.12,
-        size.height * 0.09,
-        size.width * 0.76,
-        size.height * 0.82,
-      ),
-      const Radius.circular(5),
-    );
-    canvas.drawRRect(paper, Paint()..color = Colors.white);
-
-    final fragments = [
-      Rect.fromLTWH(
-        size.width * 0.23,
-        size.height * 0.24,
-        size.width * 0.22,
-        size.height * 0.17,
-      ),
-      Rect.fromLTWH(
-        size.width * 0.52,
-        size.height * 0.25,
-        size.width * 0.20,
-        size.height * 0.19,
-      ),
-      Rect.fromLTWH(
-        size.width * 0.25,
-        size.height * 0.54,
-        size.width * 0.22,
-        size.height * 0.18,
-      ),
-      Rect.fromLTWH(
-        size.width * 0.53,
-        size.height * 0.54,
-        size.width * 0.21,
-        size.height * 0.18,
-      ),
-    ];
-    for (final fragment in fragments) {
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(fragment, const Radius.circular(3)),
-        Paint()..color = Colors.black,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
