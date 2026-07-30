@@ -31,6 +31,60 @@ from solver_v2 import solve as solve_edge_layout
 from ui_bridge import UiBridge
 
 
+class RecoveringCamera:
+    """相机暂时离线时保留进程，并按间隔自动重新打开。"""
+
+    def __init__(self, factory):
+        self.factory = factory
+        self.device = None
+        self.online = False
+        self.next_retry_at = 0.0
+        self.last_error = ""
+
+    def _close_device(self):
+        if self.device is None:
+            return
+        try:
+            close = getattr(self.device, "close", None)
+            if close is not None:
+                close()
+            elif hasattr(self.device, "capture"):
+                self.device.capture.release()
+        except Exception:
+            pass
+        self.device = None
+
+    def read(self, now=None):
+        now = time.monotonic() if now is None else float(now)
+        if self.device is None:
+            if now < self.next_retry_at:
+                return None
+            try:
+                self.device = self.factory()
+            except Exception as error:
+                self.last_error = str(error)
+                self.online = False
+                self.next_retry_at = now + 1.0
+                return None
+
+        try:
+            frame = self.device.read()
+        except Exception as error:
+            self.last_error = str(error)
+            self.online = False
+            self._close_device()
+            self.next_retry_at = now + 1.0
+            return None
+
+        self.online = True
+        self.last_error = ""
+        return frame
+
+    def close(self):
+        self.online = False
+        self._close_device()
+
+
 def longest_edge(points):
     """返回多边形最长边及其相对图像水平向右方向的角度。"""
     best_start = points[0]
@@ -3247,13 +3301,16 @@ def main():
     max_piece_count = 4
     polygon_epsilon = 0.022
 
-    cam = camera.Camera(
-        capture_width,
-        capture_height,
-        image.Format.FMT_RGB888,
-        fps=30,
-        buff_num=3,
-    )
+    def create_camera():
+        return camera.Camera(
+            capture_width,
+            capture_height,
+            image.Format.FMT_RGB888,
+            fps=30,
+            buff_num=3,
+        )
+
+    cam = RecoveringCamera(create_camera)
     disp = display.Display()
     touch = touchscreen.TouchScreen()
 
@@ -3295,6 +3352,9 @@ def main():
     last_capture_time = 0.0
     ui_bridge = UiBridge()
     ui_mode = "CARD"
+    camera_was_online = False
+    offline_preview_published = False
+    reported_camera_error = ""
     button_boxes = get_button_boxes(
         camera_width,
         camera_height,
@@ -3312,6 +3372,86 @@ def main():
         card_requested = False
         capture_requested = False
         img = cam.read()
+        if img is None:
+            if cam.last_error and cam.last_error != reported_camera_error:
+                print(
+                    "CAMERA_OFFLINE %s" % cam.last_error,
+                    flush=True,
+                )
+                reported_camera_error = cam.last_error
+            if camera_was_online:
+                print("CAMERA_DISCONNECTED", flush=True)
+            camera_was_online = False
+            recent_piece_sets = []
+            pending_solve_until = 0.0
+            pending_solve_mode = ""
+            pending_card_frame = None
+            pending_card_pieces = None
+            solver_message = "CAMERA OFFLINE"
+
+            if not offline_preview_published:
+                offline_frame = np.zeros(
+                    (camera_height, camera_width, 3),
+                    dtype=np.uint8,
+                )
+                cv2.putText(
+                    offline_frame,
+                    "CAMERA OFFLINE - RETRYING",
+                    (35, min(camera_height - 30, 180)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1.0,
+                    (255, 255, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+                ui_bridge.publish_live(
+                    offline_frame,
+                    np.zeros(
+                        (roi_height, roi_width),
+                        dtype=np.uint8,
+                    ),
+                    (roi_x, roi_y, roi_width, roi_height),
+                    force=True,
+                )
+                offline_preview_published = True
+
+            ui_bridge.publish_state(
+                {
+                    "mode": ui_mode.lower(),
+                    "camera_ok": False,
+                    "fps": 0.0,
+                    "piece_count": 0,
+                    "auto_threshold": bool(auto_threshold),
+                    "manual_threshold": int(manual_threshold),
+                    "current_threshold": int(current_threshold),
+                    "polarity_mode": polarity_mode,
+                    "background_mode": background_mode,
+                    "detected_polarity": "",
+                    "min_piece_area": int(min_piece_area),
+                    "solving": bool(solver_future is not None),
+                    "solver_message": solver_message,
+                    "score": round(float(solved_score), 4),
+                    "ratio": round(float(solved_ratio), 4),
+                    "solver_ms": round(float(solver_ms), 1),
+                    "solver_nodes": int(solver_nodes),
+                    "solved_mode": solved_mode.lower(),
+                    "last_capture_name": last_capture_name,
+                    "motion_plan": motion_plan,
+                }
+            )
+            time.sleep(0.08)
+            continue
+
+        if not camera_was_online:
+            print("CAMERA_ONLINE", flush=True)
+            fps = 0.0
+            fps_frames = 0
+            fps_start = time.monotonic()
+            if solver_message == "CAMERA OFFLINE":
+                solver_message = ""
+        camera_was_online = True
+        offline_preview_published = False
+        reported_camera_error = ""
         frame_rgb = image.image2cv(
             img,
             ensure_bgr=False,
@@ -3928,6 +4068,7 @@ def main():
 
         disp.show(img)
 
+    cam.close()
     solver_executor.shutdown(
         wait=False,
         cancel_futures=True,

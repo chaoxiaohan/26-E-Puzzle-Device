@@ -243,9 +243,12 @@ class _CameraDevice:
             rgb = canvas
         return _ImageFrame(rgb)
 
-    def __del__(self):
+    def close(self):
         if hasattr(self, "capture"):
             self.capture.release()
+
+    def __del__(self):
+        self.close()
 
 
 class _Camera:
