@@ -44,7 +44,7 @@ class SerialController:
             os.path.dirname(os.path.abspath(__file__)),
             "serial_settings.json",
         )
-        self.port = "/dev/serial0"
+        self.port = "/dev/ttyUSB0"
         self.baud = 115200
         self.pick_z = 0
         self.place_z = 0
@@ -53,6 +53,7 @@ class SerialController:
         self.task_id = 0
         self.last_reply = ""
         self.last_error = ""
+        self.event_revision = 0
         self.last_payload = b""
         self.current_x = 0
         self.current_y = 0
@@ -68,6 +69,11 @@ class SerialController:
         self.scale_y = 0.0
         self._lock = threading.RLock()
         self._load_settings()
+
+    def _set_status(self, reply, error=""):
+        self.last_reply = reply
+        self.last_error = error
+        self.event_revision += 1
 
     @property
     def connected(self):
@@ -155,8 +161,7 @@ class SerialController:
                     write_timeout=0.1,
                 )
                 self.device.reset_input_buffer()
-                self.last_reply = "串口已连接"
-                self.last_error = ""
+                self._set_status("串口已连接")
                 print(
                     "SERIAL_CONNECTED %s %d"
                     % (self.port, self.baud),
@@ -165,8 +170,7 @@ class SerialController:
                 return True
             except (OSError, serial.SerialException) as error:
                 self.device = None
-                self.last_error = str(error)
-                self.last_reply = "串口连接失败"
+                self._set_status("串口连接失败", str(error))
                 print(
                     "SERIAL_CONNECT_ERROR %s" % error,
                     flush=True,
@@ -181,8 +185,7 @@ class SerialController:
                 except (OSError, serial.SerialException):
                     pass
             self.device = None
-            self.last_reply = "串口已断开"
-            self.last_error = ""
+            self._set_status("串口已断开")
             print("SERIAL_DISCONNECTED", flush=True)
 
     def _next_sequence(self):
@@ -248,8 +251,7 @@ class SerialController:
                         time.monotonic() + 0.12
                     )
                 except (OSError, serial.SerialException) as error:
-                    self.last_error = str(error)
-                    self.last_reply = "串口通信失败"
+                    self._set_status("串口通信失败", str(error))
                     self.device = None
                     return False
                 if response is None:
@@ -269,13 +271,11 @@ class SerialController:
                         and reply_payload[0] == sequence
                         else reply_payload
                     )
-                    self.last_reply = "OK"
-                    self.last_error = ""
+                    self._set_status("发送成功")
                     return True
                 if reply_command != 0x81:
                     continue
-            self.last_reply = "请求重发失败"
-            self.last_error = "ACK timeout"
+            self._set_status("发送失败", "ACK timeout")
             print(
                 "SERIAL_RETRY_FAILED cmd=%02X seq=%d"
                 % (command, sequence),
@@ -318,8 +318,10 @@ class SerialController:
             return False
         if len(self.last_payload) < 14:
             self.position_valid = False
-            self.last_reply = "平台未返回当前位置"
-            self.last_error = "position payload too short"
+            self._set_status(
+                "读取位置失败",
+                "position payload too short",
+            )
             return False
         (
             self.current_x,
@@ -328,8 +330,7 @@ class SerialController:
             self.current_rotation,
         ) = struct.unpack("<iiih", self.last_payload[:14])
         self.position_valid = True
-        self.last_reply = "当前位置已更新"
-        self.last_error = ""
+        self._set_status("当前位置已更新")
         return True
 
     def record_visual_point(self, name, x, y):
@@ -340,7 +341,7 @@ class SerialController:
             self.visual_b = point
         self.calibration_valid = False
         self._save_settings()
-        self.last_reply = "已记录视觉点%s" % name.upper()
+        self._set_status("已记录视觉点%s" % name.upper())
 
     def record_platform_point(self, name):
         if not self.query_position():
@@ -352,7 +353,7 @@ class SerialController:
             self.platform_b = point
         self.calibration_valid = False
         self._save_settings()
-        self.last_reply = "已记录平台点%s" % name.upper()
+        self._set_status("已记录平台点%s" % name.upper())
         return True
 
     def _calculate_calibration(self, save=True):
@@ -386,11 +387,12 @@ class SerialController:
 
     def calculate_calibration(self):
         if self._calculate_calibration():
-            self.last_reply = "两点坐标系标定完成"
-            self.last_error = ""
+            self._set_status("两点坐标系标定完成")
             return True
-        self.last_reply = "标定点不完整或距离过近"
-        self.last_error = "invalid calibration points"
+        self._set_status(
+            "标定点不完整或距离过近",
+            "invalid calibration points",
+        )
         return False
 
     def vision_to_platform(self, x, y):
@@ -405,16 +407,19 @@ class SerialController:
 
     def send_motion_plan(self, motion_plan):
         if not motion_plan:
-            self.last_reply = "没有可发送的拼图动作"
-            self.last_error = "empty motion plan"
+            self._set_status(
+                "没有可发送的拼图动作",
+                "empty motion plan",
+            )
             return False
         if len(motion_plan) > 255:
-            self.last_reply = "动作数量过多"
-            self.last_error = "too many actions"
+            self._set_status("动作数量过多", "too many actions")
             return False
         if not self.calibration_valid:
-            self.last_reply = "请先完成平台坐标标定"
-            self.last_error = "platform calibration required"
+            self._set_status(
+                "请先完成平台坐标标定",
+                "platform calibration required",
+            )
             return False
 
         self.task_id = (self.task_id + 1) & 0xFF
@@ -448,15 +453,18 @@ class SerialController:
                 self._rotation(rotation * 100.0),
             )
             if not self.send(0x10, payload, 0x21):
-                self.last_reply = "动作%d发送失败" % (index + 1)
+                self._set_status(
+                    "动作%d发送失败" % (index + 1),
+                    self.last_error,
+                )
                 return False
         if not self.send(
             0x11,
             struct.pack("<B", self.task_id),
         ):
-            self.last_reply = "执行命令发送失败"
+            self._set_status("执行命令发送失败", self.last_error)
             return False
-        self.last_reply = "已发送%d个动作并开始执行" % count
+        self._set_status("已发送%d个动作并开始执行" % count)
         return True
 
     def state(self):
@@ -468,6 +476,7 @@ class SerialController:
             "serial_place_z": self.place_z,
             "serial_last_reply": self.last_reply,
             "serial_error": self.last_error,
+            "serial_event_revision": self.event_revision,
             "platform_x": self.current_x,
             "platform_y": self.current_y,
             "platform_z": self.current_z,
