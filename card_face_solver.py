@@ -667,8 +667,8 @@ def score_layout_global_pattern(frame_rgb, pieces, layout):
     evidence = min(1.0, float(np.mean(ink[valid]) * 4.0))
     exact_score = math.exp(-error * 6.0)
 
-    patch_height = max(12, int(ink.shape[0] * 0.46))
-    patch_width = max(12, int(ink.shape[1] * 0.46))
+    patch_height = max(12, int(ink.shape[0] * 0.38))
+    patch_width = max(12, int(ink.shape[1] * 0.24))
     corner_patches = (
         first_ink[:patch_height, :patch_width],
         first_ink[:patch_height, -patch_width:],
@@ -786,10 +786,25 @@ def score_layout_global_pattern(frame_rgb, pieces, layout):
         0.1,
         first_corner[1] + second_corner[1],
     )
-    corner_score = (
+    corner_average = (
         first_corner[0] * max(0.05, first_corner[1])
         + second_corner[0] * max(0.05, second_corner[1])
     ) / corner_weight_sum
+    diagonal_floor = min(
+        first_corner[0],
+        second_corner[0],
+    )
+    diagonal_balance = math.exp(
+        -abs(first_corner[0] - second_corner[0]) * 2.5
+    )
+    diagonal_score = (
+        diagonal_floor * 0.75
+        + diagonal_balance * 0.25
+    )
+    corner_score = (
+        corner_average * 0.35
+        + diagonal_score * 0.65
+    )
     corner_confidence = min(
         1.0,
         (first_corner[1] + second_corner[1]) * 0.65,
@@ -830,6 +845,7 @@ def score_layout_global_pattern(frame_rgb, pieces, layout):
         "confidence": combined_confidence,
         "exact": exact_score,
         "corners": corner_score,
+        "diagonal": diagonal_score,
         "structure": structure_score,
         "corner_details": corner_details,
     }

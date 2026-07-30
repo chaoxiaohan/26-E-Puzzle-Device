@@ -2538,6 +2538,90 @@ def solve_piece_set_worker(pieces, roi):
     }
 
 
+def refine_card_layout_geometry(layout, time_limit_s=0.8):
+    """用小范围刚性旋转和平移，让牌面候选重新贴合矩形和内部拼接边。"""
+    refined = {
+        piece_id: np.asarray(
+            polygon,
+            dtype=np.float64,
+        ).copy()
+        for piece_id, polygon in layout.items()
+    }
+
+    def quality(candidate):
+        report = evaluate_layout(
+            candidate,
+            edge_tolerance_ratio=0.07,
+        )
+        score = (
+            report["coverage"] * 0.42
+            + report["internal_match"] * 0.34
+            + report["corners"] * 0.12
+            + report["outer_piece_ratio"] * 0.12
+            - report["overlap"] * 8.0
+        )
+        return score, report
+
+    def move_piece(polygon, dx, dy, angle):
+        center = np.mean(polygon, axis=0)
+        radians = math.radians(angle)
+        rotation = np.array(
+            [
+                [math.cos(radians), -math.sin(radians)],
+                [math.sin(radians), math.cos(radians)],
+            ],
+            dtype=np.float64,
+        )
+        return (
+            (polygon - center) @ rotation.T
+            + center
+            + np.array([dx, dy], dtype=np.float64)
+        )
+
+    best_score, best_report = quality(refined)
+    deadline = time.monotonic() + time_limit_s
+    for move, angle in (
+        (6.0, 5.0),
+        (3.0, 2.5),
+        (1.5, 1.2),
+        (0.75, 0.6),
+        (0.35, 0.3),
+    ):
+        improved = True
+        rounds = 0
+        while improved and rounds < 4:
+            improved = False
+            rounds += 1
+            for piece_id in sorted(refined):
+                for dx, dy, rotation in (
+                    (move, 0.0, 0.0),
+                    (-move, 0.0, 0.0),
+                    (0.0, move, 0.0),
+                    (0.0, -move, 0.0),
+                    (0.0, 0.0, angle),
+                    (0.0, 0.0, -angle),
+                ):
+                    if time.monotonic() >= deadline:
+                        return refined, best_report
+                    candidate = {
+                        item_id: polygon.copy()
+                        for item_id, polygon in refined.items()
+                    }
+                    candidate[piece_id] = move_piece(
+                        candidate[piece_id],
+                        dx,
+                        dy,
+                        rotation,
+                    )
+                    score, report = quality(candidate)
+                    if score > best_score + 1e-5:
+                        refined = candidate
+                        best_score = score
+                        best_report = report
+                        improved = True
+    return refined, best_report
+
+
 def solve_card_piece_set_worker(frame_rgb, pieces, roi):
     """独立执行扑克牌花纹求解，不调用或改写普通矩形求解链路。"""
     cv2.setNumThreads(1)
@@ -2607,6 +2691,48 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
                     )
                     continue
 
+            initial_geometry = (
+                solve_info["constraint_report"]["coverage"] * 0.58
+                + solve_info["constraint_report"]["internal_match"] * 0.42
+            )
+            refined_layout, refined_report = (
+                refine_card_layout_geometry(layout)
+            )
+            refined_info = dict(base_info)
+            refined_info["boundary_safe"] = False
+            refined_info["method"] = "card-cpp-rerank"
+            if solve_info.get("forced", False):
+                refined_info["forced"] = True
+            refined_prepared, _ = prepare_layout_for_execution(
+                refined_layout,
+                refined_info,
+                roi,
+            )
+            if refined_prepared is None:
+                refined_info["forced"] = True
+                refined_prepared, _ = prepare_layout_for_execution(
+                    refined_layout,
+                    refined_info,
+                    roi,
+                )
+            if refined_prepared is not None:
+                refined_geometry = (
+                    refined_info["constraint_report"]["coverage"] * 0.58
+                    + refined_info["constraint_report"]["internal_match"]
+                    * 0.42
+                )
+                if refined_geometry > initial_geometry + 1e-4:
+                    prepared = refined_prepared
+                    solve_info = refined_info
+                    solve_info["geometry_refined"] = True
+                    solve_info["refined_raw_report"] = {
+                        "coverage": refined_report["coverage"],
+                        "overlap": refined_report["overlap"],
+                        "internal_match": refined_report[
+                            "internal_match"
+                        ],
+                    }
+
             pattern_layout = close_card_pattern_layout(
                 prepared,
                 solve_info,
@@ -2633,10 +2759,14 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
             solve_info["global_pattern_score"] = (
                 global_pattern["score"]
             )
+            solve_info["corner_diagonal_score"] = (
+                global_pattern.get("diagonal", 0.5)
+            )
             solve_info["card_assignment"] = tuple(assignment)
             print(
                 "CARD_CANDIDATE fill=%.2f order=%s rank=%.3f "
-                "coverage=%.3f internal=%.3f texture=%.3f global=%.3f"
+                "coverage=%.3f internal=%.3f texture=%.3f "
+                "global=%.3f diagonal=%.3f"
                 % (
                     fill_ratio,
                     assignment,
@@ -2645,6 +2775,7 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
                     report["internal_match"],
                     texture["score"],
                     global_pattern["score"],
+                    global_pattern.get("diagonal", 0.5),
                 ),
                 flush=True,
             )

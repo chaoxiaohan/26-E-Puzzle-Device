@@ -6,6 +6,7 @@ import numpy as np
 from card_face_solver import (
     close_card_pattern_layout,
     render_layout_preview,
+    score_layout_global_pattern,
     solve_card_face,
 )
 
@@ -110,12 +111,34 @@ def main():
         frame,
         pieces,
         node_limit=120000,
-        time_limit_s=5.0,
+        time_limit_s=8.0,
     )
     assert result["layout"] is not None, result
     assert result["info"]["overlap"] <= 0.015, result["info"]
     assert result["info"]["coverage"] >= 0.95, result["info"]
     assert result["info"]["texture_score"] >= 0.60, result["info"]
+    global_pattern = score_layout_global_pattern(
+        frame,
+        pieces,
+        result["layout"],
+    )
+    swapped_layout = {
+        piece_id: polygon.copy()
+        for piece_id, polygon in result["layout"].items()
+    }
+    swapped_layout[0], swapped_layout[1] = (
+        swapped_layout[1],
+        swapped_layout[0],
+    )
+    swapped_pattern = score_layout_global_pattern(
+        frame,
+        pieces,
+        swapped_layout,
+    )
+    assert global_pattern["diagonal"] > swapped_pattern["diagonal"], (
+        global_pattern,
+        swapped_pattern,
+    )
     centers = {
         piece_id: np.mean(polygon, axis=0)
         for piece_id, polygon in result["layout"].items()
