@@ -1,0 +1,4437 @@
+# -*- coding: utf-8 -*-
+
+import concurrent.futures
+import itertools
+import json
+import math
+import multiprocessing
+import os
+import time
+
+import cv2
+import numpy as np
+from maix import app, camera, display, image, touchscreen
+from layout_constraints import (
+    add_adjacency_gap,
+    evaluate_layout,
+    repair_layout_for_competition,
+)
+from cpp_rectangle_solver import solve as solve_rectangle_by_cover_cpp
+from card_face_solver import (
+    close_card_pattern_layout,
+    generate_shape_swap_layouts,
+    render_layout_preview,
+    score_layout_global_pattern,
+    score_rank_index_diagonal,
+    score_layout_texture,
+    solve_card_face,
+)
+from puzzle_solver import normalize_layout, solve_camera_rectangle
+from serial_protocol import SerialController
+from solver_v2 import solve as solve_edge_layout
+from ui_bridge import UiBridge
+
+
+class RecoveringCamera:
+    """相机暂时离线时保留进程，并按间隔自动重新打开。"""
+
+    def __init__(self, factory):
+        self.factory = factory
+        self.device = None
+        self.online = False
+        self.next_retry_at = 0.0
+        self.last_error = ""
+
+    def _close_device(self):
+        if self.device is None:
+            return
+        try:
+            close = getattr(self.device, "close", None)
+            if close is not None:
+                close()
+            elif hasattr(self.device, "capture"):
+                self.device.capture.release()
+        except Exception:
+            pass
+        self.device = None
+
+    def read(self, now=None):
+        now = time.monotonic() if now is None else float(now)
+        if self.device is None:
+            if now < self.next_retry_at:
+                return None
+            try:
+                self.device = self.factory()
+            except Exception as error:
+                self.last_error = str(error)
+                self.online = False
+                self.next_retry_at = now + 1.0
+                return None
+
+        try:
+            frame = self.device.read()
+        except Exception as error:
+            self.last_error = str(error)
+            self.online = False
+            self._close_device()
+            self.next_retry_at = now + 1.0
+            return None
+
+        self.online = True
+        self.last_error = ""
+        return frame
+
+    def close(self):
+        self.online = False
+        self._close_device()
+
+
+def longest_edge(points):
+    """返回多边形最长边及其相对图像水平向右方向的角度。"""
+    best_start = points[0]
+    best_end = points[1]
+    best_length = 0.0
+
+    for index, start in enumerate(points):
+        end = points[(index + 1) % len(points)]
+        dx = end[0] - start[0]
+        dy = end[1] - start[1]
+        length = dx * dx + dy * dy
+        if length > best_length:
+            best_start = start
+            best_end = end
+            best_length = length
+
+    angle = math.degrees(
+        math.atan2(best_end[1] - best_start[1], best_end[0] - best_start[0])
+    )
+    if angle >= 90:
+        angle -= 180
+    elif angle < -90:
+        angle += 180
+
+    return (best_start, best_end), angle
+
+
+def intersect_fitted_lines(first, second):
+    """计算两条拟合直线的交点，近平行时返回None。"""
+    first_point, first_direction = first
+    second_point, second_direction = second
+    cross = (
+        first_direction[0] * second_direction[1]
+        - first_direction[1] * second_direction[0]
+    )
+    if abs(cross) < 1e-5:
+        return None
+    delta = second_point - first_point
+    distance = (
+        delta[0] * second_direction[1]
+        - delta[1] * second_direction[0]
+    ) / cross
+    return first_point + first_direction * distance
+
+
+def refine_polygon_corners(contour, polygon):
+    """用原始轮廓逐边拟合直线，再以相邻直线交点精修角点。"""
+    contour_points = contour.reshape(-1, 2).astype(np.float32)
+    vertices = polygon.reshape(-1, 2).astype(np.float32)
+    edge_count = len(vertices)
+    if edge_count < 3 or len(contour_points) < edge_count * 6:
+        return polygon
+
+    distances = np.empty(
+        (len(contour_points), edge_count),
+        dtype=np.float32,
+    )
+    positions = np.empty_like(distances)
+    for edge_index, start in enumerate(vertices):
+        end = vertices[(edge_index + 1) % edge_count]
+        vector = end - start
+        length_squared = float(np.dot(vector, vector))
+        if length_squared < 1:
+            distances[:, edge_index] = float("inf")
+            positions[:, edge_index] = 0
+            continue
+        position = (contour_points - start) @ vector / length_squared
+        projection = start + np.clip(position, 0, 1)[:, None] * vector
+        positions[:, edge_index] = position
+        distances[:, edge_index] = np.linalg.norm(
+            contour_points - projection,
+            axis=1,
+        )
+    assigned_edges = np.argmin(distances, axis=1)
+
+    fitted_lines = []
+    for edge_index, start in enumerate(vertices):
+        end = vertices[(edge_index + 1) % edge_count]
+        edge_length = float(np.linalg.norm(end - start))
+        edge_positions = positions[:, edge_index]
+        middle_points = contour_points[
+            (assigned_edges == edge_index)
+            & (edge_positions >= 0.08)
+            & (edge_positions <= 0.92)
+        ]
+        if len(middle_points) < 6:
+            middle_points = contour_points[
+                (assigned_edges == edge_index)
+                & (edge_positions >= -0.05)
+                & (edge_positions <= 1.05)
+            ]
+        if len(middle_points) < 4:
+            direction = (end - start) / max(edge_length, 1.0)
+            fitted_lines.append(((start + end) * 0.5, direction))
+            continue
+
+        points = np.asarray(middle_points, dtype=np.float32)
+        vx, vy, x, y = cv2.fitLine(
+            points,
+            cv2.DIST_HUBER,
+            0,
+            0.01,
+            0.01,
+        ).reshape(-1)
+        direction = np.array([vx, vy], dtype=np.float32)
+        direction /= max(float(np.linalg.norm(direction)), 1e-6)
+        if float(np.dot(direction, end - start)) < 0:
+            direction = -direction
+        line_point = np.array([x, y], dtype=np.float32)
+        distances = np.abs(
+            (points[:, 0] - line_point[0]) * direction[1]
+            - (points[:, 1] - line_point[1]) * direction[0]
+        )
+        if float(np.median(distances)) > max(2.5, edge_length * 0.035):
+            direction = (end - start) / max(edge_length, 1.0)
+            line_point = (start + end) * 0.5
+        fitted_lines.append((line_point, direction))
+
+    refined = []
+    for vertex_index, vertex in enumerate(vertices):
+        intersection = intersect_fitted_lines(
+            fitted_lines[(vertex_index - 1) % edge_count],
+            fitted_lines[vertex_index],
+        )
+        if intersection is None:
+            return polygon
+        previous_length = float(
+            np.linalg.norm(
+                vertex - vertices[(vertex_index - 1) % edge_count]
+            )
+        )
+        next_length = float(
+            np.linalg.norm(
+                vertices[(vertex_index + 1) % edge_count] - vertex
+            )
+        )
+        allowed_shift = max(
+            5.0,
+            min(18.0, min(previous_length, next_length) * 0.18),
+        )
+        if float(np.linalg.norm(intersection - vertex)) > allowed_shift:
+            return polygon
+        refined.append(intersection)
+
+    refined = np.asarray(refined, dtype=np.float32).reshape(-1, 1, 2)
+    contour_area = abs(float(cv2.contourArea(contour)))
+    refined_area = abs(float(cv2.contourArea(refined)))
+    if contour_area < 1:
+        return polygon
+    if not 0.82 <= refined_area / contour_area <= 1.18:
+        return polygon
+    return np.rint(refined).astype(np.int32)
+
+
+def green_background_foreground_mask(roi_rgb):
+    """从ROI边缘估计绿色背景，并返回填满内部花纹的碎片掩膜。"""
+    hsv = cv2.cvtColor(roi_rgb, cv2.COLOR_RGB2HSV)
+    height, width = hsv.shape[:2]
+    border_width = max(4, min(height, width) // 45)
+    border = np.concatenate(
+        [
+            hsv[:border_width].reshape(-1, 3),
+            hsv[-border_width:].reshape(-1, 3),
+            hsv[:, :border_width].reshape(-1, 3),
+            hsv[:, -border_width:].reshape(-1, 3),
+        ],
+        axis=0,
+    )
+    green_border = border[
+        (border[:, 0] >= 25)
+        & (border[:, 0] <= 100)
+        & (border[:, 1] >= 35)
+        & (border[:, 2] >= 12)
+    ]
+    if len(green_border) < max(40, len(border) // 8):
+        return None
+
+    reference_hue = float(np.median(green_border[:, 0]))
+    reference_saturation = float(np.median(green_border[:, 1]))
+    hue_distance = np.abs(hsv[:, :, 0].astype(np.float32) - reference_hue)
+    green = (
+        (hue_distance <= 24)
+        & (hsv[:, :, 1] >= max(30, reference_saturation * 0.28))
+        & (hsv[:, :, 2] >= 8)
+    ).astype(np.uint8)
+    green = cv2.morphologyEx(
+        green,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
+        iterations=2,
+    )
+
+    label_count, labels = cv2.connectedComponents(green, connectivity=8)
+    border_labels = np.concatenate(
+        [
+            labels[:border_width].reshape(-1),
+            labels[-border_width:].reshape(-1),
+            labels[:, :border_width].reshape(-1),
+            labels[:, -border_width:].reshape(-1),
+        ]
+    )
+    counts = np.bincount(border_labels, minlength=label_count)
+    connected_labels = np.flatnonzero(counts >= border_width * 2)
+    connected_labels = connected_labels[connected_labels != 0]
+    if len(connected_labels) == 0:
+        return None
+
+    background = np.isin(labels, connected_labels)
+    if float(np.mean(background)) < 0.20:
+        return None
+    foreground = np.where(background, 0, 255).astype(np.uint8)
+    foreground = cv2.morphologyEx(
+        foreground,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
+        iterations=2,
+    )
+    foreground = cv2.morphologyEx(
+        foreground,
+        cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)),
+        iterations=1,
+    )
+    contours, _ = cv2.findContours(
+        foreground,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+    filled = np.zeros_like(foreground)
+    cv2.drawContours(filled, contours, -1, 255, thickness=cv2.FILLED)
+    return filled
+
+
+def split_touching_contour(mask, contour, min_area):
+    """用腐蚀后的独立核心把相互接触的碎片重新分开。"""
+    component = np.zeros_like(mask)
+    cv2.drawContours(
+        component,
+        [contour],
+        -1,
+        255,
+        thickness=cv2.FILLED,
+    )
+    core_contours = []
+    for iterations in (4, 6, 8, 10):
+        cores = cv2.erode(
+            component,
+            cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)),
+            iterations=iterations,
+        )
+        found, _ = cv2.findContours(
+            cores,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE,
+        )
+        core_contours = [
+            core
+            for core in found
+            if abs(cv2.contourArea(core))
+            >= max(100.0, min_area * 0.20)
+        ]
+        if 2 <= len(core_contours) <= 4:
+            break
+    if not 2 <= len(core_contours) <= 4:
+        return []
+
+    distances = []
+    for core in core_contours:
+        core_mask = np.zeros_like(mask)
+        cv2.drawContours(
+            core_mask,
+            [core],
+            -1,
+            255,
+            thickness=cv2.FILLED,
+        )
+        distances.append(
+            cv2.distanceTransform(
+                cv2.bitwise_not(core_mask),
+                cv2.DIST_L2,
+                3,
+            )
+        )
+    owner = np.argmin(np.stack(distances, axis=0), axis=0)
+
+    separated = []
+    for core_index in range(len(core_contours)):
+        region = np.where(
+            (component > 0) & (owner == core_index),
+            255,
+            0,
+        ).astype(np.uint8)
+        region_contours, _ = cv2.findContours(
+            region,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE,
+        )
+        if not region_contours:
+            return []
+        piece_contour = max(region_contours, key=cv2.contourArea)
+        if abs(cv2.contourArea(piece_contour)) < min_area:
+            return []
+        separated.append(piece_contour)
+    return separated
+
+
+def find_candidates(
+    mask,
+    offset_x,
+    offset_y,
+    min_area,
+    max_area,
+    polygon_epsilon,
+):
+    """从一张二值图中找出可能属于拼图碎片的多边形。"""
+    image_height, image_width = mask.shape
+    raw_contours, _ = cv2.findContours(
+        mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+    contours = []
+    for contour in raw_contours:
+        perimeter = cv2.arcLength(contour, True)
+        polygon = cv2.approxPolyDP(
+            contour,
+            polygon_epsilon * perimeter,
+            True,
+        )
+        if 3 <= len(polygon) <= 5:
+            contours.append(contour)
+            continue
+        area = abs(cv2.contourArea(contour))
+        x, y, width, height = cv2.boundingRect(contour)
+        can_split = (
+            min_area * 1.6 <= area <= max_area * 2.5
+            and x > 2
+            and y > 2
+            and x + width < image_width - 2
+            and y + height < image_height - 2
+        )
+        split_contours = (
+            split_touching_contour(
+                mask,
+                contour,
+                min_area,
+            )
+            if can_split
+            else []
+        )
+        contours.extend(split_contours or [contour])
+    candidates = []
+
+    for contour in contours:
+        area = abs(cv2.contourArea(contour))
+        if area < min_area or area > max_area:
+            continue
+
+        x, y, width, height = cv2.boundingRect(contour)
+        if x <= 2 or y <= 2:
+            continue
+        if x + width >= image_width - 2 or y + height >= image_height - 2:
+            continue
+        if min(width, height) < 10:
+            continue
+        if max(width, height) / min(width, height) > 8:
+            continue
+
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter < 50:
+            continue
+
+        polygon = cv2.approxPolyDP(
+            contour,
+            polygon_epsilon * perimeter,
+            True,
+        )
+        if len(polygon) < 3 or len(polygon) > 5:
+            continue
+        polygon = refine_polygon_corners(contour, polygon)
+
+        polygon_area = abs(cv2.contourArea(polygon))
+        if polygon_area < min_area or area / polygon_area < 0.72:
+            continue
+
+        hull_area = abs(cv2.contourArea(cv2.convexHull(contour)))
+        if hull_area < 1 or area / hull_area < 0.55:
+            continue
+
+        moments = cv2.moments(contour)
+        if abs(moments["m00"]) < 1:
+            continue
+
+        center_x = int(moments["m10"] / moments["m00"]) + offset_x
+        center_y = int(moments["m01"] / moments["m00"]) + offset_y
+        points = [
+            (
+                int(point[0][0]) + offset_x,
+                int(point[0][1]) + offset_y,
+            )
+            for point in polygon
+        ]
+        piece_longest_edge, angle = longest_edge(points)
+
+        candidates.append(
+            {
+                "points": points,
+                "center": (center_x, center_y),
+                "area": area,
+                "angle": angle,
+                "longest_edge": piece_longest_edge,
+                "solidity": area / hull_area,
+            }
+        )
+
+    candidates.sort(key=lambda item: item["area"], reverse=True)
+    return candidates
+
+
+def candidate_set_score(candidates, max_pieces):
+    """优先选择包含较大、完整多边形的阈值极性。"""
+    selected = candidates[:max_pieces]
+    if not selected:
+        return 0.0
+    return sum(item["area"] * item["solidity"] for item in selected)
+
+
+def detect_pieces(
+    frame_rgb,
+    roi,
+    min_area=500,
+    max_area_ratio=0.35,
+    max_pieces=4,
+    polygon_epsilon=0.018,
+    threshold=None,
+    polarity_mode="AUTO",
+    background_mode="BLACK",
+):
+    """检测ROI内的拼图碎片。"""
+    roi_x, roi_y, roi_width, roi_height = roi
+    roi_rgb = frame_rgb[
+        roi_y : roi_y + roi_height,
+        roi_x : roi_x + roi_width,
+    ]
+
+    gray = cv2.cvtColor(roi_rgb, cv2.COLOR_RGB2GRAY)
+    gray = cv2.GaussianBlur(gray, (5, 5), 0)
+    if threshold is None:
+        threshold_value, bright_mask = cv2.threshold(
+            gray,
+            0,
+            255,
+            cv2.THRESH_BINARY + cv2.THRESH_OTSU,
+        )
+        threshold_mode = "OTSU"
+    else:
+        threshold_value = min(255, max(0, int(threshold)))
+        _, bright_mask = cv2.threshold(
+            gray,
+            threshold_value,
+            255,
+            cv2.THRESH_BINARY,
+        )
+        threshold_mode = "MANUAL"
+
+    dark_mask = cv2.bitwise_not(bright_mask)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    bright_mask = cv2.morphologyEx(
+        bright_mask,
+        cv2.MORPH_OPEN,
+        kernel,
+        iterations=1,
+    )
+    bright_mask = cv2.morphologyEx(
+        bright_mask,
+        cv2.MORPH_CLOSE,
+        kernel,
+        iterations=2,
+    )
+    dark_mask = cv2.morphologyEx(
+        dark_mask,
+        cv2.MORPH_OPEN,
+        kernel,
+        iterations=1,
+    )
+    dark_mask = cv2.morphologyEx(
+        dark_mask,
+        cv2.MORPH_CLOSE,
+        kernel,
+        iterations=2,
+    )
+
+    max_area = roi_width * roi_height * max_area_ratio
+    background_mode = background_mode.upper()
+    polarity_mode = polarity_mode.upper()
+    green_mask = (
+        green_background_foreground_mask(roi_rgb)
+        if background_mode == "GREEN"
+        else None
+    )
+    if green_mask is not None:
+        pieces = find_candidates(
+            green_mask,
+            roi_x,
+            roi_y,
+            min_area,
+            max_area,
+            polygon_epsilon,
+        )[:max_pieces]
+        polarity = "GREEN"
+        selected_mask = green_mask
+    else:
+        bright_candidates = find_candidates(
+            bright_mask,
+            roi_x,
+            roi_y,
+            min_area,
+            max_area,
+            polygon_epsilon,
+        )
+        dark_candidates = find_candidates(
+            dark_mask,
+            roi_x,
+            roi_y,
+            min_area,
+            max_area,
+            polygon_epsilon,
+        )
+        if polarity_mode == "LIGHT":
+            pieces = bright_candidates[:max_pieces]
+            polarity = "LIGHT"
+            selected_mask = bright_mask
+        elif polarity_mode == "DARK":
+            pieces = dark_candidates[:max_pieces]
+            polarity = "DARK"
+            selected_mask = dark_mask
+        elif candidate_set_score(
+            bright_candidates,
+            max_pieces,
+        ) >= candidate_set_score(
+            dark_candidates,
+            max_pieces,
+        ):
+            pieces = bright_candidates[:max_pieces]
+            polarity = "LIGHT"
+            selected_mask = bright_mask
+        else:
+            pieces = dark_candidates[:max_pieces]
+            polarity = "DARK"
+            selected_mask = dark_mask
+
+    pieces.sort(key=lambda item: (item["center"][1], item["center"][0]))
+    return pieces, {
+        "polarity": polarity,
+        "polarity_mode": polarity_mode,
+        "background_mode": background_mode,
+        "threshold": int(threshold_value),
+        "threshold_mode": threshold_mode,
+        "mask": selected_mask,
+    }
+
+
+def polygon_edge_length(polygon, edge_index):
+    """计算多边形指定边的长度。"""
+    start = polygon[edge_index]
+    end = polygon[(edge_index + 1) % len(polygon)]
+    return float(np.linalg.norm(end - start))
+
+
+def normalize_polygon(points):
+    """统一多边形顶点方向并把坐标转换为浮点数。"""
+    polygon = np.array(points, dtype=np.float32)
+    if cv2.contourArea(polygon, oriented=True) < 0:
+        polygon = polygon[::-1].copy()
+    return polygon
+
+
+def align_polygon_edge(polygon, edge_index, target_start, target_end):
+    """旋转并平移碎片，使指定边与目标边反向贴合。"""
+    source_start = polygon[edge_index]
+    source_end = polygon[(edge_index + 1) % len(polygon)]
+    source_vector = source_end - source_start
+    target_vector = target_start - target_end
+    source_angle = math.atan2(source_vector[1], source_vector[0])
+    target_angle = math.atan2(target_vector[1], target_vector[0])
+    angle = target_angle - source_angle
+
+    cosine = math.cos(angle)
+    sine = math.sin(angle)
+    rotation = np.array(
+        [
+            [cosine, -sine],
+            [sine, cosine],
+        ],
+        dtype=np.float32,
+    )
+    source_middle = (source_start + source_end) * 0.5
+    target_middle = (target_start + target_end) * 0.5
+    return (polygon - source_middle) @ rotation.T + target_middle
+
+
+def polygon_center(polygon):
+    """用顶点平均值计算只用于拼接侧向判断的中心。"""
+    return np.mean(polygon, axis=0)
+
+
+def centers_on_opposite_sides(
+    edge_start,
+    edge_end,
+    first_center,
+    second_center,
+):
+    """公共边两侧必须分别属于两块碎片。"""
+    edge = edge_end - edge_start
+    first_side = (
+        edge[0] * (first_center[1] - edge_start[1])
+        - edge[1] * (first_center[0] - edge_start[0])
+    )
+    second_side = (
+        edge[0] * (second_center[1] - edge_start[1])
+        - edge[1] * (second_center[0] - edge_start[0])
+    )
+    return first_side * second_side < 0
+
+
+def polygons_overlap(first, second):
+    """栅格化判断两块碎片是否发生了明显面积重叠。"""
+    all_points = np.vstack((first, second))
+    minimum = np.floor(np.min(all_points, axis=0)).astype(np.int32) - 3
+    maximum = np.ceil(np.max(all_points, axis=0)).astype(np.int32) + 3
+    width = int(maximum[0] - minimum[0] + 1)
+    height = int(maximum[1] - minimum[1] + 1)
+    if width <= 0 or height <= 0:
+        return True
+
+    first_mask = np.zeros((height, width), dtype=np.uint8)
+    second_mask = np.zeros((height, width), dtype=np.uint8)
+    first_points = np.rint(first - minimum).astype(np.int32)
+    second_points = np.rint(second - minimum).astype(np.int32)
+    cv2.fillPoly(first_mask, [first_points], 255)
+    cv2.fillPoly(second_mask, [second_points], 255)
+
+    kernel = np.ones((3, 3), dtype=np.uint8)
+    first_mask = cv2.erode(first_mask, kernel, iterations=1)
+    second_mask = cv2.erode(second_mask, kernel, iterations=1)
+    overlap = cv2.countNonZero(cv2.bitwise_and(first_mask, second_mask))
+    smaller_area = min(
+        cv2.countNonZero(first_mask),
+        cv2.countNonZero(second_mask),
+    )
+    return overlap > max(12, int(smaller_area * 0.008))
+
+
+def assembly_quality(layout, length_errors):
+    """用真实并集面积、矩形四角和目标比例评价完整拼法。"""
+    polygons = list(layout.values())
+    all_points = np.vstack(polygons).astype(np.float32)
+    rectangle = cv2.minAreaRect(all_points)
+    rectangle_width, rectangle_height = rectangle[1]
+    if min(rectangle_width, rectangle_height) < 1:
+        return -1.0, 0.0, 0.0
+
+    minimum = np.floor(np.min(all_points, axis=0)).astype(np.int32) - 4
+    maximum = np.ceil(np.max(all_points, axis=0)).astype(np.int32) + 4
+    width = int(maximum[0] - minimum[0] + 1)
+    height = int(maximum[1] - minimum[1] + 1)
+    union_mask = np.zeros((height, width), dtype=np.uint8)
+    summed_piece_area = 0
+    for polygon in polygons:
+        points = np.rint(polygon - minimum).astype(np.int32)
+        piece_mask = np.zeros((height, width), dtype=np.uint8)
+        cv2.fillPoly(piece_mask, [points], 255)
+        summed_piece_area += cv2.countNonZero(piece_mask)
+        cv2.bitwise_or(union_mask, piece_mask, dst=union_mask)
+
+    rectangle_mask = np.zeros((height, width), dtype=np.uint8)
+    rectangle_points = np.rint(
+        cv2.boxPoints(rectangle) - minimum
+    ).astype(np.int32)
+    cv2.fillPoly(rectangle_mask, [rectangle_points], 255)
+    union_area = cv2.countNonZero(union_mask)
+    rectangle_area = cv2.countNonZero(rectangle_mask)
+    if rectangle_area < 1:
+        return -1.0, 0.0, 0.0
+
+    rectangularity = min(1.0, union_area / rectangle_area)
+    overlap_ratio = max(
+        0.0,
+        (summed_piece_area - union_area) / rectangle_area,
+    )
+
+    rectangle_corners = cv2.boxPoints(rectangle)
+    corner_tolerance = max(
+        5.0,
+        math.hypot(rectangle_width, rectangle_height) * 0.035,
+    )
+    covered_corners = 0
+    for corner in rectangle_corners:
+        distances = np.linalg.norm(all_points - corner, axis=1)
+        if float(np.min(distances)) <= corner_tolerance:
+            covered_corners += 1
+    corner_score = covered_corners / 4.0
+
+    aspect_ratio = max(rectangle_width, rectangle_height) / min(
+        rectangle_width,
+        rectangle_height,
+    )
+    target_ratio = 10.0 / 6.0
+    ratio_score = math.exp(
+        -abs(math.log(max(0.01, aspect_ratio / target_ratio)))
+    )
+    mean_length_error = (
+        sum(length_errors) / len(length_errors)
+        if length_errors
+        else 0.0
+    )
+    score = (
+        rectangularity * 0.70
+        + corner_score * 0.16
+        + ratio_score * 0.14
+        - overlap_ratio * 0.35
+        - mean_length_error * 0.05
+    )
+    return score, rectangularity, corner_score
+
+
+def assembly_score(layout, length_errors):
+    """保留单分数接口，便于合成测试和调试。"""
+    return assembly_quality(layout, length_errors)[0]
+
+
+def solve_rectangle(pieces):
+    """
+    枚举完整公共边和长边分段公共边，返回最佳矩形布局。
+
+    这里只允许旋转和平移碎片，不进行镜像或单块缩放。
+    """
+    if len(pieces) < 2 or len(pieces) > 4:
+        return None, 0.0, 0
+
+    source_polygons = [
+        normalize_polygon(piece["points"])
+        for piece in pieces
+    ]
+    best_layout = None
+    best_score = -1.0
+    best_rectangularity = 0.0
+    best_corner_score = 0.0
+    total_nodes = 0
+
+    def search(placed, remaining, edge_usage, length_errors):
+        nonlocal best_layout
+        nonlocal best_score
+        nonlocal best_rectangularity
+        nonlocal best_corner_score
+        nonlocal total_nodes
+
+        if total_nodes >= 12000:
+            return
+        if (
+            best_score >= 0.965
+            and best_rectangularity >= 0.94
+            and best_corner_score >= 0.99
+        ):
+            return
+
+        total_nodes += 1
+        if not remaining:
+            score, rectangularity, corner_score = assembly_quality(
+                placed,
+                length_errors,
+            )
+            if score > best_score:
+                best_score = score
+                best_rectangularity = rectangularity
+                best_corner_score = corner_score
+                best_layout = {
+                    piece_id: polygon.copy()
+                    for piece_id, polygon in placed.items()
+                }
+            return
+
+        branches = []
+        generated = set()
+        for placed_id, placed_polygon in tuple(placed.items()):
+            placed_center = polygon_center(placed_polygon)
+            for placed_edge in range(len(placed_polygon)):
+                usage = edge_usage.get((placed_id, placed_edge), set())
+                if "FULL" in usage or (
+                    "START" in usage
+                    and "CENTER" in usage
+                    and "END" in usage
+                ):
+                    continue
+
+                target_start = placed_polygon[placed_edge]
+                target_end = placed_polygon[
+                    (placed_edge + 1) % len(placed_polygon)
+                ]
+                target_vector = target_end - target_start
+                target_length = float(np.linalg.norm(target_vector))
+                if target_length < 8:
+                    continue
+                target_unit = target_vector / target_length
+
+                for new_id in tuple(remaining):
+                    source_polygon = source_polygons[new_id]
+                    for source_edge in range(len(source_polygon)):
+                        source_length = polygon_edge_length(
+                            source_polygon,
+                            source_edge,
+                        )
+                        if source_length < 8:
+                            continue
+
+                        length_error = abs(
+                            source_length - target_length
+                        ) / max(source_length, target_length)
+                        options = []
+                        if not usage and length_error <= 0.16:
+                            options.append(
+                                (
+                                    "FULL",
+                                    target_start,
+                                    target_end,
+                                    length_error,
+                                    length_error,
+                                )
+                            )
+                        elif (
+                            source_length < target_length * 0.82
+                            and source_length > target_length * 0.16
+                        ):
+                            if "START" not in usage:
+                                options.append(
+                                    (
+                                        "START",
+                                        target_start,
+                                        target_start
+                                        + target_unit * source_length,
+                                        0.05,
+                                        0.0,
+                                    )
+                                )
+                            if "END" not in usage:
+                                options.append(
+                                    (
+                                        "END",
+                                        target_end
+                                        - target_unit * source_length,
+                                        target_end,
+                                        0.05,
+                                        0.0,
+                                    )
+                                )
+                            if "CENTER" not in usage:
+                                center_offset = (
+                                    target_length - source_length
+                                ) * 0.5
+                                options.append(
+                                    (
+                                        "CENTER",
+                                        target_start
+                                        + target_unit * center_offset,
+                                        target_start
+                                        + target_unit
+                                        * (center_offset + source_length),
+                                        0.06,
+                                        0.0,
+                                    )
+                                )
+
+                        for (
+                            attach_mode,
+                            segment_start,
+                            segment_end,
+                            priority,
+                            recorded_error,
+                        ) in options:
+                            transformed = align_polygon_edge(
+                                source_polygon,
+                                source_edge,
+                                segment_start,
+                                segment_end,
+                            )
+                            transformed_center = polygon_center(transformed)
+                            if not centers_on_opposite_sides(
+                                segment_start,
+                                segment_end,
+                                placed_center,
+                                transformed_center,
+                            ):
+                                continue
+
+                            if any(
+                                polygons_overlap(transformed, polygon)
+                                for polygon in placed.values()
+                            ):
+                                continue
+
+                            first_edge = transformed[1] - transformed[0]
+                            pose_angle = math.degrees(
+                                math.atan2(first_edge[1], first_edge[0])
+                            )
+                            pose_key = (
+                                new_id,
+                                int(round(transformed_center[0] / 3)),
+                                int(round(transformed_center[1] / 3)),
+                                int(round(pose_angle / 3)),
+                            )
+                            if pose_key in generated:
+                                continue
+                            generated.add(pose_key)
+                            branches.append(
+                                (
+                                    priority,
+                                    placed_id,
+                                    placed_edge,
+                                    new_id,
+                                    source_edge,
+                                    attach_mode,
+                                    transformed,
+                                    recorded_error,
+                                )
+                            )
+
+        branches.sort(key=lambda item: item[0])
+        for (
+            _,
+            placed_id,
+            placed_edge,
+            new_id,
+            source_edge,
+            attach_mode,
+            transformed,
+            recorded_error,
+        ) in branches:
+            next_placed = dict(placed)
+            next_placed[new_id] = transformed
+            next_remaining = set(remaining)
+            next_remaining.remove(new_id)
+            next_usage = {
+                key: set(value)
+                for key, value in edge_usage.items()
+            }
+            next_usage.setdefault(
+                (placed_id, placed_edge),
+                set(),
+            ).add(attach_mode)
+            next_usage[(new_id, source_edge)] = {"FULL"}
+            search(
+                next_placed,
+                next_remaining,
+                next_usage,
+                length_errors + [recorded_error],
+            )
+            if (
+                best_score >= 0.965
+                and best_rectangularity >= 0.94
+                and best_corner_score >= 0.99
+            ):
+                return
+
+    seed_order = sorted(
+        range(len(source_polygons)),
+        key=lambda piece_id: (
+            0 if len(source_polygons[piece_id]) == 3 else 1,
+            -max(
+                polygon_edge_length(
+                    source_polygons[piece_id],
+                    edge_index,
+                )
+                for edge_index in range(len(source_polygons[piece_id]))
+            ),
+        ),
+    )
+    for seed_id in seed_order:
+        search(
+            {seed_id: source_polygons[seed_id].copy()},
+            set(range(len(source_polygons))) - {seed_id},
+            {},
+            [],
+        )
+        if (
+            best_score >= 0.965
+            and best_rectangularity >= 0.94
+            and best_corner_score >= 0.99
+        ):
+            break
+
+    if (
+        best_layout is None
+        or best_rectangularity < 0.90
+        or best_corner_score < 0.75
+        or best_score < 0.86
+    ):
+        return None, 0.0, total_nodes
+    return best_layout, best_score, total_nodes
+
+
+def polygon_mask_bits(polygon, width, height):
+    """把候选碎片转换成整数位图，便于快速计算覆盖和重叠。"""
+    mask = np.zeros((height, width), dtype=np.uint8)
+    cv2.fillPoly(
+        mask,
+        [np.rint(polygon).astype(np.int32)],
+        1,
+    )
+    core_mask = cv2.erode(
+        mask,
+        np.ones((3, 3), dtype=np.uint8),
+        iterations=1,
+    )
+    packed = np.packbits(mask.reshape(-1))
+    packed_core = np.packbits(core_mask.reshape(-1))
+    return (
+        int.from_bytes(packed.tobytes(), "little"),
+        int.from_bytes(packed_core.tobytes(), "little"),
+        int(np.sum(mask)),
+    )
+
+
+def count_mask_bits(value):
+    """统计整数位图中的有效像素。"""
+    return value.bit_count()
+
+
+def polygons_have_interior_overlap(first, second):
+    all_points = np.vstack((first, second))
+    minimum = np.floor(np.min(all_points, axis=0)) - 2.0
+    maximum = np.ceil(np.max(all_points, axis=0)) + 2.0
+    width = int((maximum[0] - minimum[0]) * 4.0) + 1
+    height = int((maximum[1] - minimum[1]) * 4.0) + 1
+    if width <= 0 or height <= 0:
+        return True
+
+    first_mask = np.zeros((height, width), dtype=np.uint8)
+    second_mask = np.zeros((height, width), dtype=np.uint8)
+    first_points = np.rint(
+        (first - minimum) * 4.0
+    ).astype(np.int32)
+    second_points = np.rint(
+        (second - minimum) * 4.0
+    ).astype(np.int32)
+    cv2.fillPoly(first_mask, [first_points], 1)
+    cv2.fillPoly(second_mask, [second_points], 1)
+
+    kernel = np.ones((3, 3), dtype=np.uint8)
+    first_core = cv2.erode(
+        first_mask,
+        kernel,
+        iterations=1,
+    )
+    second_core = cv2.erode(
+        second_mask,
+        kernel,
+        iterations=1,
+    )
+    return (
+        cv2.countNonZero(
+            cv2.bitwise_and(first_core, second_mask)
+        )
+        > 0
+        or cv2.countNonZero(
+            cv2.bitwise_and(first_mask, second_core)
+        )
+        > 0
+    )
+
+
+def layout_has_interior_overlap(layout):
+    polygons = [
+        layout[piece_id]
+        for piece_id in sorted(layout)
+    ]
+    for first_id in range(len(polygons)):
+        for second_id in range(first_id + 1, len(polygons)):
+            if polygons_have_interior_overlap(
+                polygons[first_id],
+                polygons[second_id],
+            ):
+                return True
+    return False
+
+
+def layout_can_be_separated(layout):
+    piece_ids = sorted(layout)
+    polygons = [
+        layout[piece_id]
+        for piece_id in piece_ids
+    ]
+    all_points = np.vstack(polygons)
+    target_center = (
+        np.min(all_points, axis=0)
+        + np.max(all_points, axis=0)
+    ) * 0.5
+    centers = [
+        np.mean(polygon, axis=0)
+        for polygon in polygons
+    ]
+
+    moved = {
+        piece_id: (
+            polygon
+            + (center - target_center) * 0.6
+        )
+        for piece_id, polygon, center in zip(
+            piece_ids,
+            polygons,
+            centers,
+        )
+    }
+    return not layout_has_interior_overlap(moved)
+
+
+def rectangle_result_is_valid(result):
+    return (
+        result[0] is not None
+        and result[2] >= 0.94
+        and result[3] <= 0.06
+        and layout_can_be_separated(result[0])
+    )
+
+
+def generate_boundary_candidates(
+    polygon,
+    width,
+    height,
+    position_step=4,
+):
+    """
+    枚举碎片外边落在目标矩形四条边上的所有候选姿态。
+
+    题目保证每块碎片至少有一条边属于矩形外边，因此不需要在整张
+    矩形内部做二维平移搜索，只沿四条边搜索即可。
+    """
+    candidates = []
+    generated = set()
+    inside_tolerance = 2.5
+
+    for edge_index in range(len(polygon)):
+        edge_length = polygon_edge_length(polygon, edge_index)
+        if edge_length < 8:
+            continue
+
+        for side in range(4):
+            side_length = width if side < 2 else height
+            if edge_length > side_length + inside_tolerance:
+                continue
+
+            maximum_position = max(0.0, side_length - edge_length)
+            positions = list(
+                np.arange(
+                    0.0,
+                    maximum_position + 0.1,
+                    position_step,
+                )
+            )
+            positions.extend((0.0, maximum_position))
+
+            for position in positions:
+                if side == 0:
+                    first = np.array([position, 0.0], dtype=np.float32)
+                    second = np.array(
+                        [position + edge_length, 0.0],
+                        dtype=np.float32,
+                    )
+                elif side == 1:
+                    first = np.array(
+                        [position, height - 1.0],
+                        dtype=np.float32,
+                    )
+                    second = np.array(
+                        [position + edge_length, height - 1.0],
+                        dtype=np.float32,
+                    )
+                elif side == 2:
+                    first = np.array([0.0, position], dtype=np.float32)
+                    second = np.array(
+                        [0.0, position + edge_length],
+                        dtype=np.float32,
+                    )
+                else:
+                    first = np.array(
+                        [width - 1.0, position],
+                        dtype=np.float32,
+                    )
+                    second = np.array(
+                        [width - 1.0, position + edge_length],
+                        dtype=np.float32,
+                    )
+
+                for target_start, target_end in (
+                    (first, second),
+                    (second, first),
+                ):
+                    transformed = align_polygon_edge(
+                        polygon,
+                        edge_index,
+                        target_start,
+                        target_end,
+                    )
+                    minimum = np.min(transformed, axis=0)
+                    maximum = np.max(transformed, axis=0)
+                    if (
+                        minimum[0] < -inside_tolerance
+                        or minimum[1] < -inside_tolerance
+                        or maximum[0] > width - 1 + inside_tolerance
+                        or maximum[1] > height - 1 + inside_tolerance
+                    ):
+                        continue
+
+                    transformed[:, 0] = np.clip(
+                        transformed[:, 0],
+                        0,
+                        width - 1,
+                    )
+                    transformed[:, 1] = np.clip(
+                        transformed[:, 1],
+                        0,
+                        height - 1,
+                    )
+                    center = polygon_center(transformed)
+                    pose_key = (
+                        int(round(center[0] / 2)),
+                        int(round(center[1] / 2)),
+                        edge_index,
+                        side,
+                    )
+                    if pose_key in generated:
+                        continue
+                    generated.add(pose_key)
+
+                    (
+                        mask_bits,
+                        core_mask_bits,
+                        area,
+                    ) = polygon_mask_bits(
+                        transformed,
+                        width,
+                        height,
+                    )
+                    candidates.append(
+                        {
+                            "mask": mask_bits,
+                            "core_mask": core_mask_bits,
+                            "area": area,
+                            "polygon": transformed.copy(),
+                            "corners": sum(
+                                1 << corner_id
+                                for corner_id, corner in enumerate(
+                                    (
+                                        (0.0, 0.0),
+                                        (width - 1.0, 0.0),
+                                        (
+                                            width - 1.0,
+                                            height - 1.0,
+                                        ),
+                                        (0.0, height - 1.0),
+                                    )
+                                )
+                                if float(
+                                    np.min(
+                                        np.linalg.norm(
+                                            transformed
+                                            - np.asarray(corner),
+                                            axis=1,
+                                        )
+                                    )
+                                )
+                                <= 3.5
+                            ),
+                        }
+                    )
+    return candidates
+
+
+def search_rectangle_ratio(
+    polygons,
+    target_ratio,
+    beam_width,
+    position_step=4,
+    max_piece_overlap_ratio=0.30,
+):
+    """在一个给定的矩形长宽比下搜索拼片位置。"""
+    width = int(round(math.sqrt(6000.0 * target_ratio)))
+    height = int(round(6000.0 / width))
+    candidate_sets = [
+        generate_boundary_candidates(
+            polygon,
+            width,
+            height,
+            position_step,
+        )
+        for polygon in polygons
+    ]
+    if any(not candidates for candidates in candidate_sets):
+        return (
+            None,
+            0.0,
+            0.0,
+            0.0,
+            sum(len(item) for item in candidate_sets),
+            width,
+            height,
+        )
+
+    piece_order = sorted(
+        range(len(polygons)),
+        key=lambda piece_id: len(candidate_sets[piece_id]),
+    )
+    rectangle_area = width * height
+    states = [
+        {
+            "union": 0,
+            "core_union": 0,
+            "covered": 0,
+            "overlap": 0,
+            "corners": 0,
+            "proximity": 0.0,
+            "layout": {},
+        }
+    ]
+    evaluated = 0
+
+    for piece_id in piece_order:
+        next_states = []
+        for state in states:
+            for candidate in candidate_sets[piece_id]:
+                evaluated += 1
+                boundary_overlap = count_mask_bits(
+                    state["union"] & candidate["mask"]
+                )
+                candidate_core_overlap = count_mask_bits(
+                    state["union"] & candidate["core_mask"]
+                )
+                placed_core_overlap = count_mask_bits(
+                    state["core_union"] & candidate["mask"]
+                )
+                interior_overlap = max(
+                    candidate_core_overlap,
+                    placed_core_overlap,
+                )
+                if interior_overlap > max(
+                    6,
+                    int(
+                        candidate["area"]
+                        * max_piece_overlap_ratio
+                    ),
+                ):
+                    continue
+
+                layout = dict(state["layout"])
+                layout[piece_id] = candidate["polygon"]
+                proximity = state["proximity"]
+                for old_polygon in state["layout"].values():
+                    distance = float(
+                        np.min(
+                            np.linalg.norm(
+                                candidate["polygon"][:, None, :]
+                                - old_polygon[None, :, :],
+                                axis=2,
+                            )
+                        )
+                    )
+                    proximity += max(
+                        0.0,
+                        24.0 - distance,
+                    ) ** 2
+                next_states.append(
+                    {
+                        "union": state["union"] | candidate["mask"],
+                        "core_union": (
+                            state["core_union"]
+                            | candidate["core_mask"]
+                        ),
+                        "covered": (
+                            state["covered"]
+                            + candidate["area"]
+                            - boundary_overlap
+                        ),
+                        "overlap": (
+                            state["overlap"]
+                            + interior_overlap
+                        ),
+                        "corners": (
+                            state["corners"]
+                            | candidate["corners"]
+                        ),
+                        "proximity": proximity,
+                        "layout": layout,
+                    }
+                )
+
+        if not next_states:
+            return None, 0.0, 0.0, 0.0, evaluated, width, height
+
+        next_states.sort(
+            key=lambda state: (
+                state["covered"]
+                - state["overlap"] * 12
+                + state["corners"].bit_count()
+                * rectangle_area
+                * 0.18
+                + state["proximity"] * 2.5
+            ),
+            reverse=True,
+        )
+        states = next_states[:beam_width]
+
+    ranked_states = sorted(
+        states,
+        key=lambda state: (
+            state["covered"]
+            - state["overlap"] * 12
+            + state["corners"].bit_count()
+            * rectangle_area
+            * 0.18
+            + state["proximity"] * 2.5
+        ),
+        reverse=True,
+    )
+    best_state = None
+    for state in ranked_states:
+        if (
+            state["corners"] == 15
+            and not layout_has_interior_overlap(state["layout"])
+        ):
+            best_state = state
+            break
+    if best_state is None:
+        return None, 0.0, 0.0, 0.0, evaluated, width, height
+    coverage = best_state["covered"] / rectangle_area
+    overlap_ratio = best_state["overlap"] / rectangle_area
+    score = coverage - overlap_ratio * 2.0
+    return (
+        best_state["layout"],
+        score,
+        coverage,
+        overlap_ratio,
+        evaluated,
+        width,
+        height,
+    )
+
+
+def solve_rectangle_by_cover(
+    pieces,
+    max_piece_overlap_ratio=0.012,
+    target_fill_ratio=0.80,
+    position_step=4,
+):
+    """
+    自动搜索允许范围内的目标矩形比例，再用位图束搜索拼接。
+
+    返回的solve_info用于把求解坐标恢复为相机像素坐标。
+    """
+    if not 2 <= len(pieces) <= 4:
+        return None, 0.0, 0, None
+
+    polygons = [
+        normalize_polygon(piece["points"])
+        for piece in pieces
+    ]
+    total_piece_area = sum(
+        abs(cv2.contourArea(polygon))
+        for polygon in polygons
+    )
+    if total_piece_area < 100:
+        return None, 0.0, 0, None
+
+    solve_scale = math.sqrt(
+        6000.0 * target_fill_ratio / total_piece_area
+    )
+    polygons = [
+        polygon * solve_scale
+        for polygon in polygons
+    ]
+
+    ratios = [
+        10.0 / 6.0,
+        1.45,
+        1.50,
+        1.40,
+        1.60,
+        1.80,
+        2.00,
+        1.20,
+        2.20,
+        1.00,
+        2.40,
+    ]
+    total_evaluated = 0
+    best_ratio = ratios[0]
+    best_result = None
+    refined_ratios = set()
+
+    for index, ratio in enumerate(ratios):
+        beam_width = 16
+        if index == 0:
+            beam_width = 240
+        elif index <= 3:
+            beam_width = 120
+        else:
+            beam_width = 40
+        result = search_rectangle_ratio(
+            polygons,
+            ratio,
+            beam_width,
+            position_step=position_step,
+            max_piece_overlap_ratio=max_piece_overlap_ratio,
+        )
+        total_evaluated += result[4]
+        if (
+            result[0] is not None
+            and (
+                best_result is None
+                or result[1] > best_result[1]
+            )
+        ):
+            best_result = result
+            best_ratio = ratio
+
+        if rectangle_result_is_valid(result):
+            return (
+                result[0],
+                result[1],
+                total_evaluated,
+                {
+                    "ratio": ratio,
+                    "solve_scale": solve_scale,
+                    "width": result[5],
+                    "height": result[6],
+                    "coverage": result[2],
+                    "overlap": result[3],
+                    "forced": False,
+                    "boundary_safe": True,
+                },
+            )
+        if (
+            index >= 2
+            and best_result is not None
+            and best_result[1] >= 0.72
+            and best_ratio not in refined_ratios
+        ):
+            refined_result = search_rectangle_ratio(
+                polygons,
+                best_ratio,
+                240,
+                position_step=position_step,
+                max_piece_overlap_ratio=max_piece_overlap_ratio,
+            )
+            refined_ratios.add(best_ratio)
+            total_evaluated += refined_result[4]
+            if refined_result[1] > best_result[1]:
+                best_result = refined_result
+            if rectangle_result_is_valid(refined_result):
+                return (
+                    refined_result[0],
+                    refined_result[1],
+                    total_evaluated,
+                    {
+                        "ratio": best_ratio,
+                        "solve_scale": solve_scale,
+                        "width": refined_result[5],
+                        "height": refined_result[6],
+                        "coverage": refined_result[2],
+                        "overlap": refined_result[3],
+                        "forced": False,
+                        "boundary_safe": True,
+                    },
+                )
+
+    if (
+        best_result is not None
+        and best_ratio not in refined_ratios
+    ):
+        refined_result = search_rectangle_ratio(
+            polygons,
+            best_ratio,
+            240,
+            position_step=position_step,
+            max_piece_overlap_ratio=max_piece_overlap_ratio,
+        )
+        total_evaluated += refined_result[4]
+        if refined_result[1] > best_result[1]:
+            best_result = refined_result
+        if rectangle_result_is_valid(refined_result):
+            return (
+                refined_result[0],
+                refined_result[1],
+                total_evaluated,
+                {
+                    "ratio": best_ratio,
+                    "solve_scale": solve_scale,
+                    "width": refined_result[5],
+                    "height": refined_result[6],
+                    "coverage": refined_result[2],
+                    "overlap": refined_result[3],
+                    "forced": False,
+                    "boundary_safe": True,
+                },
+            )
+
+    if best_result is None or best_result[0] is None:
+        return None, 0.0, total_evaluated, None
+    return (
+        best_result[0],
+        best_result[1],
+        total_evaluated,
+        {
+            "ratio": best_ratio,
+            "solve_scale": solve_scale,
+            "width": best_result[5],
+            "height": best_result[6],
+            "coverage": best_result[2],
+            "overlap": best_result[3],
+            "forced": True,
+            "boundary_safe": True,
+        },
+    )
+
+
+def fit_layout_to_box(layout, target_box):
+    """把求出的整体拼图旋转、缩放到屏幕下半区显示。"""
+    ordered_ids = sorted(layout)
+    polygons = [layout[piece_id] for piece_id in ordered_ids]
+    all_points = np.vstack(polygons).astype(np.float32)
+    rectangle = cv2.minAreaRect(all_points)
+    rectangle_points = cv2.boxPoints(rectangle)
+
+    longest_vector = rectangle_points[1] - rectangle_points[0]
+    for index in range(1, 4):
+        vector = rectangle_points[(index + 1) % 4] - rectangle_points[index]
+        if np.dot(vector, vector) > np.dot(longest_vector, longest_vector):
+            longest_vector = vector
+
+    angle = -math.atan2(longest_vector[1], longest_vector[0])
+    cosine = math.cos(angle)
+    sine = math.sin(angle)
+    rotation = np.array(
+        [
+            [cosine, -sine],
+            [sine, cosine],
+        ],
+        dtype=np.float32,
+    )
+    center = np.mean(all_points, axis=0)
+    rotated = [
+        (polygon - center) @ rotation.T
+        for polygon in polygons
+    ]
+    rotated_all = np.vstack(rotated)
+    minimum = np.min(rotated_all, axis=0)
+    maximum = np.max(rotated_all, axis=0)
+    size = maximum - minimum
+
+    if size[1] > size[0]:
+        quarter_turn = np.array(
+            [
+                [0.0, -1.0],
+                [1.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        rotated = [polygon @ quarter_turn.T for polygon in rotated]
+        rotated_all = np.vstack(rotated)
+        minimum = np.min(rotated_all, axis=0)
+        maximum = np.max(rotated_all, axis=0)
+        size = maximum - minimum
+
+    target_x, target_y, target_width, target_height = target_box
+    scale = min(
+        target_width / max(1.0, size[0]),
+        target_height / max(1.0, size[1]),
+    )
+    target_center = np.array(
+        [
+            target_x + target_width * 0.5,
+            target_y + target_height * 0.5,
+        ],
+        dtype=np.float32,
+    )
+    source_center = (minimum + maximum) * 0.5
+
+    fitted = []
+    for piece_id, polygon in zip(ordered_ids, rotated):
+        points = np.rint(
+            (polygon - source_center) * scale + target_center
+        ).astype(np.int32)
+        fitted.append(
+            {
+                "piece_id": piece_id,
+                "points": [
+                    (int(point[0]), int(point[1]))
+                    for point in points
+                ],
+            }
+        )
+    return fitted
+
+
+def point_segment_distance(point, start, end):
+    vector = end - start
+    length_squared = float(np.dot(vector, vector))
+    if length_squared < 1e-6:
+        return float(np.linalg.norm(point - start))
+    amount = float(
+        np.dot(point - start, vector) / length_squared
+    )
+    amount = min(1.0, max(0.0, amount))
+    nearest = start + vector * amount
+    return float(np.linalg.norm(point - nearest))
+
+
+def polygon_distance(first, second):
+    if polygons_have_interior_overlap(first, second):
+        return -1.0
+
+    best = float("inf")
+    for point in first:
+        for edge_id, start in enumerate(second):
+            end = second[(edge_id + 1) % len(second)]
+            best = min(
+                best,
+                point_segment_distance(point, start, end),
+            )
+    for point in second:
+        for edge_id, start in enumerate(first):
+            end = first[(edge_id + 1) % len(first)]
+            best = min(
+                best,
+                point_segment_distance(point, start, end),
+            )
+    return best
+
+
+def spread_layout_with_gap(polygons, target_center, gap_pixels):
+    centers = [
+        np.mean(polygon, axis=0)
+        for polygon in polygons
+    ]
+    best_layout = [polygon.copy() for polygon in polygons]
+    best_distance = -1.0
+
+    for step in range(121):
+        factor = step * 0.005
+        moved = [
+            polygon + (center - target_center) * factor
+            for polygon, center in zip(polygons, centers)
+        ]
+        distances = []
+        valid = True
+        for first_id in range(len(moved)):
+            for second_id in range(first_id + 1, len(moved)):
+                distance = polygon_distance(
+                    moved[first_id],
+                    moved[second_id],
+                )
+                if distance < 0:
+                    valid = False
+                    break
+                distances.append(distance)
+            if not valid:
+                break
+        if not valid:
+            continue
+
+        minimum_distance = (
+            min(distances)
+            if distances
+            else gap_pixels
+        )
+        if minimum_distance > best_distance:
+            best_distance = minimum_distance
+            best_layout = moved
+        if minimum_distance >= gap_pixels:
+            return moved
+
+    return best_layout
+
+
+def place_layout_on_paper(layout, solve_info, roi):
+    """把目标矩形放到A4纸下半区，并给相邻拼片留出小缝。"""
+    roi_x, roi_y, roi_width, roi_height = roi
+    scale = 1.0 / solve_info["solve_scale"]
+    target_width = solve_info["width"] * scale
+    target_height = solve_info["height"] * scale
+    target_left = roi_x + (roi_width - target_width) * 0.5
+    lower_top = roi_y + roi_height * 0.5
+    target_top = lower_top + (
+        roi_height * 0.5 - target_height
+    ) * 0.5
+    piece_ids = sorted(layout)
+    placed_polygons = []
+    for piece_id in piece_ids:
+        polygon = layout[piece_id]
+        points = polygon * scale + np.array(
+            [target_left, target_top],
+            dtype=np.float32,
+        )
+        placed_polygons.append(points)
+
+    fitted = []
+    for piece_id, points in zip(piece_ids, placed_polygons):
+        fitted.append(
+            {
+                "piece_id": piece_id,
+                "points": [
+                    (float(point[0]), float(point[1]))
+                    for point in points
+                ],
+            }
+        )
+    return fitted
+
+
+def prepare_layout_for_execution(layout, solve_info, roi):
+    """把识别误差形成的轻微重叠修正掉，并在相邻边之间保留约1mm缝隙。"""
+    strict_report = evaluate_layout(layout)
+    gap_pixels = max(1.0, roi[3] / 297.0) * solve_info[
+        "solve_scale"
+    ]
+    if solve_info.get("boundary_safe", False):
+        frame_report = evaluate_layout(
+            layout,
+            edge_tolerance_ratio=0.035,
+        )
+        if (
+            frame_report["corners"] < 0.99
+            or frame_report["outer_piece_ratio"] < 0.999
+            or frame_report["coverage"] < 0.82
+            or frame_report["internal_match"] < 0.42
+            or frame_report["boundary_min_coverage"] < 0.88
+            or frame_report["boundary_max_gap_ratio"] > 0.12
+            or frame_report["boundary_angle_error"] > 7.0
+            or layout_has_interior_overlap(layout)
+        ):
+            return None, {
+                "valid": False,
+                "stage": "rectangle-frame",
+                "reasons": ["straight-four-side-frame"],
+            }
+        prepared = frame_report["normalized_layout"]
+        mode = "RECT"
+        repair_info = {
+            "valid": True,
+            "stage": "rectangle-frame",
+            "reasons": [],
+            "maximum_move": 0.0,
+            "gap": {
+                "applied": False,
+                "reason": "preserve-four-corners",
+            },
+        }
+    elif strict_report["valid"] and not solve_info.get(
+        "forced",
+        False,
+    ):
+        prepared = strict_report["normalized_layout"]
+        mode = "EXACT"
+        repair_info = {
+            "valid": True,
+            "stage": "strict",
+            "reasons": [],
+            "maximum_move": 0.0,
+            "gap": {
+                "applied": False,
+                "reason": "preserve-four-corners",
+            },
+        }
+    else:
+        prepared, repair_info = repair_layout_for_competition(
+            layout,
+            gap_pixels=gap_pixels,
+            force=solve_info.get("forced", False),
+        )
+        mode = (
+            "ASSUME"
+            if solve_info.get("forced", False)
+            else "EXEC"
+        )
+
+    if prepared is None or layout_has_interior_overlap(prepared):
+        return None, repair_info
+
+    final_report = evaluate_layout(
+        prepared,
+        edge_tolerance_ratio=0.05,
+    )
+    if (
+        final_report["corners"] < 0.99
+        or final_report["outer_piece_ratio"] < 0.999
+        or final_report["coverage"] < 0.82
+        or final_report["internal_match"] < 0.42
+        or final_report["boundary_min_coverage"] < 0.88
+        or final_report["boundary_max_gap_ratio"] > 0.12
+        or final_report["boundary_angle_error"] > 7.0
+        or layout_has_interior_overlap(prepared)
+    ):
+        return None, {
+            "valid": False,
+            "stage": "final-rectangle",
+            "reasons": ["straight-four-side-frame"],
+        }
+    solve_info["width"] = final_report["width"]
+    solve_info["height"] = final_report["height"]
+    solve_info["ratio"] = (
+        final_report["width"]
+        / max(1.0, final_report["height"])
+    )
+    solve_info["execution_mode"] = mode
+    solve_info["constraint_report"] = {
+        "coverage": final_report["coverage"],
+        "overlap": final_report["overlap"],
+        "outer_piece_ratio": final_report["outer_piece_ratio"],
+        "internal_match": final_report["internal_match"],
+        "boundary_min_coverage": final_report[
+            "boundary_min_coverage"
+        ],
+        "boundary_max_gap_ratio": final_report[
+            "boundary_max_gap_ratio"
+        ],
+        "boundary_angle_error": final_report[
+            "boundary_angle_error"
+        ],
+    }
+    solve_info["repair"] = repair_info
+    return prepared, repair_info
+
+
+def prepare_best_effort_layout(layout, solve_info, roi):
+    """比赛保底：严格矩形无解时，保留无重叠且几何评分最高的候选。"""
+    report = evaluate_layout(
+        layout,
+        edge_tolerance_ratio=0.035,
+    )
+    prepared = report["normalized_layout"]
+    repair_info = {
+        "valid": True,
+        "forced": True,
+        "stage": "best-effort",
+        "reasons": report["competition_reasons"],
+        "maximum_move": 0.0,
+        "gap": {
+            "applied": False,
+            "reason": "preserve-best-candidate",
+        },
+    }
+    if layout_has_interior_overlap(prepared):
+        prepared, repair_info = repair_layout_for_competition(
+            prepared,
+            gap_pixels=max(1.0, roi[3] / 297.0) * solve_info[
+                "solve_scale"
+            ],
+            force=True,
+        )
+    if prepared is None or layout_has_interior_overlap(prepared):
+        return None, {
+            "valid": False,
+            "stage": "best-effort",
+            "reasons": ["overlap"],
+        }
+
+    report = evaluate_layout(
+        prepared,
+        edge_tolerance_ratio=0.05,
+    )
+    solve_info["width"] = report["width"]
+    solve_info["height"] = report["height"]
+    solve_info["ratio"] = report["width"] / max(1.0, report["height"])
+    solve_info["method"] = "cpp-best-effort"
+    solve_info["execution_mode"] = "BEST"
+    solve_info["forced"] = True
+    solve_info["constraint_report"] = {
+        "coverage": report["coverage"],
+        "overlap": report["overlap"],
+        "outer_piece_ratio": report["outer_piece_ratio"],
+        "internal_match": report["internal_match"],
+        "boundary_min_coverage": report["boundary_min_coverage"],
+        "boundary_max_gap_ratio": report["boundary_max_gap_ratio"],
+        "boundary_angle_error": report["boundary_angle_error"],
+    }
+    solve_info["repair"] = repair_info
+    return prepared, repair_info
+
+
+def best_effort_layout_score(layout):
+    report = evaluate_layout(
+        layout,
+        edge_tolerance_ratio=0.035,
+    )
+    angle_score = max(
+        0.0,
+        1.0 - report["boundary_angle_error"] / 15.0,
+    )
+    score = (
+        report["coverage"] * 0.32
+        + report["internal_match"] * 0.28
+        + report["boundary_min_coverage"] * 0.22
+        + (1.0 - report["boundary_max_gap_ratio"]) * 0.10
+        + angle_score * 0.05
+        + report["corners"] * 0.03
+        - report["overlap"] * 8.0
+    )
+    return score, report
+
+
+def build_last_resort_layout(pieces, roi):
+    """所有搜索器都无候选时，紧凑排列碎片并保证仍可输出无重叠方案。"""
+    polygons = [
+        normalize_polygon(piece["points"])
+        for piece in pieces
+    ]
+    total_area = sum(
+        abs(cv2.contourArea(polygon))
+        for polygon in polygons
+    )
+    if not 2 <= len(polygons) <= 4 or total_area < 100.0:
+        return None, 0.0, None
+
+    solve_scale = math.sqrt(4320.0 / total_area)
+    polygons = [
+        polygon * solve_scale
+        for polygon in polygons
+    ]
+    columns = len(polygons) if len(polygons) == 2 else 2
+    rows = (len(polygons) + columns - 1) // columns
+    sizes = []
+    local_polygons = []
+    for polygon in polygons:
+        minimum = np.min(polygon, axis=0)
+        local = polygon - minimum
+        local_polygons.append(local)
+        sizes.append(np.max(local, axis=0))
+
+    column_widths = [
+        max(
+            (
+                sizes[index][0]
+                for index in range(column, len(sizes), columns)
+            ),
+            default=0.0,
+        )
+        for column in range(columns)
+    ]
+    row_heights = [
+        max(
+            (
+                sizes[index][1]
+                for index in range(
+                    row * columns,
+                    min((row + 1) * columns, len(sizes)),
+                )
+            ),
+            default=0.0,
+        )
+        for row in range(rows)
+    ]
+    gap = 2.0
+    x_offsets = [
+        sum(column_widths[:column]) + column * gap
+        for column in range(columns)
+    ]
+    y_offsets = [
+        sum(row_heights[:row]) + row * gap
+        for row in range(rows)
+    ]
+    layout = {}
+    for piece_id, (polygon, size) in enumerate(
+        zip(local_polygons, sizes)
+    ):
+        row = piece_id // columns
+        column = piece_id % columns
+        offset = np.array(
+            [
+                x_offsets[column]
+                + (column_widths[column] - size[0]) * 0.5,
+                y_offsets[row]
+                + (row_heights[row] - size[1]) * 0.5,
+            ],
+            dtype=np.float32,
+        )
+        layout[piece_id] = polygon + offset
+
+    info = {
+        "solve_scale": solve_scale,
+        "method": "last-resort-grid",
+        "forced": True,
+        "boundary_safe": False,
+    }
+    prepared, repair_info = prepare_best_effort_layout(
+        layout,
+        info,
+        roi,
+    )
+    if prepared is None:
+        return None, 0.0, None
+    score, _ = best_effort_layout_score(prepared)
+    info["method"] = "last-resort-grid"
+    info["repair"] = repair_info
+    return prepared, score, info
+
+
+def build_motion_plan(pieces, fitted_layout):
+    """
+    计算每块拼片的吸取点、放置点和图像坐标系旋转角。
+
+    目标轮廓由当前轮廓刚体变换得到，顶点顺序保持一致，因此不会产生
+    仅依靠最长边判断时常见的180度方向歧义。
+    """
+    targets = {
+        item["piece_id"]: np.array(
+            item["points"],
+            dtype=np.float32,
+        )
+        for item in fitted_layout
+    }
+    plan = []
+
+    for piece_id, piece in enumerate(pieces):
+        source = np.array(
+            piece["points"],
+            dtype=np.float32,
+        )
+        target = targets[piece_id]
+
+        best_start = 0
+        best_end = 1
+        best_length = 0.0
+        for start in range(len(source)):
+            for end in range(start + 1, len(source)):
+                vector = source[end] - source[start]
+                length = float(np.dot(vector, vector))
+                if length > best_length:
+                    best_start = start
+                    best_end = end
+                    best_length = length
+
+        source_vector = (
+            source[best_end] - source[best_start]
+        )
+        target_vector = (
+            target[best_end] - target[best_start]
+        )
+        rotation = math.degrees(
+            math.atan2(
+                target_vector[1],
+                target_vector[0],
+            )
+            - math.atan2(
+                source_vector[1],
+                source_vector[0],
+            )
+        )
+        while rotation > 180:
+            rotation -= 360
+        while rotation <= -180:
+            rotation += 360
+
+        radians = math.radians(rotation)
+        rotation_matrix = np.array(
+            [
+                [math.cos(radians), -math.sin(radians)],
+                [math.sin(radians), math.cos(radians)],
+            ],
+            dtype=np.float32,
+        )
+        translation = (
+            target[best_start]
+            - rotation_matrix @ source[best_start]
+        )
+        pick = np.array(
+            piece["center"],
+            dtype=np.float32,
+        )
+        place = rotation_matrix @ pick + translation
+        plan.append(
+            {
+                "piece_id": piece_id,
+                "pick": (
+                    float(pick[0]),
+                    float(pick[1]),
+                ),
+                "place": (
+                    float(place[0]),
+                    float(place[1]),
+                ),
+                "rotation": rotation,
+            }
+        )
+    return plan
+
+
+def print_motion_plan(plan):
+    """打印视觉坐标搬运指令，便于后续发送给机械臂控制器。"""
+    for move in plan:
+        print(
+            "MOVE P%d PICK=(%.1f,%.1f) PLACE=(%.1f,%.1f) ROT_IMG=%+.1f"
+            % (
+                move["piece_id"] + 1,
+                move["pick"][0],
+                move["pick"][1],
+                move["place"][0],
+                move["place"][1],
+                move["rotation"],
+            ),
+            flush=True,
+        )
+
+
+def draw_solved_rectangle(
+    img,
+    fitted_layout,
+    target_box,
+    score,
+    motion_plan,
+):
+    """在A4纸下半区画出拼接后的矩形及内部接缝。"""
+    target_x, target_y, _, _ = target_box
+    colors = (
+        image.COLOR_GREEN,
+        image.COLOR_RED,
+        image.COLOR_YELLOW,
+        image.COLOR_BLUE,
+    )
+    rotations = {
+        move["piece_id"]: move["rotation"]
+        for move in motion_plan
+    }
+    for item in fitted_layout:
+        points = item["points"]
+        color = colors[item["piece_id"] % len(colors)]
+        for index, start in enumerate(points):
+            end = points[(index + 1) % len(points)]
+            img.draw_line(
+                int(round(start[0])),
+                int(round(start[1])),
+                int(round(end[0])),
+                int(round(end[1])),
+                color,
+                4,
+            )
+        center_x = int(
+            round(
+                sum(point[0] for point in points)
+                / len(points)
+            )
+        )
+        center_y = int(
+            round(
+                sum(point[1] for point in points)
+                / len(points)
+            )
+        )
+        img.draw_string(
+            center_x - 20,
+            center_y - 18,
+            "S%d R%+.0f"
+            % (
+                item["piece_id"] + 1,
+                rotations[item["piece_id"]],
+            ),
+            color,
+            scale=1,
+        )
+
+    img.draw_string(
+        target_x,
+        target_y - 36,
+        "SOLVED %.3f" % score,
+        image.COLOR_WHITE,
+        scale=2,
+    )
+
+
+def draw_roi(img, roi):
+    """在屏幕上画出当前参与识别的区域。"""
+    x, y, width, height = roi
+    right = x + width - 1
+    bottom = y + height - 1
+    img.draw_line(x, y, right, y, image.COLOR_YELLOW, 1)
+    img.draw_line(right, y, right, bottom, image.COLOR_YELLOW, 1)
+    img.draw_line(right, bottom, x, bottom, image.COLOR_YELLOW, 1)
+    img.draw_line(x, bottom, x, y, image.COLOR_YELLOW, 1)
+
+
+def draw_piece(img, piece, piece_id):
+    """画出一块碎片的轮廓、中心、最长边和简洁编号。"""
+    points = piece["points"]
+
+    # 先画深色底线，再画绿色轮廓。亮、暗碎片都能看清，而且每条边都会被描出。
+    for index, start in enumerate(points):
+        end = points[(index + 1) % len(points)]
+        img.draw_line(
+            start[0],
+            start[1],
+            end[0],
+            end[1],
+            image.COLOR_BLACK,
+            6,
+        )
+
+    for index, start in enumerate(points):
+        end = points[(index + 1) % len(points)]
+        img.draw_line(
+            start[0],
+            start[1],
+            end[0],
+            end[1],
+            image.COLOR_GREEN,
+            3,
+        )
+
+    edge_start, edge_end = piece["longest_edge"]
+    img.draw_line(
+        edge_start[0],
+        edge_start[1],
+        edge_end[0],
+        edge_end[1],
+        image.COLOR_YELLOW,
+        3,
+    )
+
+    center_x, center_y = piece["center"]
+    img.draw_cross(
+        center_x,
+        center_y,
+        image.COLOR_RED,
+        size=6,
+        thickness=2,
+    )
+    label = "P%d" % piece_id
+    img.draw_string(
+        max(0, center_x - 24),
+        max(0, center_y - 44),
+        label,
+        image.COLOR_GREEN,
+        scale=2,
+    )
+
+
+def print_detection(pieces, threshold_info):
+    """把结果打印到串口终端，之后可直接扩展为机械控制数据。"""
+    print(
+        "pieces=%d polarity=%s mode=%s threshold=%d"
+        % (
+            len(pieces),
+            threshold_info["polarity"],
+            threshold_info["threshold_mode"],
+            threshold_info["threshold"],
+        ),
+        flush=True,
+    )
+    for index, piece in enumerate(pieces, 1):
+        print(
+            "  P%d center=(%d,%d) vertices=%d area=%d angle=%.1f"
+            % (
+                index,
+                piece["center"][0],
+                piece["center"][1],
+                len(piece["points"]),
+                int(piece["area"]),
+                piece["angle"],
+            ),
+            flush=True,
+        )
+
+
+def touch_in_box(
+    touch_status,
+    box,
+    image_width,
+    image_height,
+    display_width,
+    display_height,
+):
+    """把图像上的按钮位置映射到实际屏幕触摸坐标。"""
+    if not touch_status[2]:
+        return False
+
+    mapped = image.resize_map_pos(
+        image_width,
+        image_height,
+        display_width,
+        display_height,
+        image.Fit.FIT_CONTAIN,
+        box[0],
+        box[1],
+        box[2],
+        box[3],
+    )
+    return (
+        mapped[0] <= touch_status[0] < mapped[0] + mapped[2]
+        and mapped[1] <= touch_status[1] < mapped[1] + mapped[3]
+    )
+
+
+def get_button_boxes(image_width, image_height):
+    """返回右侧调参按钮在摄像头图像中的位置。"""
+    if image_height > image_width:
+        return {
+            "solve": [20, 760, 210, 70],
+            "card_solve": [255, 760, 210, 70],
+            "tune": [490, 760, 210, 70],
+            "capture": [20, 840, 680, 70],
+            "threshold_down": [20, 810, 330, 70],
+            "threshold_up": [370, 810, 330, 70],
+            "auto_threshold": [20, 890, 680, 70],
+            "polarity": [20, 970, 680, 70],
+            "area_down": [20, 1050, 330, 70],
+            "area_up": [370, 1050, 330, 70],
+            "close": [20, 1190, 680, 70],
+        }
+
+    panel_x = image_width - 350
+    return {
+        "solve": [panel_x + 10, 10, 100, 70],
+        "card_solve": [panel_x + 120, 10, 100, 70],
+        "tune": [panel_x + 230, 10, 100, 70],
+        "capture": [panel_x + 10, 90, 320, 70],
+        "threshold_down": [panel_x + 10, 90, 155, 70],
+        "threshold_up": [panel_x + 175, 90, 155, 70],
+        "auto_threshold": [panel_x + 10, 170, 320, 70],
+        "polarity": [panel_x + 10, 250, 320, 70],
+        "area_down": [panel_x + 10, 330, 155, 70],
+        "area_up": [panel_x + 175, 330, 155, 70],
+        "close": [panel_x + 10, 500, 320, 70],
+    }
+
+
+def draw_button(img, box, text, active=False):
+    """绘制适合高分辨率画面缩放显示的触摸按钮。"""
+    color = image.COLOR_GREEN if active else image.COLOR_WHITE
+    img.draw_rect(
+        box[0],
+        box[1],
+        box[2],
+        box[3],
+        image.COLOR_BLACK,
+        -1,
+    )
+    img.draw_rect(
+        box[0],
+        box[1],
+        box[2],
+        box[3],
+        color,
+        3,
+    )
+
+    text_size = image.string_size(text, scale=2)
+    text_width = (
+        text_size.width()
+        if hasattr(text_size, "width")
+        else text_size[0]
+    )
+    text_height = (
+        text_size.height()
+        if hasattr(text_size, "height")
+        else text_size[1]
+    )
+    img.draw_string(
+        box[0] + (box[2] - text_width) // 2,
+        box[1] + (box[3] - text_height) // 2,
+        text,
+        color,
+        scale=2,
+    )
+
+
+def draw_controls(
+    img,
+    boxes,
+    auto_threshold,
+    threshold_value,
+    polarity_mode,
+    min_piece_area,
+):
+    """显示阈值、极性和最小面积的触摸调参面板。"""
+    if img.height() > img.width():
+        img.draw_rect(
+            0,
+            740,
+            img.width(),
+            img.height() - 740,
+            image.COLOR_BLACK,
+            -1,
+        )
+        img.draw_string(
+            20,
+            755,
+            "BINARY TUNE",
+            image.COLOR_WHITE,
+            scale=2,
+        )
+    else:
+        panel_x = boxes["threshold_down"][0] - 10
+        img.draw_rect(
+            panel_x,
+            0,
+            img.width() - panel_x,
+            590,
+            image.COLOR_BLACK,
+            -1,
+        )
+        img.draw_string(
+            panel_x + 10,
+            20,
+            "BINARY TUNE",
+            image.COLOR_WHITE,
+            scale=2,
+        )
+    draw_button(
+        img,
+        boxes["threshold_down"],
+        "TH -5",
+    )
+    draw_button(
+        img,
+        boxes["threshold_up"],
+        "TH +5",
+    )
+    draw_button(
+        img,
+        boxes["auto_threshold"],
+        "TH AUTO" if auto_threshold else "TH %d" % threshold_value,
+        active=auto_threshold,
+    )
+    draw_button(
+        img,
+        boxes["polarity"],
+        "POL %s" % polarity_mode,
+        active=polarity_mode != "AUTO",
+    )
+    draw_button(
+        img,
+        boxes["area_down"],
+        "AREA -",
+    )
+    draw_button(
+        img,
+        boxes["area_up"],
+        "AREA +",
+    )
+    img.draw_string(
+        boxes["area_down"][0],
+        boxes["area_down"][1] + boxes["area_down"][3] + 12,
+        "MIN AREA %d" % min_piece_area,
+        image.COLOR_WHITE,
+        scale=2,
+    )
+    draw_button(
+        img,
+        boxes["close"],
+        "BACK",
+    )
+
+
+def show_binary_preview(frame_rgb, mask, roi):
+    """调参页面中把当前参与识别的二值图直接显示出来。"""
+    roi_x, roi_y, roi_width, roi_height = roi
+    frame_rgb[:, :, :] = 0
+    preview = frame_rgb[
+        roi_y : roi_y + roi_height,
+        roi_x : roi_x + roi_width,
+    ]
+    preview[:, :, 0] = mask
+    preview[:, :, 1] = mask
+    preview[:, :, 2] = mask
+
+
+def show_card_assembly_preview(preview_rgb):
+    """在独立窗口中显示带有原始牌面纹理的拼接结果。"""
+    if preview_rgb is None:
+        return
+
+    height, width = preview_rgb.shape[:2]
+    scale = min(1.0, 640.0 / width, 560.0 / height)
+    cv2.namedWindow(
+        "Card Pattern Check - Gap Closed",
+        cv2.WINDOW_NORMAL,
+    )
+    cv2.resizeWindow(
+        "Card Pattern Check - Gap Closed",
+        max(320, int(width * scale)),
+        max(240, int(height * scale)),
+    )
+    cv2.moveWindow(
+        "Card Pattern Check - Gap Closed",
+        760,
+        80,
+    )
+    cv2.imshow(
+        "Card Pattern Check - Gap Closed",
+        cv2.cvtColor(
+            preview_rgb,
+            cv2.COLOR_RGB2BGR,
+        ),
+    )
+
+
+def save_capture(
+    frame_rgb,
+    mask,
+    pieces,
+    threshold_info,
+    roi,
+    settings,
+):
+    capture_dir = "/home/pi5/puzzle_card_detector/captures"
+    os.makedirs(capture_dir, exist_ok=True)
+    timestamp = "%s_%03d" % (
+        time.strftime("%Y%m%d_%H%M%S"),
+        int(time.time() * 1000) % 1000,
+    )
+    prefix = os.path.join(capture_dir, timestamp)
+    roi_x, roi_y, roi_width, roi_height = roi
+    raw_bgr = cv2.cvtColor(
+        frame_rgb,
+        cv2.COLOR_RGB2BGR,
+    )
+    roi_bgr = raw_bgr[
+        roi_y : roi_y + roi_height,
+        roi_x : roi_x + roi_width,
+    ]
+    if not cv2.imwrite(prefix + "_raw.png", raw_bgr):
+        raise RuntimeError("cannot save raw capture")
+    if not cv2.imwrite(prefix + "_roi.png", roi_bgr):
+        raise RuntimeError("cannot save ROI capture")
+    if not cv2.imwrite(prefix + "_binary.png", mask):
+        raise RuntimeError("cannot save binary capture")
+
+    metadata = {
+        "timestamp": timestamp,
+        "raw_file": timestamp + "_raw.png",
+        "roi_file": timestamp + "_roi.png",
+        "binary_file": timestamp + "_binary.png",
+        "image_size": [
+            int(frame_rgb.shape[1]),
+            int(frame_rgb.shape[0]),
+        ],
+        "roi": [
+            int(roi_x),
+            int(roi_y),
+            int(roi_width),
+            int(roi_height),
+        ],
+        "threshold": int(threshold_info["threshold"]),
+        "threshold_mode": threshold_info["threshold_mode"],
+        "polarity": threshold_info["polarity"],
+        "settings": settings,
+        "pieces": [
+            {
+                "index": index,
+                "points": [
+                    [int(point[0]), int(point[1])]
+                    for point in piece["points"]
+                ],
+                "center": [
+                    int(piece["center"][0]),
+                    int(piece["center"][1]),
+                ],
+                "area": float(piece["area"]),
+                "solidity": float(piece["solidity"]),
+                "angle": float(piece["angle"]),
+            }
+            for index, piece in enumerate(pieces, 1)
+        ],
+    }
+    with open(prefix + ".json", "w", encoding="utf-8") as file:
+        json.dump(
+            metadata,
+            file,
+            ensure_ascii=False,
+            indent=2,
+        )
+    print(
+        "CAPTURE_SAVED %s pieces=%d"
+        % (timestamp, len(pieces)),
+        flush=True,
+    )
+    return timestamp
+
+
+def align_polygon_points(reference, points):
+    reference = np.asarray(reference, dtype=np.float64)
+    points = np.asarray(points, dtype=np.float64)
+    best = points
+    best_error = float("inf")
+    for candidate in (points, points[::-1]):
+        for offset in range(len(candidate)):
+            aligned = np.roll(candidate, offset, axis=0)
+            error = float(
+                np.mean((aligned - reference) ** 2)
+            )
+            if error < best_error:
+                best = aligned
+                best_error = error
+    return best
+
+
+def build_stable_piece_set(recent_piece_sets):
+    """从最近的连续画面中生成一组中值轮廓，运动中或顶点跳变时不求解。"""
+    if not recent_piece_sets:
+        return None
+
+    reference = recent_piece_sets[-1][2]
+    if not 2 <= len(reference) <= 4:
+        return None
+
+    aligned_sets = []
+    for _, _, candidate in reversed(recent_piece_sets[-12:]):
+        if len(candidate) != len(reference):
+            continue
+        best_order = None
+        best_error = float("inf")
+        for order in itertools.permutations(range(len(candidate))):
+            distances = []
+            valid = True
+            for piece_id, candidate_id in enumerate(order):
+                if len(candidate[candidate_id]["points"]) != len(
+                    reference[piece_id]["points"]
+                ):
+                    valid = False
+                    break
+                first = np.asarray(
+                    reference[piece_id]["center"],
+                    dtype=np.float64,
+                )
+                second = np.asarray(
+                    candidate[candidate_id]["center"],
+                    dtype=np.float64,
+                )
+                distances.append(
+                    float(np.linalg.norm(first - second))
+                )
+            if not valid or max(distances, default=99.0) > 12.0:
+                continue
+            error = sum(distance * distance for distance in distances)
+            if error < best_error:
+                best_error = error
+                best_order = order
+        if best_order is not None:
+            aligned_sets.append(
+                [candidate[index] for index in best_order]
+            )
+        if len(aligned_sets) >= 8:
+            break
+
+    if len(aligned_sets) < 4:
+        return None
+
+    stable_pieces = []
+    for piece_id, reference_piece in enumerate(reference):
+        reference_points = np.asarray(
+            reference_piece["points"],
+            dtype=np.float64,
+        )
+        point_samples = []
+        area_samples = []
+        solidity_samples = []
+        for pieces in aligned_sets:
+            piece = pieces[piece_id]
+            point_samples.append(
+                align_polygon_points(
+                    reference_points,
+                    piece["points"],
+                )
+            )
+            area_samples.append(float(piece["area"]))
+            solidity_samples.append(float(piece["solidity"]))
+
+        points_array = np.asarray(point_samples)
+        median_points = np.median(points_array, axis=0)
+        point_spread = float(
+            np.max(
+                np.sqrt(
+                    np.mean(
+                        (points_array - median_points) ** 2,
+                        axis=2,
+                    )
+                )
+            )
+        )
+        median_area = float(np.median(area_samples))
+        area_spread = (
+            max(area_samples) - min(area_samples)
+        ) / max(1.0, median_area)
+        if point_spread > 3.5 or area_spread > 0.08:
+            return None
+
+        points = [
+            (int(round(point[0])), int(round(point[1])))
+            for point in median_points
+        ]
+        contour = np.asarray(points, dtype=np.float32)
+        moments = cv2.moments(contour)
+        if abs(moments["m00"]) < 1:
+            return None
+        center = (
+            int(round(moments["m10"] / moments["m00"])),
+            int(round(moments["m01"] / moments["m00"])),
+        )
+        piece_longest_edge, angle = longest_edge(points)
+        stable_pieces.append(
+            {
+                "points": points,
+                "center": center,
+                "area": median_area,
+                "angle": angle,
+                "longest_edge": piece_longest_edge,
+                "solidity": float(
+                    np.median(solidity_samples)
+                ),
+            }
+        )
+    return stable_pieces
+
+
+def solve_piece_set_worker(pieces, roi):
+    """在独立进程中求解，避免搜索期间停止读取摄像头。"""
+    cv2.setNumThreads(1)
+    started = time.monotonic()
+    solved_layout = None
+    solved_score = 0.0
+    solver_nodes = 0
+    solve_info = None
+
+    print(
+        "SOLVE_STABLE %s"
+        % [piece["points"] for piece in pieces],
+        flush=True,
+    )
+    best_cpp_result = None
+    best_effort_result = None
+    search_settings = (
+        (0.96, 4),
+        (0.88, 4),
+        (0.80, 3),
+        (0.72, 2),
+    )
+
+    for fill_ratio, position_step in search_settings:
+        (
+            candidate_layout,
+            candidate_score,
+            candidate_nodes,
+            candidate_info,
+        ) = solve_rectangle_by_cover_cpp(
+            pieces,
+            fill_ratio=fill_ratio,
+            position_step=position_step,
+        )
+        solver_nodes += candidate_nodes
+        solved_score = max(solved_score, candidate_score)
+        if candidate_layout is None:
+            continue
+        candidate_info = dict(candidate_info)
+        fallback_score, fallback_report = best_effort_layout_score(
+            candidate_layout
+        )
+        if (
+            not layout_has_interior_overlap(candidate_layout)
+            and (
+                best_effort_result is None
+                or fallback_score > best_effort_result[0]
+            )
+        ):
+            fallback_info = dict(candidate_info)
+            fallback_info["best_effort_score"] = fallback_score
+            fallback_info["best_effort_report"] = {
+                "coverage": fallback_report["coverage"],
+                "internal_match": fallback_report["internal_match"],
+                "boundary_min_coverage": fallback_report[
+                    "boundary_min_coverage"
+                ],
+                "boundary_max_gap_ratio": fallback_report[
+                    "boundary_max_gap_ratio"
+                ],
+                "boundary_angle_error": fallback_report[
+                    "boundary_angle_error"
+                ],
+            }
+            best_effort_result = (
+                fallback_score,
+                candidate_score,
+                candidate_layout,
+                fallback_info,
+            )
+        candidate_layout, repair_info = (
+            prepare_layout_for_execution(
+                candidate_layout,
+                candidate_info,
+                roi,
+            )
+        )
+        if candidate_layout is not None:
+            if (
+                best_cpp_result is None
+                or candidate_score > best_cpp_result[0]
+            ):
+                best_cpp_result = (
+                    candidate_score,
+                    candidate_layout,
+                    candidate_info,
+                )
+            break
+
+        if best_effort_result is not None:
+            fallback_report = best_effort_result[3][
+                "best_effort_report"
+            ]
+            if (
+                best_effort_result[0] >= 0.78
+                and fallback_report["coverage"] >= 0.86
+                and fallback_report["internal_match"] >= 0.55
+                and fallback_report["boundary_min_coverage"] >= 0.78
+                and fallback_report["boundary_max_gap_ratio"] <= 0.22
+            ):
+                break
+
+    if best_cpp_result is not None:
+        solved_score, solved_layout, solve_info = best_cpp_result
+    elif best_effort_result is not None:
+        (
+            fallback_score,
+            candidate_score,
+            candidate_layout,
+            candidate_info,
+        ) = best_effort_result
+        candidate_layout, repair_info = prepare_best_effort_layout(
+            candidate_layout,
+            candidate_info,
+            roi,
+        )
+        if candidate_layout is not None:
+            solved_score = fallback_score
+            solved_layout = candidate_layout
+            solve_info = candidate_info
+
+    if solved_layout is None and 2 <= len(pieces) <= 4:
+        (
+            candidate_layout,
+            candidate_score,
+            candidate_nodes,
+            candidate_info,
+        ) = solve_rectangle_by_cover(pieces)
+        solver_nodes += candidate_nodes
+        solved_score = max(solved_score, candidate_score)
+        if candidate_layout is None:
+            (
+                candidate_layout,
+                candidate_score,
+                candidate_nodes,
+                candidate_info,
+            ) = solve_rectangle_by_cover(
+                pieces,
+                position_step=3,
+            )
+            solver_nodes += candidate_nodes
+            solved_score = max(
+                solved_score,
+                candidate_score,
+            )
+        if candidate_layout is None:
+            (
+                candidate_layout,
+                candidate_score,
+                candidate_nodes,
+                candidate_info,
+            ) = solve_rectangle_by_cover(
+                pieces,
+                target_fill_ratio=0.72,
+                position_step=4,
+            )
+            solver_nodes += candidate_nodes
+            solved_score = max(
+                solved_score,
+                candidate_score,
+            )
+        if candidate_layout is not None:
+            candidate_info = dict(candidate_info)
+            candidate_info["method"] = "legacy-cover"
+            measured_layout = candidate_layout
+            candidate_layout, repair_info = (
+                prepare_layout_for_execution(
+                    candidate_layout,
+                    candidate_info,
+                    roi,
+                )
+            )
+            if candidate_layout is None:
+                print(
+                    "SOLVE_REJECT legacy %s" % repair_info,
+                    flush=True,
+                )
+                candidate_info["forced"] = True
+                candidate_layout, repair_info = (
+                    prepare_layout_for_execution(
+                        measured_layout,
+                        candidate_info,
+                        roi,
+                    )
+                )
+            if candidate_layout is not None:
+                solved_layout = candidate_layout
+                solved_score = candidate_score
+                solve_info = candidate_info
+
+    if solved_layout is None:
+        (
+            candidate_layout,
+            candidate_score,
+            candidate_nodes,
+            candidate_info,
+        ) = solve_camera_rectangle(
+            pieces,
+            roi,
+            time_limit_s=2.2,
+            allow_relaxed=False,
+        )
+        solver_nodes += candidate_nodes
+        solved_score = max(solved_score, candidate_score)
+        if candidate_layout is not None:
+            candidate_info = dict(candidate_info)
+            measured_layout = candidate_layout
+            candidate_layout, repair_info = (
+                prepare_layout_for_execution(
+                    candidate_layout,
+                    candidate_info,
+                    roi,
+                )
+            )
+            if candidate_layout is None:
+                candidate_info["forced"] = True
+                candidate_layout, repair_info = (
+                    prepare_layout_for_execution(
+                        measured_layout,
+                        candidate_info,
+                        roi,
+                    )
+                )
+        if candidate_layout is not None:
+            solved_layout = candidate_layout
+            solved_score = candidate_score
+            solve_info = candidate_info
+
+    if solved_layout is None:
+        (
+            candidate_layout,
+            candidate_score,
+            candidate_nodes,
+            candidate_metrics,
+        ) = solve_edge_layout(
+            pieces,
+            time_limit_s=2.2,
+            return_best=True,
+        )
+        solver_nodes += candidate_nodes
+        solved_score = max(solved_score, candidate_score)
+        if candidate_layout is not None:
+            candidate_layout = normalize_layout(
+                candidate_layout
+            )
+            candidate_info = {
+                "solve_scale": 1.0,
+                "width": candidate_metrics["width"],
+                "height": candidate_metrics["height"],
+                "ratio": (
+                    candidate_metrics["width"]
+                    / max(1.0, candidate_metrics["height"])
+                ),
+                "coverage": candidate_metrics["coverage"],
+                "overlap": candidate_metrics["overlap"],
+                "method": "edge-assumed",
+                "forced": True,
+            }
+            candidate_layout, repair_info = (
+                prepare_layout_for_execution(
+                    candidate_layout,
+                    candidate_info,
+                    roi,
+                )
+            )
+        if candidate_layout is not None:
+            solved_layout = candidate_layout
+            solved_score = candidate_score
+            solve_info = candidate_info
+
+    if solved_layout is None:
+        (
+            candidate_layout,
+            candidate_score,
+            candidate_info,
+        ) = build_last_resort_layout(pieces, roi)
+        if candidate_layout is not None:
+            solved_layout = candidate_layout
+            solved_score = candidate_score
+            solve_info = candidate_info
+
+    return {
+        "layout": solved_layout,
+        "score": solved_score,
+        "nodes": solver_nodes,
+        "info": solve_info,
+        "pieces": pieces,
+        "elapsed_ms": (
+            time.monotonic() - started
+        ) * 1000.0,
+    }
+
+
+def refine_card_layout_geometry(layout, time_limit_s=0.8):
+    """用小范围刚性旋转和平移，让牌面候选重新贴合矩形和内部拼接边。"""
+    refined = {
+        piece_id: np.asarray(
+            polygon,
+            dtype=np.float64,
+        ).copy()
+        for piece_id, polygon in layout.items()
+    }
+
+    def quality(candidate):
+        report = evaluate_layout(
+            candidate,
+            edge_tolerance_ratio=0.07,
+        )
+        score = (
+            report["coverage"] * 0.42
+            + report["internal_match"] * 0.34
+            + report["corners"] * 0.12
+            + report["outer_piece_ratio"] * 0.12
+            - report["overlap"] * 8.0
+        )
+        return score, report
+
+    def move_piece(polygon, dx, dy, angle):
+        center = np.mean(polygon, axis=0)
+        radians = math.radians(angle)
+        rotation = np.array(
+            [
+                [math.cos(radians), -math.sin(radians)],
+                [math.sin(radians), math.cos(radians)],
+            ],
+            dtype=np.float64,
+        )
+        return (
+            (polygon - center) @ rotation.T
+            + center
+            + np.array([dx, dy], dtype=np.float64)
+        )
+
+    best_score, best_report = quality(refined)
+    deadline = time.monotonic() + time_limit_s
+    for move, angle in (
+        (6.0, 5.0),
+        (3.0, 2.5),
+        (1.5, 1.2),
+        (0.75, 0.6),
+        (0.35, 0.3),
+    ):
+        improved = True
+        rounds = 0
+        while improved and rounds < 4:
+            improved = False
+            rounds += 1
+            for piece_id in sorted(refined):
+                for dx, dy, rotation in (
+                    (move, 0.0, 0.0),
+                    (-move, 0.0, 0.0),
+                    (0.0, move, 0.0),
+                    (0.0, -move, 0.0),
+                    (0.0, 0.0, angle),
+                    (0.0, 0.0, -angle),
+                ):
+                    if time.monotonic() >= deadline:
+                        return refined, best_report
+                    candidate = {
+                        item_id: polygon.copy()
+                        for item_id, polygon in refined.items()
+                    }
+                    candidate[piece_id] = move_piece(
+                        candidate[piece_id],
+                        dx,
+                        dy,
+                        rotation,
+                    )
+                    score, report = quality(candidate)
+                    if score > best_score + 1e-5:
+                        refined = candidate
+                        best_score = score
+                        best_report = report
+                        improved = True
+    return refined, best_report
+
+
+def solve_card_piece_set_worker(frame_rgb, pieces, roi):
+    """独立执行扑克牌花纹求解，不调用或改写普通矩形求解链路。"""
+    cv2.setNumThreads(1)
+    started = time.monotonic()
+    best = None
+    solver_nodes = 0
+    seen = set()
+
+    for fill_ratio, position_step in (
+        (0.92, 3),
+        (0.88, 4),
+        (0.80, 3),
+        (0.72, 2),
+    ):
+        (
+            base_layout,
+            _,
+            candidate_nodes,
+            base_info,
+        ) = solve_rectangle_by_cover_cpp(
+            pieces,
+            fill_ratio=fill_ratio,
+            position_step=position_step,
+        )
+        solver_nodes += candidate_nodes
+        if base_layout is None:
+            continue
+
+        for layout, assignment in generate_shape_swap_layouts(
+            pieces,
+            base_layout,
+        ):
+            signature = tuple(
+                assignment
+            ) + (
+                int(round(fill_ratio * 100)),
+            )
+            if signature in seen:
+                continue
+            seen.add(signature)
+            solve_info = dict(base_info)
+            solve_info["boundary_safe"] = False
+            solve_info["method"] = "card-cpp-rerank"
+            prepared, repair_info = prepare_layout_for_execution(
+                layout,
+                solve_info,
+                roi,
+            )
+            strict_candidate = prepared is not None
+            if prepared is None:
+                prepared, repair_info = prepare_best_effort_layout(
+                    layout,
+                    solve_info,
+                    roi,
+                )
+                if prepared is None:
+                    print(
+                        "CARD_CANDIDATE_REJECT fill=%.2f order=%s %s"
+                        % (
+                            fill_ratio,
+                            assignment,
+                            repair_info,
+                        ),
+                        flush=True,
+                    )
+                    continue
+                solve_info["method"] = "card-best-effort"
+                solve_info["execution_mode"] = "BEST"
+
+            initial_geometry = (
+                solve_info["constraint_report"]["coverage"] * 0.58
+                + solve_info["constraint_report"]["internal_match"] * 0.42
+            )
+            if strict_candidate:
+                refined_layout, refined_report = (
+                    refine_card_layout_geometry(layout)
+                )
+                refined_info = dict(base_info)
+                refined_info["boundary_safe"] = False
+                refined_info["method"] = "card-cpp-rerank"
+                refined_prepared, _ = prepare_layout_for_execution(
+                    refined_layout,
+                    refined_info,
+                    roi,
+                )
+                if refined_prepared is not None:
+                    refined_geometry = (
+                        refined_info["constraint_report"]["coverage"] * 0.58
+                        + refined_info["constraint_report"]["internal_match"]
+                        * 0.42
+                    )
+                    if refined_geometry > initial_geometry + 1e-4:
+                        prepared = refined_prepared
+                        solve_info = refined_info
+                        solve_info["geometry_refined"] = True
+                        solve_info["refined_raw_report"] = {
+                            "coverage": refined_report["coverage"],
+                            "overlap": refined_report["overlap"],
+                            "internal_match": refined_report[
+                                "internal_match"
+                            ],
+                        }
+
+            pattern_layout = close_card_pattern_layout(
+                prepared,
+                solve_info,
+            )
+            texture = score_layout_texture(
+                frame_rgb,
+                pieces,
+                pattern_layout,
+            )
+            global_pattern = score_layout_global_pattern(
+                frame_rgb,
+                pieces,
+                pattern_layout,
+            )
+            rank_index = score_rank_index_diagonal(
+                frame_rgb,
+                pieces,
+                pattern_layout,
+            )
+            report = solve_info["constraint_report"]
+            base_rank = (
+                report["coverage"] * 0.36
+                + report["internal_match"] * 0.28
+                + texture["score"] * 0.14
+                + global_pattern["score"] * 0.22
+            )
+            rank = (
+                base_rank
+                + (
+                    rank_index["score"] - 0.5
+                )
+                * rank_index["confidence"]
+                * 0.12
+            )
+            if (
+                report["coverage"] >= 0.88
+                and report["internal_match"] >= 0.70
+            ):
+                geometry_tier = 3
+            elif (
+                report["coverage"] >= 0.84
+                and report["internal_match"] >= 0.52
+            ):
+                geometry_tier = 2
+            elif (
+                report["coverage"] >= 0.70
+                and report["internal_match"] >= 0.20
+            ):
+                geometry_tier = 1
+            else:
+                geometry_tier = 0
+            solve_info["texture_score"] = texture["score"]
+            solve_info["texture_confidence"] = texture["confidence"]
+            solve_info["global_pattern_score"] = (
+                global_pattern["score"]
+            )
+            solve_info["corner_diagonal_score"] = (
+                global_pattern.get("diagonal", 0.5)
+            )
+            solve_info["rank_index_score"] = rank_index["score"]
+            solve_info["rank_index_confidence"] = (
+                rank_index["confidence"]
+            )
+            solve_info["rank_index_valid"] = rank_index["valid"]
+            solve_info["rank_index_pair"] = rank_index["pair"]
+            solve_info["card_assignment"] = tuple(assignment)
+            solve_info["geometry_tier"] = geometry_tier
+            print(
+                "CARD_CANDIDATE fill=%.2f order=%s tier=%d rank=%.3f "
+                "coverage=%.3f internal=%.3f texture=%.3f "
+                "global=%.3f diagonal=%.3f index=%.3f/%.3f/%s"
+                % (
+                    fill_ratio,
+                    assignment,
+                    geometry_tier,
+                    rank,
+                    report["coverage"],
+                    report["internal_match"],
+                    texture["score"],
+                    global_pattern["score"],
+                    global_pattern.get("diagonal", 0.5),
+                    rank_index["score"],
+                    rank_index["confidence"],
+                    rank_index["valid"],
+                ),
+                flush=True,
+            )
+            if (
+                best is None
+                or geometry_tier
+                > best[2].get("geometry_tier", 0)
+                or (
+                    geometry_tier
+                    == best[2].get("geometry_tier", 0)
+                    and rank > best[0]
+                )
+            ):
+                best = (
+                    rank,
+                    prepared,
+                    solve_info,
+                    pattern_layout,
+                )
+
+        if best is not None:
+            best_report = best[2]["constraint_report"]
+            strong_geometry = (
+                best[2].get("geometry_tier", 0) == 3
+                and best_report["coverage"] >= 0.92
+                and best_report["internal_match"] >= 0.82
+            )
+            strong_card = (
+                best[2].get("geometry_tier", 0) >= 2
+                and best[0] >= 0.78
+                and best_report["coverage"] >= 0.86
+                and best_report["internal_match"] >= 0.60
+                and best[2].get("global_pattern_score", 0.0) >= 0.68
+                and best[2].get("corner_diagonal_score", 0.0) >= 0.82
+                and (
+                    best[2].get("rank_index_confidence", 0.0) < 0.55
+                    or best[2].get("rank_index_valid") is True
+                )
+            )
+            if strong_geometry or strong_card:
+                break
+
+    if best is not None:
+        return {
+            "layout": best[1],
+            "score": best[0],
+            "nodes": solver_nodes,
+            "info": best[2],
+            "pieces": pieces,
+            "preview_rgb": render_layout_preview(
+                frame_rgb,
+                pieces,
+                best[3],
+                fill_rectangle=True,
+            ),
+            "mode": "CARD",
+            "elapsed_ms": (
+                time.monotonic() - started
+            ) * 1000.0,
+        }
+
+    result = solve_card_face(
+        frame_rgb,
+        pieces,
+        node_limit=90000,
+        time_limit_s=5.0,
+    )
+    if result["layout"] is not None:
+        prepared, repair_info = prepare_layout_for_execution(
+            result["layout"],
+            result["info"],
+            roi,
+        )
+        if prepared is None:
+            prepared, repair_info = prepare_best_effort_layout(
+                result["layout"],
+                result["info"],
+                roi,
+            )
+            if prepared is not None:
+                result["info"]["method"] = "card-face-best-effort"
+                result["info"]["execution_mode"] = "BEST"
+        result["layout"] = prepared
+        if prepared is not None:
+            pattern_layout = close_card_pattern_layout(
+                prepared,
+                result["info"],
+            )
+            result["preview_rgb"] = render_layout_preview(
+                frame_rgb,
+                pieces,
+                pattern_layout,
+                fill_rectangle=True,
+            )
+    if result["layout"] is None:
+        geometry_result = solve_piece_set_worker(pieces, roi)
+        if geometry_result["layout"] is not None:
+            geometry_result["info"]["method"] = "card-geometry-best"
+            geometry_result["info"]["execution_mode"] = "BEST"
+            pattern_layout = close_card_pattern_layout(
+                geometry_result["layout"],
+                geometry_result["info"],
+            )
+            geometry_result["preview_rgb"] = render_layout_preview(
+                frame_rgb,
+                pieces,
+                pattern_layout,
+                fill_rectangle=True,
+            )
+            geometry_result["mode"] = "CARD"
+            geometry_result["elapsed_ms"] = (
+                time.monotonic() - started
+            ) * 1000.0
+            return geometry_result
+    result["elapsed_ms"] = (
+        time.monotonic() - started
+    ) * 1000.0
+    return result
+
+
+def main():
+    cv2.setLogLevel(2)
+    portrait_mode = os.environ.get("PUZZLE_PORTRAIT", "0") == "1"
+    capture_width = 1280
+    capture_height = 720
+    camera_width = 720 if portrait_mode else capture_width
+    camera_height = 1280 if portrait_mode else capture_height
+    portrait_crop_x = (
+        int(os.environ.get("PUZZLE_PORTRAIT_CROP_X", "280"))
+        if portrait_mode
+        else 0
+    )
+
+    # 黄色框必须落在A4纸内部，不能包含纸张外部背景。
+    # 安装好相机后，只需要调整这里的四个数。
+    roi_x = 380 - portrait_crop_x if portrait_mode else 380
+    roi_y = 10
+    roi_width = 520
+    roi_height = 700
+
+    min_piece_area = 1500
+    max_piece_area_ratio = 0.35
+    max_piece_count = 4
+    polygon_epsilon = 0.022
+
+    def create_camera():
+        return camera.Camera(
+            capture_width,
+            capture_height,
+            image.Format.FMT_RGB888,
+            fps=30,
+            buff_num=3,
+        )
+
+    cam = RecoveringCamera(create_camera)
+    disp = display.Display()
+    touch = touchscreen.TouchScreen()
+
+    fps = 0.0
+    fps_frames = 0
+    fps_start = time.monotonic()
+    last_print_time = 0.0
+    touch_was_pressed = False
+    auto_threshold = True
+    manual_threshold = 128
+    current_threshold = 128
+    polarity_mode = "AUTO"
+    background_mode = "BLACK"
+    tuning_open = False
+    solve_requested = False
+    card_requested = False
+    solved_display = None
+    solved_mode = ""
+    solved_score = 0.0
+    solved_ratio = 0.0
+    motion_plan = []
+    solver_message = ""
+    solver_nodes = 0
+    solver_ms = 0.0
+    recent_piece_sets = []
+    solver_executor = concurrent.futures.ProcessPoolExecutor(
+        max_workers=1,
+        mp_context=multiprocessing.get_context("spawn"),
+    )
+    solver_future = None
+    solve_started_at = 0.0
+    pending_solve_until = 0.0
+    pending_solve_mode = ""
+    active_solver_mode = ""
+    pending_card_frame = None
+    pending_card_pieces = None
+    active_solve_frame = None
+    last_capture_name = ""
+    last_capture_time = 0.0
+    ui_bridge = UiBridge()
+    serial_controller = SerialController()
+    ui_mode = "CARD"
+    camera_was_online = False
+    offline_preview_published = False
+    reported_camera_error = ""
+    button_boxes = get_button_boxes(
+        camera_width,
+        camera_height,
+    )
+    solution_box = (
+        roi_x + 40,
+        roi_y + roi_height // 2 + 65,
+        roi_width - 80,
+        roi_height // 2 - 105,
+    )
+    print("Puzzle detector started", flush=True)
+
+    while not app.need_exit():
+        solve_requested = False
+        card_requested = False
+        capture_requested = False
+        control = ui_bridge.read_control()
+        if control is not None:
+            requested_mode = str(
+                control.get("mode", ui_mode)
+            ).upper()
+            if requested_mode in ("FIRST", "NORMAL", "CARD"):
+                if requested_mode != ui_mode:
+                    ui_mode = requested_mode
+                    solved_display = None
+                    solved_mode = ""
+                    motion_plan = []
+                    ui_bridge.clear_result()
+            if "auto_threshold" in control:
+                auto_threshold = bool(control["auto_threshold"])
+            if "manual_threshold" in control:
+                manual_threshold = min(
+                    255,
+                    max(0, int(control["manual_threshold"])),
+                )
+            if "polarity_mode" in control:
+                requested_polarity = str(
+                    control["polarity_mode"]
+                ).upper()
+                if requested_polarity in ("AUTO", "LIGHT", "DARK"):
+                    polarity_mode = requested_polarity
+            if "background_mode" in control:
+                requested_background = str(
+                    control["background_mode"]
+                ).upper()
+                if requested_background in ("BLACK", "GREEN"):
+                    background_mode = requested_background
+            if "min_piece_area" in control:
+                min_piece_area = min(
+                    50000,
+                    max(100, int(control["min_piece_area"])),
+                )
+            serial_controller.configure(
+                port=control.get("serial_port"),
+                baud=control.get("serial_baud"),
+                pick_z=control.get("serial_pick_z"),
+                place_z=control.get("serial_place_z"),
+            )
+            action = str(control.get("action", "")).lower()
+            if action == "solve":
+                if ui_mode == "CARD":
+                    card_requested = True
+                else:
+                    solve_requested = True
+            elif action == "capture":
+                capture_requested = True
+            elif action == "serial_connect":
+                serial_controller.connect()
+            elif action == "serial_disconnect":
+                serial_controller.disconnect()
+            elif action in (
+                "arm_move_absolute",
+                "arm_move_relative",
+            ):
+                serial_controller.move(
+                    control.get("arm_x", 0),
+                    control.get("arm_y", 0),
+                    control.get("arm_z", 0),
+                    control.get("arm_rotation_cdeg", 0),
+                    relative=action == "arm_move_relative",
+                )
+            elif action == "arm_home":
+                serial_controller.home()
+            elif action == "arm_send_plan":
+                serial_controller.send_motion_plan(motion_plan)
+            elif action == "platform_query_position":
+                serial_controller.query_position()
+            elif action in (
+                "calibration_visual_a",
+                "calibration_visual_b",
+            ):
+                point = ui_bridge.preview_to_camera(
+                    control.get("calibration_preview_x", 0),
+                    control.get("calibration_preview_y", 0),
+                )
+                if point is not None:
+                    serial_controller.record_visual_point(
+                        action[-1],
+                        point[0],
+                        point[1],
+                    )
+            elif action in (
+                "calibration_platform_a",
+                "calibration_platform_b",
+            ):
+                serial_controller.record_platform_point(action[-1])
+            elif action == "calibration_compute":
+                serial_controller.calculate_calibration()
+
+        img = cam.read()
+        if img is None:
+            if cam.last_error and cam.last_error != reported_camera_error:
+                print(
+                    "CAMERA_OFFLINE %s" % cam.last_error,
+                    flush=True,
+                )
+                reported_camera_error = cam.last_error
+            if camera_was_online:
+                print("CAMERA_DISCONNECTED", flush=True)
+            camera_was_online = False
+            recent_piece_sets = []
+            pending_solve_until = 0.0
+            pending_solve_mode = ""
+            pending_card_frame = None
+            pending_card_pieces = None
+            solver_message = "CAMERA OFFLINE"
+
+            if not offline_preview_published:
+                offline_frame = np.zeros(
+                    (camera_height, camera_width, 3),
+                    dtype=np.uint8,
+                )
+                cv2.putText(
+                    offline_frame,
+                    "CAMERA OFFLINE - RETRYING",
+                    (35, min(camera_height - 30, 180)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1.0,
+                    (255, 255, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+                ui_bridge.publish_live(
+                    offline_frame,
+                    np.zeros(
+                        (roi_height, roi_width),
+                        dtype=np.uint8,
+                    ),
+                    (roi_x, roi_y, roi_width, roi_height),
+                    force=True,
+                )
+                offline_preview_published = True
+
+            ui_bridge.publish_state(
+                {
+                    "mode": ui_mode.lower(),
+                    "camera_ok": False,
+                    "fps": 0.0,
+                    "piece_count": 0,
+                    "auto_threshold": bool(auto_threshold),
+                    "manual_threshold": int(manual_threshold),
+                    "current_threshold": int(current_threshold),
+                    "polarity_mode": polarity_mode,
+                    "background_mode": background_mode,
+                    "detected_polarity": "",
+                    "min_piece_area": int(min_piece_area),
+                    "solving": bool(solver_future is not None),
+                    "solver_message": solver_message,
+                    "score": round(float(solved_score), 4),
+                    "ratio": round(float(solved_ratio), 4),
+                    "solver_ms": round(float(solver_ms), 1),
+                    "solver_nodes": int(solver_nodes),
+                    "solved_mode": solved_mode.lower(),
+                    "last_capture_name": last_capture_name,
+                    "motion_plan": motion_plan,
+                    "motion_plan_count": len(motion_plan),
+                    **serial_controller.state(),
+                }
+            )
+            time.sleep(0.08)
+            continue
+
+        if not camera_was_online:
+            print("CAMERA_ONLINE", flush=True)
+            fps = 0.0
+            fps_frames = 0
+            fps_start = time.monotonic()
+            if solver_message == "CAMERA OFFLINE":
+                solver_message = ""
+        camera_was_online = True
+        offline_preview_published = False
+        reported_camera_error = ""
+        frame_rgb = image.image2cv(
+            img,
+            ensure_bgr=False,
+            copy=False,
+        )
+        if os.path.exists("/tmp/puzzle_capture_once"):
+            os.remove("/tmp/puzzle_capture_once")
+            cv2.imwrite(
+                "/tmp/puzzle_frame.png",
+                cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR),
+            )
+
+        touch_status = touch.read()
+        touch_clicked = touch_status[2] and not touch_was_pressed
+        if touch_clicked:
+            touch_args = (
+                camera_width,
+                camera_height,
+                disp.width(),
+                disp.height(),
+            )
+            if not tuning_open:
+                if touch_in_box(
+                    touch_status,
+                    button_boxes["solve"],
+                    *touch_args,
+                ):
+                    solve_requested = True
+                elif touch_in_box(
+                    touch_status,
+                    button_boxes["card_solve"],
+                    *touch_args,
+                ):
+                    card_requested = True
+                elif touch_in_box(
+                    touch_status,
+                    button_boxes["tune"],
+                    *touch_args,
+                ):
+                    tuning_open = True
+                elif touch_in_box(
+                    touch_status,
+                    button_boxes["capture"],
+                    *touch_args,
+                ):
+                    capture_requested = True
+            elif touch_in_box(
+                touch_status,
+                button_boxes["close"],
+                *touch_args,
+            ):
+                tuning_open = False
+            elif touch_in_box(
+                touch_status,
+                button_boxes["threshold_down"],
+                *touch_args,
+            ):
+                if auto_threshold:
+                    manual_threshold = current_threshold
+                manual_threshold = max(0, manual_threshold - 5)
+                auto_threshold = False
+            elif touch_in_box(
+                touch_status,
+                button_boxes["threshold_up"],
+                *touch_args,
+            ):
+                if auto_threshold:
+                    manual_threshold = current_threshold
+                manual_threshold = min(255, manual_threshold + 5)
+                auto_threshold = False
+            elif touch_in_box(
+                touch_status,
+                button_boxes["auto_threshold"],
+                *touch_args,
+            ):
+                auto_threshold = True
+            elif touch_in_box(
+                touch_status,
+                button_boxes["polarity"],
+                *touch_args,
+            ):
+                if polarity_mode == "AUTO":
+                    polarity_mode = "LIGHT"
+                elif polarity_mode == "LIGHT":
+                    polarity_mode = "DARK"
+                else:
+                    polarity_mode = "AUTO"
+            elif touch_in_box(
+                touch_status,
+                button_boxes["area_down"],
+                *touch_args,
+            ):
+                min_piece_area = max(100, min_piece_area - 250)
+            elif touch_in_box(
+                touch_status,
+                button_boxes["area_up"],
+                *touch_args,
+            ):
+                min_piece_area = min(50000, min_piece_area + 250)
+        touch_was_pressed = touch_status[2]
+        if os.path.exists("/tmp/puzzle_solve_once"):
+            os.remove("/tmp/puzzle_solve_once")
+            solve_requested = True
+        if os.path.exists("/tmp/puzzle_card_solve_once"):
+            os.remove("/tmp/puzzle_card_solve_once")
+            card_requested = True
+        if os.path.exists("/tmp/puzzle_dataset_capture_once"):
+            os.remove("/tmp/puzzle_dataset_capture_once")
+            capture_requested = True
+
+        pieces, threshold_info = detect_pieces(
+            frame_rgb,
+            (roi_x, roi_y, roi_width, roi_height),
+            min_area=min_piece_area,
+            max_area_ratio=max_piece_area_ratio,
+            max_pieces=max_piece_count,
+            polygon_epsilon=polygon_epsilon,
+            threshold=None if auto_threshold else manual_threshold,
+            polarity_mode=polarity_mode,
+            background_mode=background_mode,
+        )
+        current_threshold = threshold_info["threshold"]
+        if capture_requested:
+            last_capture_name = save_capture(
+                frame_rgb,
+                threshold_info["mask"],
+                pieces,
+                threshold_info,
+                (roi_x, roi_y, roi_width, roi_height),
+                {
+                    "auto_threshold": bool(auto_threshold),
+                    "manual_threshold": int(manual_threshold),
+                    "polarity_mode": polarity_mode,
+                    "background_mode": background_mode,
+                    "min_piece_area": int(min_piece_area),
+                    "max_piece_area_ratio": float(
+                        max_piece_area_ratio
+                    ),
+                    "polygon_epsilon": float(polygon_epsilon),
+                    "portrait_crop_x": int(portrait_crop_x),
+                },
+            )
+            last_capture_time = time.monotonic()
+        frame_time = time.monotonic()
+        recent_piece_sets = [
+            item
+            for item in recent_piece_sets
+            if frame_time - item[0] <= 0.8
+        ]
+        if 2 <= len(pieces) <= 4:
+            recent_piece_sets.append(
+                (
+                    frame_time,
+                    sum(
+                        piece["area"] * piece["solidity"]
+                        for piece in pieces
+                    ),
+                    pieces,
+                )
+            )
+
+        if solve_requested:
+            if solver_future is not None:
+                solver_message = "SOLVING"
+            else:
+                pending_solve_until = time.monotonic() + 2.0
+                pending_solve_mode = (
+                    "FIRST"
+                    if ui_mode == "FIRST"
+                    else "NORMAL"
+                )
+                pending_card_frame = None
+                pending_card_pieces = None
+                solver_message = "HOLD STILL"
+                solver_ms = 0.0
+                ui_bridge.clear_result()
+
+        if card_requested:
+            if solver_future is not None:
+                solver_message = "CARD BUSY"
+            elif 2 <= len(pieces) <= 4:
+                pending_solve_until = time.monotonic() + 2.0
+                pending_solve_mode = "CARD"
+                pending_card_frame = None
+                pending_card_pieces = None
+                solver_message = "CARD HOLD"
+                solver_ms = 0.0
+                ui_bridge.clear_result()
+            else:
+                solver_message = "CARD NEED 2-4"
+
+        if (
+            pending_solve_until > 0
+            and solver_future is None
+        ):
+            stable_pieces = build_stable_piece_set(
+                recent_piece_sets
+            )
+            card_ready = (
+                pending_solve_mode == "CARD"
+                and stable_pieces is not None
+            )
+            if stable_pieces is not None and (
+                pending_solve_mode in ("FIRST", "NORMAL")
+                or card_ready
+            ):
+                pending_solve_until = 0.0
+                solved_display = None
+                solved_mode = ""
+                motion_plan = []
+                solved_score = 0.0
+                solved_ratio = 0.0
+                solver_nodes = 0
+                solver_message = "SOLVING"
+                solve_started_at = time.monotonic()
+                active_solver_mode = pending_solve_mode
+                active_solve_frame = (
+                    frame_rgb.copy()
+                )
+                solve_roi = (
+                    roi_x,
+                    roi_y,
+                    roi_width,
+                    roi_height,
+                )
+                if active_solver_mode == "CARD":
+                    solver_message = "CARD SOLVING"
+                    solver_future = solver_executor.submit(
+                        solve_card_piece_set_worker,
+                        active_solve_frame,
+                        stable_pieces,
+                        solve_roi,
+                    )
+                else:
+                    solver_future = solver_executor.submit(
+                        solve_piece_set_worker,
+                        stable_pieces,
+                        solve_roi,
+                    )
+                pending_solve_mode = ""
+                pending_card_frame = None
+                pending_card_pieces = None
+            elif time.monotonic() >= pending_solve_until:
+                pending_solve_until = 0.0
+                solver_message = (
+                    "CARD NO STABLE"
+                    if pending_solve_mode == "CARD"
+                    else "NO STABLE"
+                )
+                pending_solve_mode = ""
+                pending_card_frame = None
+                pending_card_pieces = None
+
+        if solver_future is not None and not solver_future.done():
+            solver_ms = (
+                time.monotonic() - solve_started_at
+            ) * 1000.0
+
+        if solver_future is not None and solver_future.done():
+            result_mode = active_solver_mode
+            try:
+                result = solver_future.result()
+            except Exception as error:
+                print(
+                    "SOLVE_ERROR %r" % error,
+                    flush=True,
+                )
+                result = None
+            solver_future = None
+            active_solver_mode = ""
+
+            if result is None:
+                solved_display = None
+                solved_mode = ""
+                solved_ratio = 0.0
+                motion_plan = []
+                ui_bridge.clear_result()
+                solver_message = (
+                    "CARD ERROR"
+                    if result_mode == "CARD"
+                    else "SOLVE ERROR"
+                )
+            else:
+                result_mode = result.get("mode", result_mode)
+                solved_layout = result["layout"]
+                solved_score = result["score"]
+                solver_nodes = result["nodes"]
+                solver_ms = result["elapsed_ms"]
+                solve_info = result["info"]
+                solve_pieces = result["pieces"]
+                if solved_layout is None:
+                    solved_display = None
+                    solved_mode = ""
+                    solved_ratio = 0.0
+                    motion_plan = []
+                    ui_bridge.clear_result()
+                    solver_message = (
+                        "CARD NO RECT"
+                        if result_mode == "CARD"
+                        else "NO RECT"
+                    )
+                else:
+                    result_preview = result.get("preview_rgb")
+                    if (
+                        result_preview is None
+                        and active_solve_frame is not None
+                    ):
+                        result_preview = render_layout_preview(
+                            active_solve_frame,
+                            solve_pieces,
+                            solved_layout,
+                            fill_rectangle=True,
+                        )
+                    solved_display = place_layout_on_paper(
+                        solved_layout,
+                        solve_info,
+                        (
+                            roi_x,
+                            roi_y,
+                            roi_width,
+                            roi_height,
+                        ),
+                    )
+                    solved_ratio = solve_info["ratio"]
+                    safe_layout = {
+                        item["piece_id"]: np.array(
+                            item["points"],
+                            dtype=np.float32,
+                        )
+                        for item in solved_display
+                    }
+                    if layout_has_interior_overlap(safe_layout):
+                        solved_display = None
+                        solved_mode = ""
+                        solved_ratio = 0.0
+                        motion_plan = []
+                        ui_bridge.clear_result()
+                        solver_message = "NO SAFE"
+                    else:
+                        solved_mode = result_mode
+                        ui_bridge.publish_result(result_preview)
+                        if (
+                            result_mode == "CARD"
+                            and os.environ.get(
+                                "PUZZLE_HEADLESS",
+                                "0",
+                            )
+                            != "1"
+                        ):
+                            show_card_assembly_preview(
+                                result.get("preview_rgb")
+                            )
+                        motion_plan = build_motion_plan(
+                            solve_pieces,
+                            solved_display,
+                        )
+                        if portrait_mode:
+                            for move in motion_plan:
+                                move["pick"] = (
+                                    move["pick"][0]
+                                    + portrait_crop_x,
+                                    move["pick"][1],
+                                )
+                                move["place"] = (
+                                    move["place"][0]
+                                    + portrait_crop_x,
+                                    move["place"][1],
+                                )
+                        if result_mode == "CARD":
+                            solver_message = (
+                                "CARD BEST"
+                                if solve_info.get("execution_mode") == "BEST"
+                                else "CARD RECT"
+                            )
+                        elif solve_info.get("execution_mode") == "RECT":
+                            solver_message = "SOLVE RECT"
+                        elif solve_info.get("execution_mode") == "BEST":
+                            solver_message = "SOLVE BEST"
+                        elif solve_info.get("execution_mode") == "ASSUME":
+                            solver_message = "SOLVE BEST G1.0"
+                        elif solve_info["method"] == "legacy-cover":
+                            solver_message = "SOLVE COVER G1.0"
+                        else:
+                            solver_message = "SOLVE HYB G1.0"
+                        print_motion_plan(motion_plan)
+                print(
+                    "%s score=%.3f ratio=%.3f tested=%d "
+                    "time=%.1fms method=%s"
+                    % (
+                        solver_message,
+                        solved_score,
+                        solved_ratio,
+                        solver_nodes,
+                        solver_ms,
+                        (
+                            solve_info["method"]
+                            if solve_info is not None
+                            else "-"
+                        ),
+                    ),
+                    flush=True,
+                )
+            active_solve_frame = None
+
+        if tuning_open:
+            show_binary_preview(
+                frame_rgb,
+                threshold_info["mask"],
+                (roi_x, roi_y, roi_width, roi_height),
+            )
+
+        draw_roi(
+            img,
+            (roi_x, roi_y, roi_width, roi_height),
+        )
+        for index, piece in enumerate(pieces, 1):
+            draw_piece(img, piece, index)
+        ui_bridge.publish_live(
+            frame_rgb,
+            threshold_info["mask"],
+            (roi_x, roi_y, roi_width, roi_height),
+        )
+
+        if not tuning_open and solved_display is not None:
+            draw_solved_rectangle(
+                img,
+                solved_display,
+                solution_box,
+                solved_score,
+                motion_plan,
+            )
+
+        img.draw_string(
+            4,
+            4,
+            "PIECES %d  %s  T%d"
+            % (
+                len(pieces),
+                threshold_info["polarity"],
+                threshold_info["threshold"],
+            ),
+            image.COLOR_WHITE,
+            scale=2,
+        )
+        if not tuning_open and solver_message:
+            img.draw_string(
+                4,
+                42,
+                "%s %.3f R%.2f %.0fms"
+                % (
+                    solver_message,
+                    solved_score,
+                    solved_ratio,
+                    solver_ms,
+                ),
+                image.COLOR_GREEN
+                if (
+                    solver_message.startswith("SOLVE")
+                    or solver_message == "CARD RECT"
+                )
+                else image.COLOR_YELLOW,
+                scale=2,
+            )
+        if tuning_open:
+            draw_controls(
+                img,
+                button_boxes,
+                auto_threshold,
+                manual_threshold,
+                polarity_mode,
+                min_piece_area,
+            )
+        else:
+            draw_button(
+                img,
+                button_boxes["solve"],
+                "SOLVE",
+                active=(
+                    solved_display is not None
+                    and solved_mode != "CARD"
+                ),
+            )
+            draw_button(
+                img,
+                button_boxes["card_solve"],
+                "CARD",
+                active=(
+                    solved_display is not None
+                    and solved_mode == "CARD"
+                ),
+            )
+            draw_button(
+                img,
+                button_boxes["tune"],
+                "TUNE",
+            )
+            draw_button(
+                img,
+                button_boxes["capture"],
+                "CAPTURE",
+            )
+            if (
+                last_capture_name
+                and time.monotonic() - last_capture_time < 2.5
+            ):
+                img.draw_string(
+                    20,
+                    920 if img.height() > img.width() else 175,
+                    "SAVED %s" % last_capture_name[-10:],
+                    image.COLOR_GREEN,
+                    scale=2,
+                )
+
+        now = time.monotonic()
+        fps_frames += 1
+        elapsed = now - fps_start
+        if elapsed >= 1:
+            fps = fps_frames / elapsed
+            fps_frames = 0
+            fps_start = now
+        ui_bridge.publish_state(
+            {
+                "mode": ui_mode.lower(),
+                "camera_ok": True,
+                "fps": round(float(fps), 1),
+                "piece_count": len(pieces),
+                "auto_threshold": bool(auto_threshold),
+                "manual_threshold": int(manual_threshold),
+                "current_threshold": int(current_threshold),
+                "polarity_mode": polarity_mode,
+                "background_mode": background_mode,
+                "detected_polarity": threshold_info["polarity"],
+                "min_piece_area": int(min_piece_area),
+                "solving": bool(
+                    solver_future is not None
+                    or pending_solve_until > 0
+                ),
+                "solver_message": solver_message,
+                "score": round(float(solved_score), 4),
+                "ratio": round(float(solved_ratio), 4),
+                "solver_ms": round(float(solver_ms), 1),
+                "solver_nodes": int(solver_nodes),
+                "solved_mode": solved_mode.lower(),
+                "last_capture_name": last_capture_name,
+                "motion_plan": motion_plan,
+                "motion_plan_count": len(motion_plan),
+                **serial_controller.state(),
+            }
+        )
+        img.draw_string(
+            4,
+            camera_height - 38,
+            "FPS %.1f" % fps,
+            image.COLOR_WHITE,
+            scale=2,
+        )
+
+        if now - last_print_time >= 1:
+            print_detection(pieces, threshold_info)
+            last_print_time = now
+
+        disp.show(img)
+
+    cam.close()
+    serial_controller.disconnect()
+    solver_executor.shutdown(
+        wait=False,
+        cancel_futures=True,
+    )
+
+
+if __name__ == "__main__":
+    main()
