@@ -1033,7 +1033,7 @@ static SearchResult search_ratio(
                     + contact * 35.0
                 );
                 if (
-                    best_states.size() >= 240
+                    best_states.size() >= 480
                     && rank <= best_states.top().rank
                 ) {
                     continue;
@@ -1061,7 +1061,7 @@ static SearchResult search_ratio(
                 next.contact = contact;
                 next.rank = rank;
                 best_states.push(std::move(next));
-                if (best_states.size() > 240) {
+                if (best_states.size() > 480) {
                     best_states.pop();
                 }
             }

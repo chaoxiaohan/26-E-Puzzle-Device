@@ -264,6 +264,79 @@ def green_background_foreground_mask(roi_rgb):
     return filled
 
 
+def split_touching_contour(mask, contour, min_area):
+    """用腐蚀后的独立核心把相互接触的碎片重新分开。"""
+    component = np.zeros_like(mask)
+    cv2.drawContours(
+        component,
+        [contour],
+        -1,
+        255,
+        thickness=cv2.FILLED,
+    )
+    core_contours = []
+    for iterations in (4, 6, 8, 10):
+        cores = cv2.erode(
+            component,
+            cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)),
+            iterations=iterations,
+        )
+        found, _ = cv2.findContours(
+            cores,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE,
+        )
+        core_contours = [
+            core
+            for core in found
+            if abs(cv2.contourArea(core))
+            >= max(100.0, min_area * 0.20)
+        ]
+        if 2 <= len(core_contours) <= 4:
+            break
+    if not 2 <= len(core_contours) <= 4:
+        return []
+
+    distances = []
+    for core in core_contours:
+        core_mask = np.zeros_like(mask)
+        cv2.drawContours(
+            core_mask,
+            [core],
+            -1,
+            255,
+            thickness=cv2.FILLED,
+        )
+        distances.append(
+            cv2.distanceTransform(
+                cv2.bitwise_not(core_mask),
+                cv2.DIST_L2,
+                3,
+            )
+        )
+    owner = np.argmin(np.stack(distances, axis=0), axis=0)
+
+    separated = []
+    for core_index in range(len(core_contours)):
+        region = np.where(
+            (component > 0) & (owner == core_index),
+            255,
+            0,
+        ).astype(np.uint8)
+        region_contours, _ = cv2.findContours(
+            region,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE,
+        )
+        if not region_contours:
+            return []
+        piece_contour = max(region_contours, key=cv2.contourArea)
+        if abs(cv2.contourArea(piece_contour)) < min_area:
+            return []
+        separated.append(piece_contour)
+    return separated
+
+
 def find_candidates(
     mask,
     offset_x,
@@ -274,11 +347,41 @@ def find_candidates(
 ):
     """从一张二值图中找出可能属于拼图碎片的多边形。"""
     image_height, image_width = mask.shape
-    contours, _ = cv2.findContours(
+    raw_contours, _ = cv2.findContours(
         mask,
         cv2.RETR_EXTERNAL,
         cv2.CHAIN_APPROX_SIMPLE,
     )
+    contours = []
+    for contour in raw_contours:
+        perimeter = cv2.arcLength(contour, True)
+        polygon = cv2.approxPolyDP(
+            contour,
+            polygon_epsilon * perimeter,
+            True,
+        )
+        if 3 <= len(polygon) <= 5:
+            contours.append(contour)
+            continue
+        area = abs(cv2.contourArea(contour))
+        x, y, width, height = cv2.boundingRect(contour)
+        can_split = (
+            min_area * 1.6 <= area <= max_area * 2.5
+            and x > 2
+            and y > 2
+            and x + width < image_width - 2
+            and y + height < image_height - 2
+        )
+        split_contours = (
+            split_touching_contour(
+                mask,
+                contour,
+                min_area,
+            )
+            if can_split
+            else []
+        )
+        contours.extend(split_contours or [contour])
     candidates = []
 
     for contour in contours:
@@ -2576,6 +2679,8 @@ def solve_piece_set_worker(pieces, roi):
         (0.88, 4),
         (0.80, 4),
         (0.80, 3),
+        (0.76, 3),
+        (0.72, 2),
     ):
         (
             candidate_layout,
@@ -2876,6 +2981,8 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
         (0.88, 4),
         (0.84, 3),
         (0.80, 4),
+        (0.76, 3),
+        (0.72, 2),
     ):
         (
             base_layout,
@@ -3438,11 +3545,8 @@ def main():
             elif 2 <= len(pieces) <= 4:
                 pending_solve_until = time.monotonic() + 2.0
                 pending_solve_mode = "CARD"
-                pending_card_frame = frame_rgb.copy()
-                pending_card_pieces = [
-                    dict(piece)
-                    for piece in pieces
-                ]
+                pending_card_frame = None
+                pending_card_pieces = None
                 solver_message = "CARD HOLD"
                 solver_ms = 0.0
                 ui_bridge.clear_result()
@@ -3459,8 +3563,6 @@ def main():
             card_ready = (
                 pending_solve_mode == "CARD"
                 and stable_pieces is not None
-                and pending_card_pieces is not None
-                and len(stable_pieces) == len(pending_card_pieces)
             )
             if stable_pieces is not None and (
                 pending_solve_mode in ("FIRST", "NORMAL")
@@ -3477,10 +3579,7 @@ def main():
                 solve_started_at = time.monotonic()
                 active_solver_mode = pending_solve_mode
                 active_solve_frame = (
-                    pending_card_frame.copy()
-                    if active_solver_mode == "CARD"
-                    and pending_card_frame is not None
-                    else frame_rgb.copy()
+                    frame_rgb.copy()
                 )
                 solve_roi = (
                     roi_x,
@@ -3492,8 +3591,8 @@ def main():
                     solver_message = "CARD SOLVING"
                     solver_future = solver_executor.submit(
                         solve_card_piece_set_worker,
-                        pending_card_frame,
-                        pending_card_pieces,
+                        active_solve_frame,
+                        stable_pieces,
                         solve_roi,
                     )
                 else:

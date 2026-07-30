@@ -53,7 +53,33 @@ def test_line_refinement():
         assert np.linalg.norm(end - start) > 100
 
 
+def test_touching_piece_separation():
+    frame = np.zeros((280, 420, 3), dtype=np.uint8)
+    first = np.array(
+        [[65, 65], [205, 70], [190, 155], [75, 170]],
+        dtype=np.int32,
+    )
+    second = np.array(
+        [[205, 70], [340, 92], [325, 205], [225, 190]],
+        dtype=np.int32,
+    )
+    cv2.fillPoly(frame, [first, second], (245, 245, 245))
+
+    pieces, _ = detect_pieces(
+        frame,
+        (0, 0, frame.shape[1], frame.shape[0]),
+        min_area=1000,
+        max_area_ratio=0.40,
+        polygon_epsilon=0.022,
+        threshold=100,
+        polarity_mode="LIGHT",
+        background_mode="BLACK",
+    )
+    assert len(pieces) == 2, pieces
+
+
 if __name__ == "__main__":
     test_green_background()
     test_line_refinement()
+    test_touching_piece_separation()
     print("feature extraction OK")
