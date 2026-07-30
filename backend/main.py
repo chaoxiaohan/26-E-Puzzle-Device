@@ -3760,6 +3760,7 @@ def main():
             elif action in (
                 "calibration_visual_a",
                 "calibration_visual_b",
+                "calibration_visual_c",
             ):
                 point = ui_bridge.preview_to_camera(
                     control.get("calibration_preview_x", 0),
@@ -3774,6 +3775,7 @@ def main():
             elif action in (
                 "calibration_platform_a",
                 "calibration_platform_b",
+                "calibration_platform_c",
             ):
                 serial_controller.record_platform_point(action[-1])
             elif action == "calibration_compute":

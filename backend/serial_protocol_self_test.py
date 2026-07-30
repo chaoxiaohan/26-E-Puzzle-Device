@@ -19,7 +19,7 @@ def read_exact(device, size):
 
 def fake_arm(device, received):
     position_index = 0
-    while len(received) < 6:
+    while len(received) < 7:
         if read_exact(device, 2) != b"\xAA\x55":
             continue
         header = read_exact(device, 4)
@@ -35,7 +35,8 @@ def fake_arm(device, received):
         if command == 0x20 and payload[0] == 4:
             positions = (
                 (1000, 2000, 300, 100),
-                (5000, 6000, 300, 100),
+                (1400, 1950, 300, 100),
+                (1100, 2600, 300, 100),
             )
             reply_payload += struct.pack(
                 "<iiih",
@@ -73,13 +74,15 @@ def main():
     )
     assert controller.move(10, -20, 30, 4500, relative=True)
     controller.record_visual_point("a", 100, 200)
-    controller.record_visual_point("b", 300, 400)
+    controller.record_visual_point("b", 300, 200)
+    controller.record_visual_point("c", 100, 400)
     assert controller.record_platform_point("a")
     assert controller.record_platform_point("b")
+    assert controller.record_platform_point("c")
     assert controller.calculate_calibration()
     assert controller.vision_to_platform(200, 300) == (
-        3000.0,
-        4000.0,
+        1250.0,
+        2275.0,
     )
     plan = [
         {
@@ -101,16 +104,17 @@ def main():
         0x20,
         0x20,
         0x20,
+        0x20,
         0x10,
         0x10,
         0x11,
     ]
-    first_action = struct.unpack("<BBBBiiiiiih", received[3][3])
+    first_action = struct.unpack("<BBBBiiiiiih", received[4][3])
     assert first_action[4] == 1000
     assert first_action[5] == 2000
     assert first_action[6] == 120
-    assert first_action[7] == 5000
-    assert first_action[8] == 6000
+    assert first_action[7] == 1500
+    assert first_action[8] == 2550
     assert first_action[9] == 80
     assert first_action[10] == -4525
     controller.disconnect()
@@ -118,7 +122,7 @@ def main():
         os.remove("/tmp/puzzle_serial_test.json")
     except FileNotFoundError:
         pass
-    print("SERIAL_PROTOCOL_OK frames=6 calibration=two-point")
+    print("SERIAL_PROTOCOL_OK frames=7 calibration=three-point-affine")
 
 
 if __name__ == "__main__":
