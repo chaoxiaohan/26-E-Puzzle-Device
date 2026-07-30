@@ -3406,10 +3406,10 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
             )
             report = solve_info["constraint_report"]
             base_rank = (
-                report["coverage"] * 0.38
-                + report["internal_match"] * 0.20
-                + texture["score"] * 0.17
-                + global_pattern["score"] * 0.25
+                report["coverage"] * 0.36
+                + report["internal_match"] * 0.28
+                + texture["score"] * 0.14
+                + global_pattern["score"] * 0.22
             )
             rank = (
                 base_rank
@@ -3417,8 +3417,25 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
                     rank_index["score"] - 0.5
                 )
                 * rank_index["confidence"]
-                * 0.32
+                * 0.12
             )
+            if (
+                report["coverage"] >= 0.88
+                and report["internal_match"] >= 0.70
+            ):
+                geometry_tier = 3
+            elif (
+                report["coverage"] >= 0.84
+                and report["internal_match"] >= 0.52
+            ):
+                geometry_tier = 2
+            elif (
+                report["coverage"] >= 0.70
+                and report["internal_match"] >= 0.20
+            ):
+                geometry_tier = 1
+            else:
+                geometry_tier = 0
             solve_info["texture_score"] = texture["score"]
             solve_info["texture_confidence"] = texture["confidence"]
             solve_info["global_pattern_score"] = (
@@ -3434,13 +3451,15 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
             solve_info["rank_index_valid"] = rank_index["valid"]
             solve_info["rank_index_pair"] = rank_index["pair"]
             solve_info["card_assignment"] = tuple(assignment)
+            solve_info["geometry_tier"] = geometry_tier
             print(
-                "CARD_CANDIDATE fill=%.2f order=%s rank=%.3f "
+                "CARD_CANDIDATE fill=%.2f order=%s tier=%d rank=%.3f "
                 "coverage=%.3f internal=%.3f texture=%.3f "
                 "global=%.3f diagonal=%.3f index=%.3f/%.3f/%s"
                 % (
                     fill_ratio,
                     assignment,
+                    geometry_tier,
                     rank,
                     report["coverage"],
                     report["internal_match"],
@@ -3453,7 +3472,16 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
                 ),
                 flush=True,
             )
-            if best is None or rank > best[0]:
+            if (
+                best is None
+                or geometry_tier
+                > best[2].get("geometry_tier", 0)
+                or (
+                    geometry_tier
+                    == best[2].get("geometry_tier", 0)
+                    and rank > best[0]
+                )
+            ):
                 best = (
                     rank,
                     prepared,
@@ -3461,19 +3489,27 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
                     pattern_layout,
                 )
 
-        if (
-            best is not None
-            and best[0] >= 0.84
-            and best[2]["constraint_report"]["coverage"] >= 0.86
-            and best[2]["constraint_report"]["internal_match"] >= 0.60
-            and best[2].get("global_pattern_score", 0.0) >= 0.68
-            and best[2].get("corner_diagonal_score", 0.0) >= 0.82
-            and (
-                best[2].get("rank_index_confidence", 0.0) < 0.55
-                or best[2].get("rank_index_valid") is True
+        if best is not None:
+            best_report = best[2]["constraint_report"]
+            strong_geometry = (
+                best[2].get("geometry_tier", 0) == 3
+                and best_report["coverage"] >= 0.92
+                and best_report["internal_match"] >= 0.82
             )
-        ):
-            break
+            strong_card = (
+                best[2].get("geometry_tier", 0) >= 2
+                and best[0] >= 0.78
+                and best_report["coverage"] >= 0.86
+                and best_report["internal_match"] >= 0.60
+                and best[2].get("global_pattern_score", 0.0) >= 0.68
+                and best[2].get("corner_diagonal_score", 0.0) >= 0.82
+                and (
+                    best[2].get("rank_index_confidence", 0.0) < 0.55
+                    or best[2].get("rank_index_valid") is True
+                )
+            )
+            if strong_geometry or strong_card:
+                break
 
     if best is not None:
         return {
