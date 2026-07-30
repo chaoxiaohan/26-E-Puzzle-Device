@@ -71,6 +71,8 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   bool serialConnected = false;
   bool polling = false;
   bool tuningOpen = false;
+  bool settingsSyncPending = false;
+  int settingsSyncRevision = 0;
   bool initializedFromBackend = false;
   bool autoThreshold = true;
   int threshold = 128;
@@ -232,7 +234,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       calibrationScaleX = snapshot.calibrationScaleX;
       calibrationScaleY = snapshot.calibrationScaleY;
       calibrationAffineDeterminant = snapshot.calibrationAffineDeterminant;
-      if (!tuningOpen) {
+      if (!tuningOpen && !settingsSyncPending) {
         autoThreshold = snapshot.autoThreshold;
         threshold = snapshot.autoThreshold
             ? snapshot.currentThreshold
@@ -1227,8 +1229,8 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                             FilterChip(
                               selected: autoThreshold,
                               label: const Text('自动 OTSU'),
-                              onSelected: (_) {
-                                setState(() => autoThreshold = true);
+                              onSelected: (selected) {
+                                setState(() => autoThreshold = selected);
                                 setSettingsState(() {});
                                 _queueSettings();
                               },
@@ -1797,18 +1799,51 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
 
   void _queueSettings() {
     settingsTimer?.cancel();
+    settingsSyncPending = true;
+    final queuedRevision = ++settingsSyncRevision;
+    final queuedAutoThreshold = autoThreshold;
+    final queuedThreshold = threshold;
+    final queuedPolarityMode = polarityMode;
+    final queuedBackgroundMode = backgroundMode;
+    final queuedMinPieceArea = minPieceArea;
     settingsTimer = Timer(
       const Duration(milliseconds: 110),
       () => unawaited(
-        backend.sendControl(
-          autoThreshold: autoThreshold,
-          manualThreshold: threshold,
-          polarityMode: polarityMode,
-          backgroundMode: backgroundMode,
-          minPieceArea: minPieceArea,
+        _flushSettings(
+          revision: queuedRevision,
+          autoThreshold: queuedAutoThreshold,
+          threshold: queuedThreshold,
+          polarityMode: queuedPolarityMode,
+          backgroundMode: queuedBackgroundMode,
+          minPieceArea: queuedMinPieceArea,
         ),
       ),
     );
+  }
+
+  Future<void> _flushSettings({
+    required int revision,
+    required bool autoThreshold,
+    required int threshold,
+    required String polarityMode,
+    required String backgroundMode,
+    required int minPieceArea,
+  }) async {
+    try {
+      await backend.sendControl(
+        autoThreshold: autoThreshold,
+        manualThreshold: threshold,
+        polarityMode: polarityMode,
+        backgroundMode: backgroundMode,
+        minPieceArea: minPieceArea,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 140));
+    } finally {
+      if (mounted && revision == settingsSyncRevision) {
+        settingsSyncPending = false;
+        await _pollBackend();
+      }
+    }
   }
 
   // 保留旧弹窗作为触摸屏兼容入口，新界面统一使用设置页。
@@ -1940,8 +1975,8 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                               FilterChip(
                                 selected: autoThreshold,
                                 label: const Text('自动 OTSU'),
-                                onSelected: (_) {
-                                  setSheetState(() => autoThreshold = true);
+                                onSelected: (selected) {
+                                  setSheetState(() => autoThreshold = selected);
                                   _queueSettings();
                                 },
                               ),

@@ -1,5 +1,4 @@
-import 'dart:ui';
-
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:puzzle_flutter_ui/main.dart';
 
@@ -36,6 +35,11 @@ void main() {
     expect(find.text('亮色'), findsOneWidget);
     expect(find.text('暗色'), findsOneWidget);
     expect(find.text('最小碎片面积'), findsOneWidget);
+    final otsuChip = find.widgetWithText(FilterChip, '自动 OTSU');
+    expect(tester.widget<FilterChip>(otsuChip).selected, isTrue);
+    await tester.tap(otsuChip);
+    await tester.pump();
+    expect(tester.widget<FilterChip>(otsuChip).selected, isFalse);
 
     await tester.tap(find.text('串口设置'));
     await tester.pump();
