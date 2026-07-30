@@ -27,6 +27,7 @@ from card_face_solver import (
     solve_card_face,
 )
 from puzzle_solver import normalize_layout, solve_camera_rectangle
+from serial_protocol import SerialController
 from solver_v2 import solve as solve_edge_layout
 from ui_bridge import UiBridge
 
@@ -3590,6 +3591,7 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
 
 
 def main():
+    cv2.setLogLevel(2)
     portrait_mode = os.environ.get("PUZZLE_PORTRAIT", "0") == "1"
     capture_width = 1280
     capture_height = 720
@@ -3663,6 +3665,7 @@ def main():
     last_capture_name = ""
     last_capture_time = 0.0
     ui_bridge = UiBridge()
+    serial_controller = SerialController()
     ui_mode = "CARD"
     camera_was_online = False
     offline_preview_published = False
@@ -3683,6 +3686,76 @@ def main():
         solve_requested = False
         card_requested = False
         capture_requested = False
+        control = ui_bridge.read_control()
+        if control is not None:
+            requested_mode = str(
+                control.get("mode", ui_mode)
+            ).upper()
+            if requested_mode in ("FIRST", "NORMAL", "CARD"):
+                if requested_mode != ui_mode:
+                    ui_mode = requested_mode
+                    solved_display = None
+                    solved_mode = ""
+                    motion_plan = []
+                    ui_bridge.clear_result()
+            if "auto_threshold" in control:
+                auto_threshold = bool(control["auto_threshold"])
+            if "manual_threshold" in control:
+                manual_threshold = min(
+                    255,
+                    max(0, int(control["manual_threshold"])),
+                )
+            if "polarity_mode" in control:
+                requested_polarity = str(
+                    control["polarity_mode"]
+                ).upper()
+                if requested_polarity in ("AUTO", "LIGHT", "DARK"):
+                    polarity_mode = requested_polarity
+            if "background_mode" in control:
+                requested_background = str(
+                    control["background_mode"]
+                ).upper()
+                if requested_background in ("BLACK", "GREEN"):
+                    background_mode = requested_background
+            if "min_piece_area" in control:
+                min_piece_area = min(
+                    50000,
+                    max(100, int(control["min_piece_area"])),
+                )
+            serial_controller.configure(
+                port=control.get("serial_port"),
+                baud=control.get("serial_baud"),
+                pick_z=control.get("serial_pick_z"),
+                place_z=control.get("serial_place_z"),
+            )
+            action = str(control.get("action", "")).lower()
+            if action == "solve":
+                if ui_mode == "CARD":
+                    card_requested = True
+                else:
+                    solve_requested = True
+            elif action == "capture":
+                capture_requested = True
+            elif action == "serial_connect":
+                serial_controller.connect()
+            elif action == "serial_disconnect":
+                serial_controller.disconnect()
+            elif action in (
+                "arm_move_absolute",
+                "arm_move_relative",
+            ):
+                serial_controller.move(
+                    control.get("arm_x", 0),
+                    control.get("arm_y", 0),
+                    control.get("arm_z", 0),
+                    control.get("arm_rotation_cdeg", 0),
+                    relative=action == "arm_move_relative",
+                )
+            elif action == "arm_home":
+                serial_controller.home()
+            elif action == "arm_send_plan":
+                serial_controller.send_motion_plan(motion_plan)
+
         img = cam.read()
         if img is None:
             if cam.last_error and cam.last_error != reported_camera_error:
@@ -3749,6 +3822,8 @@ def main():
                     "solved_mode": solved_mode.lower(),
                     "last_capture_name": last_capture_name,
                     "motion_plan": motion_plan,
+                    "motion_plan_count": len(motion_plan),
+                    **serial_controller.state(),
                 }
             )
             time.sleep(0.08)
@@ -3769,56 +3844,6 @@ def main():
             ensure_bgr=False,
             copy=False,
         )
-        control = ui_bridge.read_control()
-        if control is not None:
-            requested_mode = str(
-                control.get("mode", ui_mode)
-            ).upper()
-            if requested_mode in ("FIRST", "NORMAL", "CARD"):
-                if requested_mode != ui_mode:
-                    ui_mode = requested_mode
-                    solved_display = None
-                    solved_mode = ""
-                    motion_plan = []
-                    ui_bridge.clear_result()
-            if "auto_threshold" in control:
-                auto_threshold = bool(
-                    control["auto_threshold"]
-                )
-            if "manual_threshold" in control:
-                manual_threshold = min(
-                    255,
-                    max(0, int(control["manual_threshold"])),
-                )
-            if "polarity_mode" in control:
-                requested_polarity = str(
-                    control["polarity_mode"]
-                ).upper()
-                if requested_polarity in (
-                    "AUTO",
-                    "LIGHT",
-                    "DARK",
-                ):
-                    polarity_mode = requested_polarity
-            if "background_mode" in control:
-                requested_background = str(
-                    control["background_mode"]
-                ).upper()
-                if requested_background in ("BLACK", "GREEN"):
-                    background_mode = requested_background
-            if "min_piece_area" in control:
-                min_piece_area = min(
-                    50000,
-                    max(100, int(control["min_piece_area"])),
-                )
-            action = str(control.get("action", "")).lower()
-            if action == "solve":
-                if ui_mode == "CARD":
-                    card_requested = True
-                else:
-                    solve_requested = True
-            elif action == "capture":
-                capture_requested = True
         if os.path.exists("/tmp/puzzle_capture_once"):
             os.remove("/tmp/puzzle_capture_once")
             cv2.imwrite(
@@ -4359,6 +4384,8 @@ def main():
                 "solved_mode": solved_mode.lower(),
                 "last_capture_name": last_capture_name,
                 "motion_plan": motion_plan,
+                "motion_plan_count": len(motion_plan),
+                **serial_controller.state(),
             }
         )
         img.draw_string(
@@ -4376,6 +4403,7 @@ def main():
         disp.show(img)
 
     cam.close()
+    serial_controller.disconnect()
     solver_executor.shutdown(
         wait=False,
         cancel_futures=True,

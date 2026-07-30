@@ -1,0 +1,336 @@
+# -*- coding: utf-8 -*-
+
+import json
+import os
+import struct
+import threading
+import time
+
+import serial
+
+
+def crc16_ccitt(data):
+    crc = 0xFFFF
+    for byte in data:
+        crc ^= byte << 8
+        for _ in range(8):
+            if crc & 0x8000:
+                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+            else:
+                crc = (crc << 1) & 0xFFFF
+    return crc
+
+
+def build_frame(command, flags, sequence, payload=b""):
+    body = bytes(
+        (
+            command & 0xFF,
+            flags & 0xFF,
+            sequence & 0xFF,
+            len(payload) & 0xFF,
+        )
+    ) + payload
+    return b"\xAA\x55" + body + struct.pack(
+        "<H",
+        crc16_ccitt(body),
+    )
+
+
+class SerialController:
+    """实现拼图机械臂的简化串口协议。"""
+
+    def __init__(self, settings_path=None):
+        self.settings_path = settings_path or os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "serial_settings.json",
+        )
+        self.port = "/dev/serial0"
+        self.baud = 115200
+        self.pick_z = 0
+        self.place_z = 0
+        self.device = None
+        self.sequence = 0
+        self.task_id = 0
+        self.last_reply = ""
+        self.last_error = ""
+        self._lock = threading.RLock()
+        self._load_settings()
+
+    @property
+    def connected(self):
+        return self.device is not None and self.device.is_open
+
+    def _load_settings(self):
+        try:
+            with open(
+                self.settings_path,
+                "r",
+                encoding="utf-8",
+            ) as file:
+                settings = json.load(file)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return
+        self.port = str(settings.get("port", self.port))
+        self.baud = int(settings.get("baud", self.baud))
+        self.pick_z = int(settings.get("pick_z", self.pick_z))
+        self.place_z = int(settings.get("place_z", self.place_z))
+
+    def _save_settings(self):
+        settings = {
+            "port": self.port,
+            "baud": self.baud,
+            "pick_z": self.pick_z,
+            "place_z": self.place_z,
+        }
+        temporary = "%s.%d.tmp" % (
+            self.settings_path,
+            os.getpid(),
+        )
+        with open(temporary, "w", encoding="utf-8") as file:
+            json.dump(
+                settings,
+                file,
+                ensure_ascii=False,
+                indent=2,
+            )
+        os.replace(temporary, self.settings_path)
+
+    def configure(
+        self,
+        port=None,
+        baud=None,
+        pick_z=None,
+        place_z=None,
+    ):
+        reconnect = False
+        if port is not None:
+            new_port = str(port).strip()
+            if new_port and new_port != self.port:
+                self.port = new_port
+                reconnect = True
+        if baud is not None:
+            new_baud = max(1200, min(2000000, int(baud)))
+            if new_baud != self.baud:
+                self.baud = new_baud
+                reconnect = True
+        if pick_z is not None:
+            self.pick_z = int(pick_z)
+        if place_z is not None:
+            self.place_z = int(place_z)
+        if reconnect and self.connected:
+            self.disconnect()
+        self._save_settings()
+
+    def connect(self):
+        with self._lock:
+            if self.connected:
+                return True
+            try:
+                self.device = serial.Serial(
+                    self.port,
+                    self.baud,
+                    timeout=0.035,
+                    write_timeout=0.1,
+                )
+                self.device.reset_input_buffer()
+                self.last_reply = "串口已连接"
+                self.last_error = ""
+                print(
+                    "SERIAL_CONNECTED %s %d"
+                    % (self.port, self.baud),
+                    flush=True,
+                )
+                return True
+            except (OSError, serial.SerialException) as error:
+                self.device = None
+                self.last_error = str(error)
+                self.last_reply = "串口连接失败"
+                print(
+                    "SERIAL_CONNECT_ERROR %s" % error,
+                    flush=True,
+                )
+                return False
+
+    def disconnect(self):
+        with self._lock:
+            if self.device is not None:
+                try:
+                    self.device.close()
+                except (OSError, serial.SerialException):
+                    pass
+            self.device = None
+            self.last_reply = "串口已断开"
+            self.last_error = ""
+            print("SERIAL_DISCONNECTED", flush=True)
+
+    def _next_sequence(self):
+        sequence = self.sequence
+        self.sequence = (self.sequence + 1) & 0xFF
+        return sequence
+
+    def _read_exact(self, size, deadline):
+        data = bytearray()
+        while len(data) < size and time.monotonic() < deadline:
+            chunk = self.device.read(size - len(data))
+            if chunk:
+                data.extend(chunk)
+        return bytes(data)
+
+    def _read_response(self, deadline):
+        matched = 0
+        while time.monotonic() < deadline:
+            byte = self.device.read(1)
+            if not byte:
+                continue
+            if matched == 0:
+                matched = 1 if byte == b"\xAA" else 0
+                continue
+            if byte != b"\x55":
+                matched = 1 if byte == b"\xAA" else 0
+                continue
+            header = self._read_exact(4, deadline)
+            if len(header) != 4:
+                return None
+            command, flags, sequence, length = header
+            tail = self._read_exact(length + 2, deadline)
+            if len(tail) != length + 2:
+                return None
+            payload = tail[:length]
+            received_crc = struct.unpack("<H", tail[length:])[0]
+            if crc16_ccitt(header + payload) != received_crc:
+                matched = 0
+                continue
+            return command, flags, sequence, payload
+        return None
+
+    def send(self, command, payload=b"", flags=0x20):
+        with self._lock:
+            if not self.connected and not self.connect():
+                return False
+            sequence = self._next_sequence()
+            frame = build_frame(command, flags, sequence, payload)
+            for attempt in range(3):
+                try:
+                    if attempt:
+                        frame = build_frame(
+                            command,
+                            flags | 0x10,
+                            sequence,
+                            payload,
+                        )
+                    self.device.reset_input_buffer()
+                    self.device.write(frame)
+                    self.device.flush()
+                    response = self._read_response(
+                        time.monotonic() + 0.12
+                    )
+                except (OSError, serial.SerialException) as error:
+                    self.last_error = str(error)
+                    self.last_reply = "串口通信失败"
+                    self.device = None
+                    return False
+                if response is None:
+                    continue
+                reply_command, _, reply_sequence, reply_payload = response
+                acknowledged_sequence = (
+                    reply_payload[0]
+                    if reply_payload
+                    else reply_sequence
+                )
+                if acknowledged_sequence != sequence:
+                    continue
+                if reply_command == 0x80:
+                    self.last_reply = "OK"
+                    self.last_error = ""
+                    return True
+                if reply_command != 0x81:
+                    continue
+            self.last_reply = "请求重发失败"
+            self.last_error = "ACK timeout"
+            print(
+                "SERIAL_RETRY_FAILED cmd=%02X seq=%d"
+                % (command, sequence),
+                flush=True,
+            )
+            return False
+
+    @staticmethod
+    def _coordinate(value):
+        return max(-2147483648, min(2147483647, int(round(value))))
+
+    @staticmethod
+    def _rotation(value):
+        return max(-18000, min(18000, int(round(value))))
+
+    def move(self, x, y, z, rotation, relative=False):
+        payload = struct.pack(
+            "<Biiih",
+            2 if relative else 1,
+            self._coordinate(x),
+            self._coordinate(y),
+            self._coordinate(z),
+            self._rotation(rotation),
+        )
+        return self.send(
+            0x20,
+            payload,
+            0x21 if relative else 0x20,
+        )
+
+    def home(self):
+        return self.send(
+            0x20,
+            struct.pack("<Biiih", 3, 0, 0, 0, 0),
+        )
+
+    def send_motion_plan(self, motion_plan):
+        if not motion_plan:
+            self.last_reply = "没有可发送的拼图动作"
+            self.last_error = "empty motion plan"
+            return False
+        if len(motion_plan) > 255:
+            self.last_reply = "动作数量过多"
+            self.last_error = "too many actions"
+            return False
+
+        self.task_id = (self.task_id + 1) & 0xFF
+        count = len(motion_plan)
+        for index, move in enumerate(motion_plan):
+            pick = move["pick"]
+            place = move["place"]
+            payload = struct.pack(
+                "<BBBBiiiiiih",
+                self.task_id,
+                index,
+                count,
+                int(move.get("piece_id", index)) & 0xFF,
+                self._coordinate(pick[0]),
+                self._coordinate(pick[1]),
+                self._coordinate(self.pick_z),
+                self._coordinate(place[0]),
+                self._coordinate(place[1]),
+                self._coordinate(self.place_z),
+                self._rotation(float(move["rotation"]) * 100.0),
+            )
+            if not self.send(0x10, payload, 0x21):
+                self.last_reply = "动作%d发送失败" % (index + 1)
+                return False
+        if not self.send(
+            0x11,
+            struct.pack("<B", self.task_id),
+        ):
+            self.last_reply = "执行命令发送失败"
+            return False
+        self.last_reply = "已发送%d个动作并开始执行" % count
+        return True
+
+    def state(self):
+        return {
+            "serial_connected": self.connected,
+            "serial_port": self.port,
+            "serial_baud": self.baud,
+            "serial_pick_z": self.pick_z,
+            "serial_place_z": self.place_z,
+            "serial_last_reply": self.last_reply,
+            "serial_error": self.last_error,
+        }

@@ -4,3 +4,4 @@ captures/
 run.log
 .deploy_hybrid/
 librectangle_solver.so
+serial_settings.json
