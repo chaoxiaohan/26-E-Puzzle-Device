@@ -2791,6 +2791,7 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
             best is not None
             and best[2]["constraint_report"]["coverage"] >= 0.88
             and best[2]["constraint_report"]["internal_match"] >= 0.80
+            and best[2].get("corner_diagonal_score", 0.0) >= 0.80
         ):
             break
 
