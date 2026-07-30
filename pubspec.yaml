@@ -58,6 +58,13 @@ flutter:
   uses-material-design: true
   assets:
     - assets/demo_result.png
+  fonts:
+    - family: PuzzleLatin
+      fonts:
+        - asset: assets/fonts/DejaVuSans.ttf
+    - family: PuzzleChinese
+      fonts:
+        - asset: assets/fonts/DroidSansFallbackFull.ttf
 
   # To add assets to your application, add an assets section, like this:
   # assets:

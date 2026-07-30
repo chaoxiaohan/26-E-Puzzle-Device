@@ -22,6 +22,8 @@ class PuzzleStudioApp extends StatelessWidget {
           seedColor: const Color(0xFF2563EB),
           brightness: Brightness.light,
         ),
+        fontFamily: 'PuzzleLatin',
+        fontFamilyFallback: const ['PuzzleChinese'],
         scaffoldBackgroundColor: const Color(0xFFF5F7FA),
         useMaterial3: true,
       ),
@@ -96,9 +98,9 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         SizedBox(
-                          width: (constraints.maxWidth * 0.34).clamp(
-                            300.0,
-                            430.0,
+                          width: (constraints.maxWidth * 0.31).clamp(
+                            285.0,
+                            390.0,
                           ),
                           child: _buildCameraPanel(),
                         ),
@@ -165,76 +167,62 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   }
 
   Widget _buildCameraPanel() {
-    return _Panel(
-      child: Column(
-        children: [
-          const _PanelHeader(title: '实时识别', trailing: '竖向画面'),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              child: Center(
-                child: AspectRatio(
-                  aspectRatio: 9 / 16,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        const ColoredBox(color: Color(0xFF111827)),
-                        CustomPaint(painter: CameraScenePainter()),
-                        Positioned(
-                          left: 10,
-                          top: 10,
-                          child: _DarkBadge(label: modeTitle),
+    return Center(
+      child: AspectRatio(
+        aspectRatio: 9 / 16,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              const ColoredBox(color: Color(0xFF111827)),
+              CustomPaint(painter: CameraScenePainter()),
+              Positioned(
+                left: 10,
+                top: 10,
+                child: _DarkBadge(label: modeTitle),
+              ),
+              const Positioned(
+                right: 10,
+                top: 10,
+                child: _DarkBadge(label: '实时识别'),
+              ),
+              Positioned(
+                left: 10,
+                right: 10,
+                bottom: 10,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xE6111822),
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.circle, size: 7, color: Color(0xFF5EE6BA)),
+                      SizedBox(width: 6),
+                      Text(
+                        '检测稳定',
+                        style: TextStyle(color: Colors.white, fontSize: 11),
+                      ),
+                      Spacer(),
+                      Text(
+                        '4个碎片',
+                        style: TextStyle(
+                          color: Color(0xFFCBD5E1),
+                          fontSize: 11,
                         ),
-                        Positioned(
-                          left: 10,
-                          right: 10,
-                          bottom: 10,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 7,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xE6111822),
-                              borderRadius: BorderRadius.circular(9),
-                            ),
-                            child: const Row(
-                              children: [
-                                Icon(
-                                  Icons.circle,
-                                  size: 7,
-                                  color: Color(0xFF5EE6BA),
-                                ),
-                                SizedBox(width: 6),
-                                Text(
-                                  '检测稳定',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 11,
-                                  ),
-                                ),
-                                Spacer(),
-                                Text(
-                                  '4个碎片',
-                                  style: TextStyle(
-                                    color: Color(0xFFCBD5E1),
-                                    fontSize: 11,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-            ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -945,10 +933,10 @@ class CameraScenePainter extends CustomPainter {
 
     final paper = RRect.fromRectAndRadius(
       Rect.fromLTWH(
-        size.width * 0.10,
-        size.height * 0.11,
-        size.width * 0.80,
-        size.height * 0.77,
+        size.width * 0.04,
+        size.height * 0.06,
+        size.width * 0.92,
+        size.height * 0.88,
       ),
       const Radius.circular(5),
     );
@@ -961,10 +949,10 @@ class CameraScenePainter extends CustomPainter {
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(
-          size.width * 0.13,
-          size.height * 0.15,
-          size.width * 0.74,
-          size.height * 0.66,
+          size.width * 0.08,
+          size.height * 0.11,
+          size.width * 0.84,
+          size.height * 0.74,
         ),
         const Radius.circular(4),
       ),
