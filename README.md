@@ -15,7 +15,7 @@
 ## 启动
 
 ```bash
-cd /home/pi5/puzzle_detector
+cd /home/pi5/puzzle_card_detector
 ./start.sh
 ```
 
@@ -45,6 +45,18 @@ PUZZLE_CAMERA=/dev/video2 ./start.sh
 ```bash
 python3 self_test.py
 ```
+
+## Flutter 控制台
+
+Flutter 控制台运行时使用无窗口后端：
+
+```bash
+PUZZLE_HEADLESS=1 ./start.sh
+```
+
+`ui_bridge.py` 负责输出实时画面、二值图、拼接实图和 JSON 状态，并
+接收模式、求解、拍照及调参命令。通信文件位于 `/tmp/puzzle_ui_*`，
+摄像头和求解算法仍全部由本程序管理。
 
 ## 稳定识别与快速求解
 

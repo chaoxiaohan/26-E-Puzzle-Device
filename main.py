@@ -28,6 +28,7 @@ from card_face_solver import (
 )
 from puzzle_solver import normalize_layout, solve_camera_rectangle
 from solver_v2 import solve as solve_edge_layout
+from ui_bridge import UiBridge
 
 
 def longest_edge(points):
@@ -2942,8 +2943,11 @@ def main():
     active_solver_mode = ""
     pending_card_frame = None
     pending_card_pieces = None
+    active_solve_frame = None
     last_capture_name = ""
     last_capture_time = 0.0
+    ui_bridge = UiBridge()
+    ui_mode = "CARD"
     button_boxes = get_button_boxes(
         camera_width,
         camera_height,
@@ -2966,6 +2970,50 @@ def main():
             ensure_bgr=False,
             copy=False,
         )
+        control = ui_bridge.read_control()
+        if control is not None:
+            requested_mode = str(
+                control.get("mode", ui_mode)
+            ).upper()
+            if requested_mode in ("FIRST", "NORMAL", "CARD"):
+                if requested_mode != ui_mode:
+                    ui_mode = requested_mode
+                    solved_display = None
+                    solved_mode = ""
+                    motion_plan = []
+                    ui_bridge.clear_result()
+            if "auto_threshold" in control:
+                auto_threshold = bool(
+                    control["auto_threshold"]
+                )
+            if "manual_threshold" in control:
+                manual_threshold = min(
+                    255,
+                    max(0, int(control["manual_threshold"])),
+                )
+            if "polarity_mode" in control:
+                requested_polarity = str(
+                    control["polarity_mode"]
+                ).upper()
+                if requested_polarity in (
+                    "AUTO",
+                    "LIGHT",
+                    "DARK",
+                ):
+                    polarity_mode = requested_polarity
+            if "min_piece_area" in control:
+                min_piece_area = min(
+                    50000,
+                    max(100, int(control["min_piece_area"])),
+                )
+            action = str(control.get("action", "")).lower()
+            if action == "solve":
+                if ui_mode == "CARD":
+                    card_requested = True
+                else:
+                    solve_requested = True
+            elif action == "capture":
+                capture_requested = True
         if os.path.exists("/tmp/puzzle_capture_once"):
             os.remove("/tmp/puzzle_capture_once")
             cv2.imwrite(
@@ -3125,11 +3173,16 @@ def main():
                 solver_message = "SOLVING"
             else:
                 pending_solve_until = time.monotonic() + 2.0
-                pending_solve_mode = "NORMAL"
+                pending_solve_mode = (
+                    "FIRST"
+                    if ui_mode == "FIRST"
+                    else "NORMAL"
+                )
                 pending_card_frame = None
                 pending_card_pieces = None
                 solver_message = "HOLD STILL"
                 solver_ms = 0.0
+                ui_bridge.clear_result()
 
         if card_requested:
             if solver_future is not None:
@@ -3144,6 +3197,7 @@ def main():
                 ]
                 solver_message = "CARD HOLD"
                 solver_ms = 0.0
+                ui_bridge.clear_result()
             else:
                 solver_message = "CARD NEED 2-4"
 
@@ -3161,7 +3215,7 @@ def main():
                 and len(stable_pieces) == len(pending_card_pieces)
             )
             if stable_pieces is not None and (
-                pending_solve_mode == "NORMAL"
+                pending_solve_mode in ("FIRST", "NORMAL")
                 or card_ready
             ):
                 pending_solve_until = 0.0
@@ -3174,6 +3228,12 @@ def main():
                 solver_message = "SOLVING"
                 solve_started_at = time.monotonic()
                 active_solver_mode = pending_solve_mode
+                active_solve_frame = (
+                    pending_card_frame.copy()
+                    if active_solver_mode == "CARD"
+                    and pending_card_frame is not None
+                    else frame_rgb.copy()
+                )
                 solve_roi = (
                     roi_x,
                     roi_y,
@@ -3231,6 +3291,7 @@ def main():
                 solved_mode = ""
                 solved_ratio = 0.0
                 motion_plan = []
+                ui_bridge.clear_result()
                 solver_message = (
                     "CARD ERROR"
                     if result_mode == "CARD"
@@ -3249,12 +3310,24 @@ def main():
                     solved_mode = ""
                     solved_ratio = 0.0
                     motion_plan = []
+                    ui_bridge.clear_result()
                     solver_message = (
                         "CARD NO RECT"
                         if result_mode == "CARD"
                         else "NO RECT"
                     )
                 else:
+                    result_preview = result.get("preview_rgb")
+                    if (
+                        result_preview is None
+                        and active_solve_frame is not None
+                    ):
+                        result_preview = render_layout_preview(
+                            active_solve_frame,
+                            solve_pieces,
+                            solved_layout,
+                            fill_rectangle=True,
+                        )
                     solved_display = place_layout_on_paper(
                         solved_layout,
                         solve_info,
@@ -3278,10 +3351,19 @@ def main():
                         solved_mode = ""
                         solved_ratio = 0.0
                         motion_plan = []
+                        ui_bridge.clear_result()
                         solver_message = "NO SAFE"
                     else:
                         solved_mode = result_mode
-                        if result_mode == "CARD":
+                        ui_bridge.publish_result(result_preview)
+                        if (
+                            result_mode == "CARD"
+                            and os.environ.get(
+                                "PUZZLE_HEADLESS",
+                                "0",
+                            )
+                            != "1"
+                        ):
                             show_card_assembly_preview(
                                 result.get("preview_rgb")
                             )
@@ -3340,6 +3422,7 @@ def main():
                     ),
                     flush=True,
                 )
+            active_solve_frame = None
 
         if tuning_open:
             show_binary_preview(
@@ -3354,6 +3437,11 @@ def main():
         )
         for index, piece in enumerate(pieces, 1):
             draw_piece(img, piece, index)
+        ui_bridge.publish_live(
+            frame_rgb,
+            threshold_info["mask"],
+            (roi_x, roi_y, roi_width, roi_height),
+        )
 
         if not tuning_open and solved_display is not None:
             draw_solved_rectangle(
@@ -3452,6 +3540,32 @@ def main():
             fps = fps_frames / elapsed
             fps_frames = 0
             fps_start = now
+        ui_bridge.publish_state(
+            {
+                "mode": ui_mode.lower(),
+                "camera_ok": True,
+                "fps": round(float(fps), 1),
+                "piece_count": len(pieces),
+                "auto_threshold": bool(auto_threshold),
+                "manual_threshold": int(manual_threshold),
+                "current_threshold": int(current_threshold),
+                "polarity_mode": polarity_mode,
+                "detected_polarity": threshold_info["polarity"],
+                "min_piece_area": int(min_piece_area),
+                "solving": bool(
+                    solver_future is not None
+                    or pending_solve_until > 0
+                ),
+                "solver_message": solver_message,
+                "score": round(float(solved_score), 4),
+                "ratio": round(float(solved_ratio), 4),
+                "solver_ms": round(float(solver_ms), 1),
+                "solver_nodes": int(solver_nodes),
+                "solved_mode": solved_mode.lower(),
+                "last_capture_name": last_capture_name,
+                "motion_plan": motion_plan,
+            }
+        )
         img.draw_string(
             4,
             camera_height - 38,
