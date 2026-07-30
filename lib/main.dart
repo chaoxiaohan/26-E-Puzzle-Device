@@ -15,16 +15,14 @@ class PuzzleStudioApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: '拼图装置控制台',
+      title: '拼图装置',
       theme: ThemeData(
-        brightness: Brightness.dark,
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF48E6B0),
-          secondary: Color(0xFF5BA8FF),
-          surface: Color(0xFF151C25),
-          error: Color(0xFFFF6B72),
+        brightness: Brightness.light,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF2563EB),
+          brightness: Brightness.light,
         ),
-        scaffoldBackgroundColor: const Color(0xFF090E14),
+        scaffoldBackgroundColor: const Color(0xFFF5F7FA),
         useMaterial3: true,
       ),
       home: const PuzzleDashboard(),
@@ -44,7 +42,9 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   bool solving = false;
   bool hasResult = true;
   bool autoThreshold = true;
-  double threshold = 109;
+  int threshold = 109;
+  int minPieceArea = 1500;
+  String polarityMode = 'AUTO';
 
   String get modeTitle {
     return switch (mode) {
@@ -56,7 +56,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
 
   String get resultTitle {
     return switch (mode) {
-      PuzzleMode.firstQuestion => '目标定位结果',
+      PuzzleMode.firstQuestion => '第一问结果',
       PuzzleMode.normalPuzzle => '普通拼图实图',
       PuzzleMode.cardPuzzle => '扑克牌拼接实图',
     };
@@ -84,42 +84,33 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: DecoratedBox(
-          decoration: const BoxDecoration(
-            gradient: RadialGradient(
-              center: Alignment.topLeft,
-              radius: 1.35,
-              colors: [Color(0xFF142233), Color(0xFF090E14)],
-            ),
-          ),
-          child: Column(
-            children: [
-              _buildHeader(),
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    return Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          SizedBox(
-                            width: (constraints.maxWidth * 0.34).clamp(
-                              300.0,
-                              430.0,
-                            ),
-                            child: _buildCameraPanel(),
+        child: Column(
+          children: [
+            _buildHeader(),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SizedBox(
+                          width: (constraints.maxWidth * 0.34).clamp(
+                            300.0,
+                            430.0,
                           ),
-                          const SizedBox(width: 14),
-                          Expanded(child: _buildControlPanel()),
-                        ],
-                      ),
-                    );
-                  },
-                ),
+                          child: _buildCameraPanel(),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(child: _buildControlPanel()),
+                      ],
+                    ),
+                  );
+                },
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -127,82 +118,46 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
 
   Widget _buildHeader() {
     return Container(
-      height: 66,
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      height: 58,
+      margin: const EdgeInsets.fromLTRB(14, 10, 14, 4),
+      padding: const EdgeInsets.symmetric(horizontal: 18),
       decoration: BoxDecoration(
-        color: const Color(0xCC111923),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFF243244)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE4E9EF)),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x66000000),
-            blurRadius: 24,
-            offset: Offset(0, 10),
+            color: Color(0x0D0F172A),
+            blurRadius: 16,
+            offset: Offset(0, 6),
           ),
         ],
       ),
-      child: Row(
+      child: const Row(
         children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF48E6B0), Color(0xFF3E8FFF)],
-              ),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(
-              Icons.extension_rounded,
-              color: Color(0xFF071019),
-              size: 23,
+          Text(
+            '拼图装置',
+            style: TextStyle(
+              color: Color(0xFF111827),
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
             ),
           ),
-          const SizedBox(width: 12),
-          const Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'PUZZLE STUDIO',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.4,
-                ),
-              ),
-              Text(
-                '智能拼图装置控制台',
-                style: TextStyle(color: Color(0xFF8391A4), fontSize: 11),
-              ),
-            ],
+          Spacer(),
+          Icon(Icons.circle, size: 9, color: Color(0xFF10A37F)),
+          SizedBox(width: 7),
+          Text(
+            '相机正常',
+            style: TextStyle(
+              color: Color(0xFF334155),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
           ),
-          const Spacer(),
-          const _StatusChip(
-            icon: Icons.videocam_rounded,
-            label: '相机正常',
-            color: Color(0xFF48E6B0),
-          ),
-          const SizedBox(width: 8),
-          const _StatusChip(
-            icon: Icons.speed_rounded,
-            label: '30 FPS',
-            color: Color(0xFF5BA8FF),
-          ),
-          const SizedBox(width: 8),
-          _StatusChip(
-            icon: Icons.tonality_rounded,
-            label: autoThreshold
-                ? 'OTSU ${threshold.round()}'
-                : '手动 ${threshold.round()}',
-            color: const Color(0xFFFFC766),
-          ),
-          const SizedBox(width: 10),
-          IconButton(
-            tooltip: '设置',
-            onPressed: _showTuningSheet,
-            icon: const Icon(Icons.tune_rounded),
+          SizedBox(width: 12),
+          Text(
+            '30 FPS',
+            style: TextStyle(color: Color(0xFF64748B), fontSize: 12),
           ),
         ],
       ),
@@ -213,11 +168,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     return _Panel(
       child: Column(
         children: [
-          const _PanelTitle(
-            icon: Icons.center_focus_strong_rounded,
-            title: '实时识别',
-            trailing: '竖向画面',
-          ),
+          const _PanelHeader(title: '实时识别', trailing: '竖向画面'),
           Expanded(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
@@ -225,27 +176,16 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                 child: AspectRatio(
                   aspectRatio: 9 / 16,
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: BorderRadius.circular(14),
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        const ColoredBox(color: Color(0xFF0A0F15)),
+                        const ColoredBox(color: Color(0xFF111827)),
                         CustomPaint(painter: CameraScenePainter()),
                         Positioned(
                           left: 10,
                           top: 10,
-                          child: _OverlayBadge(
-                            label: modeTitle,
-                            color: const Color(0xFF48E6B0),
-                          ),
-                        ),
-                        const Positioned(
-                          right: 10,
-                          top: 10,
-                          child: _OverlayBadge(
-                            label: '4 PIECES',
-                            color: Color(0xFF5BA8FF),
-                          ),
+                          child: _DarkBadge(label: modeTitle),
                         ),
                         Positioned(
                           left: 10,
@@ -253,30 +193,33 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                           bottom: 10,
                           child: Container(
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 11,
-                              vertical: 8,
+                              horizontal: 10,
+                              vertical: 7,
                             ),
                             decoration: BoxDecoration(
-                              color: const Color(0xCC0B1119),
-                              borderRadius: BorderRadius.circular(11),
-                              border: Border.all(
-                                color: const Color(0xFF263447),
-                              ),
+                              color: const Color(0xE6111822),
+                              borderRadius: BorderRadius.circular(9),
                             ),
                             child: const Row(
                               children: [
                                 Icon(
                                   Icons.circle,
-                                  size: 8,
-                                  color: Color(0xFF48E6B0),
+                                  size: 7,
+                                  color: Color(0xFF5EE6BA),
                                 ),
-                                SizedBox(width: 7),
-                                Text('检测稳定', style: TextStyle(fontSize: 12)),
+                                SizedBox(width: 6),
+                                Text(
+                                  '检测稳定',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                  ),
+                                ),
                                 Spacer(),
                                 Text(
-                                  'ROI 520×700',
+                                  '4个碎片',
                                   style: TextStyle(
-                                    color: Color(0xFF8B98AA),
+                                    color: Color(0xFFCBD5E1),
                                     fontSize: 11,
                                   ),
                                 ),
@@ -301,29 +244,23 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       children: [
         _Panel(
           child: Padding(
-            padding: const EdgeInsets.all(10),
+            padding: const EdgeInsets.all(9),
             child: Row(
               children: [
                 _ModeButton(
-                  icon: Icons.looks_one_rounded,
                   label: '第一问',
-                  subtitle: '基础任务',
                   selected: mode == PuzzleMode.firstQuestion,
                   onTap: () => _changeMode(PuzzleMode.firstQuestion),
                 ),
-                const SizedBox(width: 9),
+                const SizedBox(width: 8),
                 _ModeButton(
-                  icon: Icons.grid_view_rounded,
                   label: '普通拼图',
-                  subtitle: '第二问 · 白色',
                   selected: mode == PuzzleMode.normalPuzzle,
                   onTap: () => _changeMode(PuzzleMode.normalPuzzle),
                 ),
-                const SizedBox(width: 9),
+                const SizedBox(width: 8),
                 _ModeButton(
-                  icon: Icons.style_rounded,
                   label: '扑克牌',
-                  subtitle: '第二问 · 花纹',
                   selected: mode == PuzzleMode.cardPuzzle,
                   onTap: () => _changeMode(PuzzleMode.cardPuzzle),
                 ),
@@ -331,9 +268,9 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
             ),
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
         Expanded(child: _buildResultPanel()),
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
         _buildActionBar(),
       ],
     );
@@ -350,16 +287,15 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     return _Panel(
       child: Column(
         children: [
-          _PanelTitle(
-            icon: Icons.auto_awesome_mosaic_rounded,
+          _PanelHeader(
             title: resultTitle,
-            trailing: hasResult ? '真实纹理重建' : '等待求解',
+            trailing: hasResult ? '真实纹理' : '等待求解',
           ),
           Expanded(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
               child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 280),
+                duration: const Duration(milliseconds: 250),
                 child: solving
                     ? const _SolvingView()
                     : hasResult
@@ -376,53 +312,35 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   Widget _buildActionBar() {
     return _Panel(
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(11),
         child: Row(
           children: [
             const _Metric(label: '碎片', value: '4'),
-            const SizedBox(width: 14),
+            const SizedBox(width: 15),
             const _Metric(label: '置信度', value: '92.8%'),
-            const SizedBox(width: 14),
+            const SizedBox(width: 15),
             const _Metric(label: '用时', value: '2.31s'),
             const Spacer(),
-            _SmallAction(
-              icon: Icons.camera_alt_rounded,
-              label: '拍照',
-              onPressed: _capture,
-            ),
+            _ActionButton(label: '拍照', onPressed: _capture),
             const SizedBox(width: 8),
-            _SmallAction(
-              icon: Icons.tune_rounded,
-              label: '调参',
-              onPressed: _showTuningSheet,
-            ),
-            const SizedBox(width: 10),
+            _ActionButton(label: '调参', onPressed: _showTuningSheet),
+            const SizedBox(width: 9),
             SizedBox(
-              height: 54,
-              width: 174,
-              child: FilledButton.icon(
+              height: 50,
+              width: 166,
+              child: FilledButton(
                 onPressed: solving ? null : solve,
                 style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF48E6B0),
-                  foregroundColor: const Color(0xFF071019),
+                  backgroundColor: const Color(0xFF2563EB),
+                  foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(15),
+                    borderRadius: BorderRadius.circular(13),
                   ),
                 ),
-                icon: solving
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Color(0xFF071019),
-                        ),
-                      )
-                    : const Icon(Icons.play_arrow_rounded),
-                label: Text(
+                child: Text(
                   solving ? '求解中' : '开始求解',
                   style: const TextStyle(
-                    fontSize: 16,
+                    fontSize: 15,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -437,18 +355,27 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   void _capture() {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: const Row(
-          children: [
-            Icon(Icons.check_circle_rounded, color: Color(0xFF48E6B0)),
-            SizedBox(width: 10),
-            Text('已保存当前原图、二值图和碎片数据'),
-          ],
-        ),
-        backgroundColor: const Color(0xFF18232E),
+        content: const Text('已保存原图、二值图和碎片数据'),
+        backgroundColor: const Color(0xFF1E293B),
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
+  }
+
+  void _changeThreshold(int amount, StateSetter setSheetState) {
+    setState(() {
+      threshold = (threshold + amount).clamp(0, 255);
+      autoThreshold = false;
+    });
+    setSheetState(() {});
+  }
+
+  void _changeArea(int amount, StateSetter setSheetState) {
+    setState(() {
+      minPieceArea = (minPieceArea + amount).clamp(100, 50000);
+    });
+    setSheetState(() {});
   }
 
   Future<void> _showTuningSheet() async {
@@ -460,78 +387,177 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
         return StatefulBuilder(
           builder: (context, setSheetState) {
             return Container(
-              margin: const EdgeInsets.all(14),
-              padding: const EdgeInsets.all(20),
+              height: 430,
+              margin: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
-                color: const Color(0xFF141C25),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: const Color(0xFF2B394A)),
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
                 boxShadow: const [
-                  BoxShadow(color: Color(0x99000000), blurRadius: 32),
+                  BoxShadow(
+                    color: Color(0x260F172A),
+                    blurRadius: 30,
+                    offset: Offset(0, -4),
+                  ),
                 ],
               ),
               child: Row(
                 children: [
                   Expanded(
-                    child: Container(
-                      height: 210,
-                      decoration: BoxDecoration(
-                        color: Colors.black,
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: const Color(0xFF303D4C)),
-                      ),
-                      child: const Center(
-                        child: Text(
-                          '二值化实时预览',
-                          style: TextStyle(color: Color(0xFF7D8999)),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 22),
-                  Expanded(
+                    flex: 5,
                     child: Column(
-                      mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          '检测参数',
+                          '二值化实时预览',
                           style: TextStyle(
-                            fontSize: 20,
+                            color: Color(0xFF111827),
+                            fontSize: 17,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
                         const SizedBox(height: 12),
-                        SwitchListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: const Text('自动阈值 OTSU'),
-                          value: autoThreshold,
-                          onChanged: (value) {
-                            setState(() => autoThreshold = value);
-                            setSheetState(() {});
-                          },
+                        Expanded(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(14),
+                            child: CustomPaint(
+                              painter: BinaryPreviewPainter(),
+                              child: const SizedBox.expand(),
+                            ),
+                          ),
                         ),
-                        Text('阈值  ${threshold.round()}'),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 22),
+                  Expanded(
+                    flex: 6,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Text(
+                              '检测参数',
+                              style: TextStyle(
+                                color: Color(0xFF111827),
+                                fontSize: 19,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const Spacer(),
+                            TextButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: const Text('完成'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            const Text(
+                              '二值化阈值',
+                              style: TextStyle(
+                                color: Color(0xFF334155),
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const Spacer(),
+                            FilterChip(
+                              selected: autoThreshold,
+                              label: const Text('自动 OTSU'),
+                              onSelected: (_) {
+                                setState(() => autoThreshold = true);
+                                setSheetState(() {});
+                              },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 7),
+                        Row(
+                          children: [
+                            _AdjustButton(
+                              label: '-5',
+                              onPressed: () =>
+                                  _changeThreshold(-5, setSheetState),
+                            ),
+                            const SizedBox(width: 9),
+                            Expanded(
+                              child: _ValueBox(
+                                value: threshold.toString(),
+                                active: !autoThreshold,
+                              ),
+                            ),
+                            const SizedBox(width: 9),
+                            _AdjustButton(
+                              label: '+5',
+                              onPressed: () =>
+                                  _changeThreshold(5, setSheetState),
+                            ),
+                          ],
+                        ),
                         Slider(
-                          value: threshold,
+                          value: threshold.toDouble(),
                           min: 0,
                           max: 255,
                           onChanged: (value) {
                             setState(() {
-                              threshold = value;
+                              threshold = value.round();
                               autoThreshold = false;
                             });
                             setSheetState(() {});
                           },
                         ),
-                        const Row(
+                        const Text(
+                          '目标极性',
+                          style: TextStyle(
+                            color: Color(0xFF334155),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 7),
+                        SegmentedButton<String>(
+                          segments: const [
+                            ButtonSegment(value: 'AUTO', label: Text('自动')),
+                            ButtonSegment(value: 'LIGHT', label: Text('亮色')),
+                            ButtonSegment(value: 'DARK', label: Text('暗色')),
+                          ],
+                          selected: {polarityMode},
+                          showSelectedIcon: false,
+                          onSelectionChanged: (values) {
+                            setState(() {
+                              polarityMode = values.first;
+                            });
+                            setSheetState(() {});
+                          },
+                        ),
+                        const SizedBox(height: 15),
+                        const Text(
+                          '最小碎片面积',
+                          style: TextStyle(
+                            color: Color(0xFF334155),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 7),
+                        Row(
                           children: [
-                            Expanded(
-                              child: _OptionTile(title: '极性', value: 'AUTO'),
+                            _AdjustButton(
+                              label: '-250',
+                              onPressed: () => _changeArea(-250, setSheetState),
                             ),
-                            SizedBox(width: 10),
+                            const SizedBox(width: 9),
                             Expanded(
-                              child: _OptionTile(title: '最小面积', value: '1500'),
+                              child: _ValueBox(
+                                value: minPieceArea.toString(),
+                                active: true,
+                              ),
+                            ),
+                            const SizedBox(width: 9),
+                            _AdjustButton(
+                              label: '+250',
+                              onPressed: () => _changeArea(250, setSheetState),
                             ),
                           ],
                         ),
@@ -557,14 +583,14 @@ class _Panel extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0xD9111923),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFF243244)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: const Color(0xFFE4E9EF)),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x55000000),
-            blurRadius: 20,
-            offset: Offset(0, 8),
+            color: Color(0x0A0F172A),
+            blurRadius: 14,
+            offset: Offset(0, 5),
           ),
         ],
       ),
@@ -573,35 +599,32 @@ class _Panel extends StatelessWidget {
   }
 }
 
-class _PanelTitle extends StatelessWidget {
-  const _PanelTitle({
-    required this.icon,
-    required this.title,
-    required this.trailing,
-  });
+class _PanelHeader extends StatelessWidget {
+  const _PanelHeader({required this.title, required this.trailing});
 
-  final IconData icon;
   final String title;
   final String trailing;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 50,
+      height: 45,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14),
         child: Row(
           children: [
-            Icon(icon, size: 19, color: const Color(0xFF48E6B0)),
-            const SizedBox(width: 8),
             Text(
               title,
-              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+              style: const TextStyle(
+                color: Color(0xFF111827),
+                fontSize: 15,
+                fontWeight: FontWeight.w800,
+              ),
             ),
             const Spacer(),
             Text(
               trailing,
-              style: const TextStyle(color: Color(0xFF7F8DA0), fontSize: 11),
+              style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
             ),
           ],
         ),
@@ -610,57 +633,14 @@ class _PanelTitle extends StatelessWidget {
   }
 }
 
-class _StatusChip extends StatelessWidget {
-  const _StatusChip({
-    required this.icon,
-    required this.label,
-    required this.color,
-  });
-
-  final IconData icon;
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 34,
-      padding: const EdgeInsets.symmetric(horizontal: 11),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(11),
-        border: Border.all(color: color.withValues(alpha: 0.27)),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, color: color, size: 16),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontWeight: FontWeight.w700,
-              fontSize: 11,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _ModeButton extends StatelessWidget {
   const _ModeButton({
-    required this.icon,
     required this.label,
-    required this.subtitle,
     required this.selected,
     required this.onTap,
   });
 
-  final IconData icon;
   final String label;
-  final String subtitle;
   final bool selected;
   final VoidCallback onTap;
 
@@ -671,66 +651,29 @@ class _ModeButton extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(15),
+          borderRadius: BorderRadius.circular(12),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 180),
-            height: 61,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            height: 52,
+            alignment: Alignment.center,
             decoration: BoxDecoration(
-              gradient: selected
-                  ? const LinearGradient(
-                      colors: [Color(0xFF1D6958), Color(0xFF173A4D)],
-                    )
-                  : null,
-              color: selected ? null : const Color(0xFF111922),
-              borderRadius: BorderRadius.circular(15),
+              color: selected
+                  ? const Color(0xFF2563EB)
+                  : const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: selected
-                    ? const Color(0xFF48E6B0)
-                    : const Color(0xFF273444),
-                width: selected ? 1.4 : 1,
+                    ? const Color(0xFF2563EB)
+                    : const Color(0xFFE2E8F0),
               ),
             ),
-            child: Row(
-              children: [
-                Icon(
-                  icon,
-                  color: selected
-                      ? const Color(0xFF48E6B0)
-                      : const Color(0xFF77869A),
-                  size: 22,
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        label,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 14,
-                        ),
-                      ),
-                      Text(
-                        subtitle,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFF8290A2),
-                          fontSize: 10,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (selected)
-                  const Icon(
-                    Icons.check_circle_rounded,
-                    color: Color(0xFF48E6B0),
-                    size: 17,
-                  ),
-              ],
+            child: Text(
+              label,
+              style: TextStyle(
+                color: selected ? Colors.white : const Color(0xFF334155),
+                fontWeight: FontWeight.w800,
+                fontSize: 14,
+              ),
             ),
           ),
         ),
@@ -747,99 +690,47 @@ class _ResultView extends StatelessWidget {
     return Container(
       key: const ValueKey('result'),
       decoration: BoxDecoration(
-        color: const Color(0xFF0A0F15),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFF273646)),
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
-      child: Row(
+      child: Stack(
         children: [
-          Expanded(
-            flex: 7,
+          Positioned.fill(
             child: Padding(
               padding: const EdgeInsets.all(12),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: const Color(0xFF20252B),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Image.asset(
-                    'assets/demo_result.png',
-                    fit: BoxFit.contain,
-                    filterQuality: FilterQuality.medium,
-                  ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.asset(
+                  'assets/demo_result.png',
+                  fit: BoxFit.contain,
+                  filterQuality: FilterQuality.medium,
                 ),
               ),
             ),
           ),
-          Container(
-            width: 146,
-            margin: const EdgeInsets.fromLTRB(0, 12, 12, 12),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFF121A23),
-              borderRadius: BorderRadius.circular(13),
-              border: Border.all(color: const Color(0xFF263545)),
-            ),
-            child: const Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _ResultState(
-                  icon: Icons.check_circle_rounded,
-                  label: '矩形闭合',
-                  color: Color(0xFF48E6B0),
+          Positioned(
+            right: 12,
+            top: 12,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+              decoration: BoxDecoration(
+                color: const Color(0xF2FFFFFF),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFD7E1EA)),
+              ),
+              child: const Text(
+                '矩形闭合  ·  无重叠',
+                style: TextStyle(
+                  color: Color(0xFF0F766E),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
                 ),
-                SizedBox(height: 13),
-                _ResultState(
-                  icon: Icons.layers_clear_rounded,
-                  label: '无重叠',
-                  color: Color(0xFF48E6B0),
-                ),
-                SizedBox(height: 13),
-                _ResultState(
-                  icon: Icons.texture_rounded,
-                  label: '纹理连续',
-                  color: Color(0xFF5BA8FF),
-                ),
-                SizedBox(height: 15),
-                Text(
-                  '92.8%',
-                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 27),
-                ),
-                Text(
-                  '综合置信度',
-                  style: TextStyle(color: Color(0xFF7F8C9D), fontSize: 10),
-                ),
-              ],
+              ),
             ),
           ),
         ],
       ),
-    );
-  }
-}
-
-class _ResultState extends StatelessWidget {
-  const _ResultState({
-    required this.icon,
-    required this.label,
-    required this.color,
-  });
-
-  final IconData icon;
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icon, color: color, size: 16),
-        const SizedBox(width: 7),
-        Text(label, style: const TextStyle(fontSize: 11)),
-      ],
     );
   }
 }
@@ -852,33 +743,17 @@ class _EmptyResultView extends StatelessWidget {
     return Container(
       key: const ValueKey('empty'),
       decoration: BoxDecoration(
-        color: const Color(0xFF0C1219),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFF273646)),
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
       child: const Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.dashboard_customize_outlined,
-              size: 45,
-              color: Color(0xFF536173),
-            ),
-            SizedBox(height: 10),
-            Text(
-              '等待生成拼接实图',
-              style: TextStyle(
-                color: Color(0xFFA1ACBA),
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            SizedBox(height: 4),
-            Text(
-              '按下开始求解后显示真实碎片纹理',
-              style: TextStyle(color: Color(0xFF667487), fontSize: 11),
-            ),
-          ],
+        child: Text(
+          '等待生成拼接实图',
+          style: TextStyle(
+            color: Color(0xFF64748B),
+            fontWeight: FontWeight.w700,
+          ),
         ),
       ),
     );
@@ -893,24 +768,27 @@ class _SolvingView extends StatelessWidget {
     return Container(
       key: const ValueKey('solving'),
       decoration: BoxDecoration(
-        color: const Color(0xFF0C1219),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFF273646)),
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
       child: const Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             SizedBox(
-              width: 34,
-              height: 34,
-              child: CircularProgressIndicator(
-                strokeWidth: 3,
-                color: Color(0xFF48E6B0),
+              width: 30,
+              height: 30,
+              child: CircularProgressIndicator(strokeWidth: 3),
+            ),
+            SizedBox(height: 11),
+            Text(
+              '正在求解…',
+              style: TextStyle(
+                color: Color(0xFF334155),
+                fontWeight: FontWeight.w700,
               ),
             ),
-            SizedBox(height: 13),
-            Text('正在搜索最优拼接方案…', style: TextStyle(fontWeight: FontWeight.w700)),
           ],
         ),
       ),
@@ -918,27 +796,25 @@ class _SolvingView extends StatelessWidget {
   }
 }
 
-class _OverlayBadge extends StatelessWidget {
-  const _OverlayBadge({required this.label, required this.color});
+class _DarkBadge extends StatelessWidget {
+  const _DarkBadge({required this.label});
 
   final String label;
-  final Color color;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
-        color: const Color(0xDD0B1118),
-        borderRadius: BorderRadius.circular(9),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
+        color: const Color(0xE6111822),
+        borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
         label,
-        style: TextStyle(
-          color: color,
-          fontWeight: FontWeight.w800,
+        style: const TextStyle(
+          color: Color(0xFF7CE7C5),
           fontSize: 10,
+          fontWeight: FontWeight.w800,
         ),
       ),
     );
@@ -954,77 +830,103 @@ class _Metric extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           label,
-          style: const TextStyle(color: Color(0xFF798798), fontSize: 10),
+          style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10),
         ),
         Text(
           value,
-          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+          style: const TextStyle(
+            color: Color(0xFF1E293B),
+            fontSize: 15,
+            fontWeight: FontWeight.w800,
+          ),
         ),
       ],
     );
   }
 }
 
-class _SmallAction extends StatelessWidget {
-  const _SmallAction({
-    required this.icon,
-    required this.label,
-    required this.onPressed,
-  });
+class _ActionButton extends StatelessWidget {
+  const _ActionButton({required this.label, required this.onPressed});
 
-  final IconData icon;
   final String label;
   final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 54,
-      child: OutlinedButton.icon(
+      height: 50,
+      child: OutlinedButton(
         onPressed: onPressed,
         style: OutlinedButton.styleFrom(
-          foregroundColor: const Color(0xFFD7E0EA),
-          side: const BorderSide(color: Color(0xFF304052)),
+          foregroundColor: const Color(0xFF334155),
+          side: const BorderSide(color: Color(0xFFD6DEE8)),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(15),
+            borderRadius: BorderRadius.circular(13),
           ),
         ),
-        icon: Icon(icon, size: 18),
-        label: Text(label),
+        child: Text(label),
       ),
     );
   }
 }
 
-class _OptionTile extends StatelessWidget {
-  const _OptionTile({required this.title, required this.value});
+class _AdjustButton extends StatelessWidget {
+  const _AdjustButton({required this.label, required this.onPressed});
 
-  final String title;
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 72,
+      height: 42,
+      child: OutlinedButton(
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(
+          padding: EdgeInsets.zero,
+          foregroundColor: const Color(0xFF2563EB),
+          side: const BorderSide(color: Color(0xFFBFDBFE)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+        child: Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+      ),
+    );
+  }
+}
+
+class _ValueBox extends StatelessWidget {
+  const _ValueBox({required this.value, required this.active});
+
   final String value;
+  final bool active;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(11),
+      height: 42,
+      alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: const Color(0xFF0F161E),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF293747)),
+        color: active ? const Color(0xFFEFF6FF) : const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: active ? const Color(0xFF93C5FD) : const Color(0xFFE2E8F0),
+        ),
       ),
-      child: Row(
-        children: [
-          Text(
-            title,
-            style: const TextStyle(color: Color(0xFF8290A1), fontSize: 11),
-          ),
-          const Spacer(),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
-        ],
+      child: Text(
+        value,
+        style: const TextStyle(
+          color: Color(0xFF1E293B),
+          fontSize: 15,
+          fontWeight: FontWeight.w800,
+        ),
       ),
     );
   }
@@ -1037,7 +939,7 @@ class CameraScenePainter extends CustomPainter {
       ..shader = const LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [Color(0xFF202B36), Color(0xFF101820)],
+        colors: [Color(0xFF2A3541), Color(0xFF121922)],
       ).createShader(Offset.zero & size);
     canvas.drawRect(Offset.zero & size, background);
 
@@ -1053,7 +955,7 @@ class CameraScenePainter extends CustomPainter {
     canvas.drawRRect(paper, Paint()..color = const Color(0xFFE8EBE9));
 
     final roi = Paint()
-      ..color = const Color(0xFFFFC766)
+      ..color = const Color(0xFFFFC857)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
     canvas.drawRRect(
@@ -1095,13 +997,14 @@ class CameraScenePainter extends CustomPainter {
         Offset(size.width * 0.57, size.height * 0.66),
       ],
     ];
+
     for (var index = 0; index < fragments.length; index++) {
       final path = Path()..addPolygon(fragments[index], true);
-      canvas.drawPath(path, Paint()..color = const Color(0xFF343D43));
+      canvas.drawPath(path, Paint()..color = const Color(0xFF374151));
       canvas.drawPath(
         path,
         Paint()
-          ..color = const Color(0xFF48E6B0)
+          ..color = const Color(0xFF5EE6BA)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2,
       );
@@ -1112,7 +1015,7 @@ class CameraScenePainter extends CustomPainter {
         text: TextSpan(
           text: 'P${index + 1}',
           style: const TextStyle(
-            color: Color(0xFF48E6B0),
+            color: Color(0xFF5EE6BA),
             fontSize: 11,
             fontWeight: FontWeight.w800,
           ),
@@ -1120,6 +1023,63 @@ class CameraScenePainter extends CustomPainter {
         textDirection: TextDirection.ltr,
       )..layout();
       text.paint(canvas, center - Offset(text.width / 2, text.height / 2));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class BinaryPreviewPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = const Color(0xFF111111),
+    );
+
+    final paper = RRect.fromRectAndRadius(
+      Rect.fromLTWH(
+        size.width * 0.12,
+        size.height * 0.09,
+        size.width * 0.76,
+        size.height * 0.82,
+      ),
+      const Radius.circular(5),
+    );
+    canvas.drawRRect(paper, Paint()..color = Colors.white);
+
+    final fragments = [
+      Rect.fromLTWH(
+        size.width * 0.23,
+        size.height * 0.24,
+        size.width * 0.22,
+        size.height * 0.17,
+      ),
+      Rect.fromLTWH(
+        size.width * 0.52,
+        size.height * 0.25,
+        size.width * 0.20,
+        size.height * 0.19,
+      ),
+      Rect.fromLTWH(
+        size.width * 0.25,
+        size.height * 0.54,
+        size.width * 0.22,
+        size.height * 0.18,
+      ),
+      Rect.fromLTWH(
+        size.width * 0.53,
+        size.height * 0.54,
+        size.width * 0.21,
+        size.height * 0.18,
+      ),
+    ];
+    for (final fragment in fragments) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(fragment, const Radius.circular(3)),
+        Paint()..color = Colors.black,
+      );
     }
   }
 
