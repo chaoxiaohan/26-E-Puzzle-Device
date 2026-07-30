@@ -50,7 +50,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   final ValueNotifier<Uint8List?> binaryPreview = ValueNotifier(null);
   final ScrollController calibrationScrollController = ScrollController();
   final TextEditingController serialPortController = TextEditingController(
-    text: '/dev/serial0',
+    text: '/dev/ttyUSB0',
   );
   final TextEditingController serialBaudController = TextEditingController(
     text: '115200',
@@ -83,13 +83,14 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   double solverMs = 0;
   String solverMessage = '';
   String lastCaptureName = '';
-  String serialPort = '/dev/serial0';
+  String serialPort = '/dev/ttyUSB0';
   int serialBaud = 115200;
   int serialPickZ = 0;
   int serialPlaceZ = 0;
   int motionPlanCount = 0;
   String serialLastReply = '';
   String serialError = '';
+  int serialEventRevision = 0;
   int platformX = 0;
   int platformY = 0;
   int platformZ = 0;
@@ -212,6 +213,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       motionPlanCount = snapshot.motionPlanCount;
       serialLastReply = snapshot.serialLastReply;
       serialError = snapshot.serialError;
+      serialEventRevision = snapshot.serialEventRevision;
       platformX = snapshot.platformX;
       platformY = snapshot.platformY;
       platformZ = snapshot.platformZ;
@@ -385,6 +387,19 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
             onTap: () => setState(() => page = AppPage.settings),
           ),
           const Spacer(),
+          if (serialEventRevision > 0) ...[
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              child: _SerialOperationBadge(
+                key: ValueKey(serialEventRevision),
+                success: serialError.isEmpty,
+                message: serialError.isEmpty
+                    ? serialLastReply
+                    : '$serialLastReply：$serialError',
+              ),
+            ),
+            const SizedBox(width: 12),
+          ],
           Icon(
             Icons.circle,
             size: 9,
@@ -1328,7 +1343,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                   flex: 2,
                   child: _CoordinateField(
                     label: '串口设备',
-                    unit: '例如 /dev/serial0',
+                    unit: 'CH340 通常为 /dev/ttyUSB0',
                     controller: serialPortController,
                     numeric: false,
                   ),
@@ -2052,6 +2067,58 @@ class _HeaderNavButton extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _SerialOperationBadge extends StatelessWidget {
+  const _SerialOperationBadge({
+    super.key,
+    required this.success,
+    required this.message,
+  });
+
+  final bool success;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground = success
+        ? const Color(0xFF047857)
+        : const Color(0xFFB91C1C);
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 230),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+      decoration: BoxDecoration(
+        color: success ? const Color(0xFFECFDF5) : const Color(0xFFFEF2F2),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: success ? const Color(0xFFA7F3D0) : const Color(0xFFFECACA),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            success ? Icons.check_circle_outline : Icons.error_outline,
+            size: 17,
+            color: foreground,
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              '${success ? '发送成功' : '发送失败'} · $message',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: foreground,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -44,6 +44,7 @@ class BackendSnapshot {
     required this.serialPlaceZ,
     required this.serialLastReply,
     required this.serialError,
+    required this.serialEventRevision,
     required this.platformX,
     required this.platformY,
     required this.platformZ,
@@ -82,12 +83,14 @@ class BackendSnapshot {
       lastCaptureName: json['last_capture_name']?.toString() ?? '',
       motionPlanCount: (json['motion_plan_count'] as num?)?.toInt() ?? 0,
       serialConnected: json['serial_connected'] == true,
-      serialPort: json['serial_port']?.toString() ?? '/dev/serial0',
+      serialPort: json['serial_port']?.toString() ?? '/dev/ttyUSB0',
       serialBaud: (json['serial_baud'] as num?)?.toInt() ?? 115200,
       serialPickZ: (json['serial_pick_z'] as num?)?.toInt() ?? 0,
       serialPlaceZ: (json['serial_place_z'] as num?)?.toInt() ?? 0,
       serialLastReply: json['serial_last_reply']?.toString() ?? '',
       serialError: json['serial_error']?.toString() ?? '',
+      serialEventRevision:
+          (json['serial_event_revision'] as num?)?.toInt() ?? 0,
       platformX: (json['platform_x'] as num?)?.toInt() ?? 0,
       platformY: (json['platform_y'] as num?)?.toInt() ?? 0,
       platformZ: (json['platform_z'] as num?)?.toInt() ?? 0,
@@ -131,6 +134,7 @@ class BackendSnapshot {
   final int serialPlaceZ;
   final String serialLastReply;
   final String serialError;
+  final int serialEventRevision;
   final int platformX;
   final int platformY;
   final int platformZ;
