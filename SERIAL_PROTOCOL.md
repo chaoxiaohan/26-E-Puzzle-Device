@@ -1,4 +1,4 @@
-# 机械臂串口通信协议
+# 拼图平台串口通信协议
 
 ## 串口参数
 
@@ -73,12 +73,23 @@ control_type：
 - `1`：绝对移动
 - `2`：相对移动
 - `3`：归零，后续数据填 0
+- `4`：查询平台当前位置，后续数据填 0
 
 ## 回复
 
 ### `0x80` OK
 
-Payload 第一个字节为被确认数据包的 `SEQ`。
+普通命令的 Payload 第一个字节为被确认数据包的 `SEQ`。
+
+查询当前位置时，OK Payload 为：
+
+```c
+uint8_t seq;
+int32_t current_x;
+int32_t current_y;
+int32_t current_z;
+int16_t current_rotation_cdeg;
+```
 
 ### `0x81` 请求重发
 
@@ -86,3 +97,22 @@ Payload 第一个字节为需要重发数据包的 `SEQ`。
 
 树莓派等待回复 120ms，失败后最多重发 3 次。重发时保持原 SEQ，
 并设置 FLAGS.bit4。
+
+## 两点坐标标定
+
+树莓派记录：
+
+- A点：A4纸右上角的视觉像素坐标和平台坐标
+- B点：A4纸左下角的视觉像素坐标和平台坐标
+
+在图像XY轴与平台XY轴基本平行、透视较小时：
+
+```text
+scale_x = (platform_b_x - platform_a_x) / (visual_b_x - visual_a_x)
+scale_y = (platform_b_y - platform_a_y) / (visual_b_y - visual_a_y)
+
+platform_x = platform_a_x + (visual_x - visual_a_x) * scale_x
+platform_y = platform_a_y + (visual_y - visual_a_y) * scale_y
+```
+
+自动抓取动作只有在标定完成后才允许发送。

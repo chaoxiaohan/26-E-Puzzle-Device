@@ -37,7 +37,7 @@ def build_frame(command, flags, sequence, payload=b""):
 
 
 class SerialController:
-    """实现拼图机械臂的简化串口协议。"""
+    """实现拼图平台的简化串口协议。"""
 
     def __init__(self, settings_path=None):
         self.settings_path = settings_path or os.path.join(
@@ -53,6 +53,19 @@ class SerialController:
         self.task_id = 0
         self.last_reply = ""
         self.last_error = ""
+        self.last_payload = b""
+        self.current_x = 0
+        self.current_y = 0
+        self.current_z = 0
+        self.current_rotation = 0
+        self.position_valid = False
+        self.visual_a = None
+        self.visual_b = None
+        self.platform_a = None
+        self.platform_b = None
+        self.calibration_valid = False
+        self.scale_x = 0.0
+        self.scale_y = 0.0
         self._lock = threading.RLock()
         self._load_settings()
 
@@ -74,6 +87,11 @@ class SerialController:
         self.baud = int(settings.get("baud", self.baud))
         self.pick_z = int(settings.get("pick_z", self.pick_z))
         self.place_z = int(settings.get("place_z", self.place_z))
+        self.visual_a = settings.get("visual_a")
+        self.visual_b = settings.get("visual_b")
+        self.platform_a = settings.get("platform_a")
+        self.platform_b = settings.get("platform_b")
+        self._calculate_calibration(save=False)
 
     def _save_settings(self):
         settings = {
@@ -81,6 +99,10 @@ class SerialController:
             "baud": self.baud,
             "pick_z": self.pick_z,
             "place_z": self.place_z,
+            "visual_a": self.visual_a,
+            "visual_b": self.visual_b,
+            "platform_a": self.platform_a,
+            "platform_b": self.platform_b,
         }
         temporary = "%s.%d.tmp" % (
             self.settings_path,
@@ -209,6 +231,7 @@ class SerialController:
                 return False
             sequence = self._next_sequence()
             frame = build_frame(command, flags, sequence, payload)
+            self.last_payload = b""
             for attempt in range(3):
                 try:
                     if attempt:
@@ -240,6 +263,12 @@ class SerialController:
                 if acknowledged_sequence != sequence:
                     continue
                 if reply_command == 0x80:
+                    self.last_payload = (
+                        reply_payload[1:]
+                        if reply_payload
+                        and reply_payload[0] == sequence
+                        else reply_payload
+                    )
                     self.last_reply = "OK"
                     self.last_error = ""
                     return True
@@ -283,6 +312,97 @@ class SerialController:
             struct.pack("<Biiih", 3, 0, 0, 0, 0),
         )
 
+    def query_position(self):
+        payload = struct.pack("<Biiih", 4, 0, 0, 0, 0)
+        if not self.send(0x20, payload):
+            return False
+        if len(self.last_payload) < 14:
+            self.position_valid = False
+            self.last_reply = "平台未返回当前位置"
+            self.last_error = "position payload too short"
+            return False
+        (
+            self.current_x,
+            self.current_y,
+            self.current_z,
+            self.current_rotation,
+        ) = struct.unpack("<iiih", self.last_payload[:14])
+        self.position_valid = True
+        self.last_reply = "当前位置已更新"
+        self.last_error = ""
+        return True
+
+    def record_visual_point(self, name, x, y):
+        point = [float(x), float(y)]
+        if name == "a":
+            self.visual_a = point
+        else:
+            self.visual_b = point
+        self.calibration_valid = False
+        self._save_settings()
+        self.last_reply = "已记录视觉点%s" % name.upper()
+
+    def record_platform_point(self, name):
+        if not self.query_position():
+            return False
+        point = [self.current_x, self.current_y]
+        if name == "a":
+            self.platform_a = point
+        else:
+            self.platform_b = point
+        self.calibration_valid = False
+        self._save_settings()
+        self.last_reply = "已记录平台点%s" % name.upper()
+        return True
+
+    def _calculate_calibration(self, save=True):
+        self.calibration_valid = False
+        if not all(
+            (
+                self.visual_a,
+                self.visual_b,
+                self.platform_a,
+                self.platform_b,
+            )
+        ):
+            return False
+        visual_dx = float(self.visual_b[0]) - float(self.visual_a[0])
+        visual_dy = float(self.visual_b[1]) - float(self.visual_a[1])
+        if abs(visual_dx) < 5.0 or abs(visual_dy) < 5.0:
+            return False
+        self.scale_x = (
+            float(self.platform_b[0]) - float(self.platform_a[0])
+        ) / visual_dx
+        self.scale_y = (
+            float(self.platform_b[1]) - float(self.platform_a[1])
+        ) / visual_dy
+        self.calibration_valid = (
+            abs(self.scale_x) > 1e-9
+            and abs(self.scale_y) > 1e-9
+        )
+        if save:
+            self._save_settings()
+        return self.calibration_valid
+
+    def calculate_calibration(self):
+        if self._calculate_calibration():
+            self.last_reply = "两点坐标系标定完成"
+            self.last_error = ""
+            return True
+        self.last_reply = "标定点不完整或距离过近"
+        self.last_error = "invalid calibration points"
+        return False
+
+    def vision_to_platform(self, x, y):
+        if not self.calibration_valid:
+            raise RuntimeError("platform calibration required")
+        return (
+            float(self.platform_a[0])
+            + (float(x) - float(self.visual_a[0])) * self.scale_x,
+            float(self.platform_a[1])
+            + (float(y) - float(self.visual_a[1])) * self.scale_y,
+        )
+
     def send_motion_plan(self, motion_plan):
         if not motion_plan:
             self.last_reply = "没有可发送的拼图动作"
@@ -292,25 +412,40 @@ class SerialController:
             self.last_reply = "动作数量过多"
             self.last_error = "too many actions"
             return False
+        if not self.calibration_valid:
+            self.last_reply = "请先完成平台坐标标定"
+            self.last_error = "platform calibration required"
+            return False
 
         self.task_id = (self.task_id + 1) & 0xFF
         count = len(motion_plan)
         for index, move in enumerate(motion_plan):
             pick = move["pick"]
             place = move["place"]
+            pick_x, pick_y = self.vision_to_platform(
+                pick[0],
+                pick[1],
+            )
+            place_x, place_y = self.vision_to_platform(
+                place[0],
+                place[1],
+            )
+            rotation = float(move["rotation"])
+            if self.scale_x * self.scale_y < 0:
+                rotation = -rotation
             payload = struct.pack(
                 "<BBBBiiiiiih",
                 self.task_id,
                 index,
                 count,
                 int(move.get("piece_id", index)) & 0xFF,
-                self._coordinate(pick[0]),
-                self._coordinate(pick[1]),
+                self._coordinate(pick_x),
+                self._coordinate(pick_y),
                 self._coordinate(self.pick_z),
-                self._coordinate(place[0]),
-                self._coordinate(place[1]),
+                self._coordinate(place_x),
+                self._coordinate(place_y),
                 self._coordinate(self.place_z),
-                self._rotation(float(move["rotation"]) * 100.0),
+                self._rotation(rotation * 100.0),
             )
             if not self.send(0x10, payload, 0x21):
                 self.last_reply = "动作%d发送失败" % (index + 1)
@@ -333,4 +468,16 @@ class SerialController:
             "serial_place_z": self.place_z,
             "serial_last_reply": self.last_reply,
             "serial_error": self.last_error,
+            "platform_x": self.current_x,
+            "platform_y": self.current_y,
+            "platform_z": self.current_z,
+            "platform_rotation": self.current_rotation,
+            "platform_position_valid": self.position_valid,
+            "calibration_visual_a": self.visual_a,
+            "calibration_visual_b": self.visual_b,
+            "calibration_platform_a": self.platform_a,
+            "calibration_platform_b": self.platform_b,
+            "calibration_valid": self.calibration_valid,
+            "calibration_scale_x": self.scale_x,
+            "calibration_scale_y": self.scale_y,
         }

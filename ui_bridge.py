@@ -23,6 +23,11 @@ class UiBridge:
         self.frame_revision = 0
         self.result_revision = 0
         self.result_available = os.path.exists(self.result_path)
+        self.preview_source_x = 0.0
+        self.preview_source_y = 0.0
+        self.preview_scale = 1.0
+        self.preview_offset_x = 0.0
+        self.preview_offset_y = 0.0
 
     @staticmethod
     def _atomic_write(path, data):
@@ -115,6 +120,18 @@ class UiBridge:
         y0 = max(0, roi_y - margin_y)
         x1 = min(frame_rgb.shape[1], roi_x + roi_width + margin_x)
         y1 = min(frame_rgb.shape[0], roi_y + roi_height + margin_y)
+        source_width = max(1, x1 - x0)
+        source_height = max(1, y1 - y0)
+        self.preview_source_x = float(x0)
+        self.preview_source_y = float(y0)
+        self.preview_scale = min(
+            360.0 / source_width,
+            640.0 / source_height,
+        )
+        resized_width = round(source_width * self.preview_scale)
+        resized_height = round(source_height * self.preview_scale)
+        self.preview_offset_x = (360.0 - resized_width) * 0.5
+        self.preview_offset_y = (640.0 - resized_height) * 0.5
         camera_preview = self._fit_preview(
             frame_rgb[y0:y1, x0:x1],
             360,
@@ -135,6 +152,17 @@ class UiBridge:
             self._encode_jpeg(binary_preview, 85),
         )
         self.frame_revision += 1
+
+    def preview_to_camera(self, x, y):
+        if self.preview_scale <= 0:
+            return None
+        camera_x = (
+            float(x) - self.preview_offset_x
+        ) / self.preview_scale + self.preview_source_x
+        camera_y = (
+            float(y) - self.preview_offset_y
+        ) / self.preview_scale + self.preview_source_y
+        return camera_x, camera_y
 
     def publish_result(self, preview_rgb):
         if preview_rgb is None:

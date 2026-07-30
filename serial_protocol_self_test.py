@@ -18,7 +18,8 @@ def read_exact(device, size):
 
 
 def fake_arm(device, received):
-    while len(received) < 4:
+    position_index = 0
+    while len(received) < 6:
         if read_exact(device, 2) != b"\xAA\x55":
             continue
         header = read_exact(device, 4)
@@ -30,13 +31,24 @@ def fake_arm(device, received):
             tail[length:],
         )[0]
         received.append((command, flags, sequence, payload))
+        reply_payload = bytes((sequence,))
+        if command == 0x20 and payload[0] == 4:
+            positions = (
+                (1000, 2000, 300, 100),
+                (5000, 6000, 300, 100),
+            )
+            reply_payload += struct.pack(
+                "<iiih",
+                *positions[position_index],
+            )
+            position_index += 1
         os.write(
             device,
             build_frame(
                 0x80,
                 0,
                 sequence,
-                bytes((sequence,)),
+                reply_payload,
             ),
         )
 
@@ -60,6 +72,15 @@ def main():
         place_z=80,
     )
     assert controller.move(10, -20, 30, 4500, relative=True)
+    controller.record_visual_point("a", 100, 200)
+    controller.record_visual_point("b", 300, 400)
+    assert controller.record_platform_point("a")
+    assert controller.record_platform_point("b")
+    assert controller.calculate_calibration()
+    assert controller.vision_to_platform(200, 300) == (
+        3000.0,
+        4000.0,
+    )
     plan = [
         {
             "piece_id": 0,
@@ -78,12 +99,18 @@ def main():
     worker.join(timeout=1.0)
     assert [item[0] for item in received] == [
         0x20,
+        0x20,
+        0x20,
         0x10,
         0x10,
         0x11,
     ]
-    first_action = struct.unpack("<BBBBiiiiiih", received[1][3])
+    first_action = struct.unpack("<BBBBiiiiiih", received[3][3])
+    assert first_action[4] == 1000
+    assert first_action[5] == 2000
     assert first_action[6] == 120
+    assert first_action[7] == 5000
+    assert first_action[8] == 6000
     assert first_action[9] == 80
     assert first_action[10] == -4525
     controller.disconnect()
@@ -91,7 +118,7 @@ def main():
         os.remove("/tmp/puzzle_serial_test.json")
     except FileNotFoundError:
         pass
-    print("SERIAL_PROTOCOL_OK frames=4")
+    print("SERIAL_PROTOCOL_OK frames=6 calibration=two-point")
 
 
 if __name__ == "__main__":

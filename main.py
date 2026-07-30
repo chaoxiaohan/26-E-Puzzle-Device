@@ -3755,6 +3755,29 @@ def main():
                 serial_controller.home()
             elif action == "arm_send_plan":
                 serial_controller.send_motion_plan(motion_plan)
+            elif action == "platform_query_position":
+                serial_controller.query_position()
+            elif action in (
+                "calibration_visual_a",
+                "calibration_visual_b",
+            ):
+                point = ui_bridge.preview_to_camera(
+                    control.get("calibration_preview_x", 0),
+                    control.get("calibration_preview_y", 0),
+                )
+                if point is not None:
+                    serial_controller.record_visual_point(
+                        action[-1],
+                        point[0],
+                        point[1],
+                    )
+            elif action in (
+                "calibration_platform_a",
+                "calibration_platform_b",
+            ):
+                serial_controller.record_platform_point(action[-1])
+            elif action == "calibration_compute":
+                serial_controller.calculate_calibration()
 
         img = cam.read()
         if img is None:
