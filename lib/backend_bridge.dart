@@ -24,6 +24,14 @@ class BackendSnapshot {
     required this.frameRevision,
     required this.resultRevision,
     required this.lastCaptureName,
+    required this.motionPlanCount,
+    required this.serialConnected,
+    required this.serialPort,
+    required this.serialBaud,
+    required this.serialPickZ,
+    required this.serialPlaceZ,
+    required this.serialLastReply,
+    required this.serialError,
   });
 
   factory BackendSnapshot.fromJson(Map<String, dynamic> json) {
@@ -48,6 +56,14 @@ class BackendSnapshot {
       frameRevision: (json['frame_revision'] as num?)?.toInt() ?? 0,
       resultRevision: (json['result_revision'] as num?)?.toInt() ?? 0,
       lastCaptureName: json['last_capture_name']?.toString() ?? '',
+      motionPlanCount: (json['motion_plan_count'] as num?)?.toInt() ?? 0,
+      serialConnected: json['serial_connected'] == true,
+      serialPort: json['serial_port']?.toString() ?? '/dev/serial0',
+      serialBaud: (json['serial_baud'] as num?)?.toInt() ?? 115200,
+      serialPickZ: (json['serial_pick_z'] as num?)?.toInt() ?? 0,
+      serialPlaceZ: (json['serial_place_z'] as num?)?.toInt() ?? 0,
+      serialLastReply: json['serial_last_reply']?.toString() ?? '',
+      serialError: json['serial_error']?.toString() ?? '',
     );
   }
 
@@ -71,6 +87,14 @@ class BackendSnapshot {
   final int frameRevision;
   final int resultRevision;
   final String lastCaptureName;
+  final int motionPlanCount;
+  final bool serialConnected;
+  final String serialPort;
+  final int serialBaud;
+  final int serialPickZ;
+  final int serialPlaceZ;
+  final String serialLastReply;
+  final String serialError;
 }
 
 class BackendUpdate {
@@ -155,6 +179,14 @@ class BackendBridge {
     String? polarityMode,
     String? backgroundMode,
     int? minPieceArea,
+    String? serialPort,
+    int? serialBaud,
+    int? serialPickZ,
+    int? serialPlaceZ,
+    int? armX,
+    int? armY,
+    int? armZ,
+    int? armRotationCdeg,
   }) async {
     final payload = <String, Object>{
       'revision': DateTime.now().microsecondsSinceEpoch,
@@ -180,9 +212,49 @@ class BackendBridge {
     if (minPieceArea != null) {
       payload['min_piece_area'] = minPieceArea;
     }
+    if (serialPort != null) {
+      payload['serial_port'] = serialPort;
+    }
+    if (serialBaud != null) {
+      payload['serial_baud'] = serialBaud;
+    }
+    if (serialPickZ != null) {
+      payload['serial_pick_z'] = serialPickZ;
+    }
+    if (serialPlaceZ != null) {
+      payload['serial_place_z'] = serialPlaceZ;
+    }
+    if (armX != null) {
+      payload['arm_x'] = armX;
+    }
+    if (armY != null) {
+      payload['arm_y'] = armY;
+    }
+    if (armZ != null) {
+      payload['arm_z'] = armZ;
+    }
+    if (armRotationCdeg != null) {
+      payload['arm_rotation_cdeg'] = armRotationCdeg;
+    }
 
     final temporary = File('${_control.path}.$pid.tmp');
     await temporary.writeAsString(jsonEncode(payload), flush: true);
     await temporary.rename(_control.path);
+  }
+
+  Future<String> readBackendLog({int maximumBytes = 24000}) async {
+    try {
+      final file = File('/tmp/puzzle_backend.log');
+      if (!await file.exists()) {
+        return '暂无后端日志';
+      }
+      final bytes = await file.readAsBytes();
+      final start = bytes.length > maximumBytes
+          ? bytes.length - maximumBytes
+          : 0;
+      return utf8.decode(bytes.sublist(start), allowMalformed: true);
+    } on FileSystemException {
+      return '无法读取后端日志';
+    }
   }
 }

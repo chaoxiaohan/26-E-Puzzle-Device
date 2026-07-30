@@ -10,6 +10,10 @@ void main() {
 
 enum PuzzleMode { firstQuestion, normalPuzzle, cardPuzzle }
 
+enum AppPage { puzzle, arm, settings }
+
+enum SettingsPage { vision, serial, logs }
+
 class PuzzleStudioApp extends StatelessWidget {
   const PuzzleStudioApp({super.key});
 
@@ -44,10 +48,32 @@ class PuzzleDashboard extends StatefulWidget {
 class _PuzzleDashboardState extends State<PuzzleDashboard> {
   final BackendBridge backend = BackendBridge();
   final ValueNotifier<Uint8List?> binaryPreview = ValueNotifier(null);
+  final TextEditingController armXController = TextEditingController(text: '0');
+  final TextEditingController armYController = TextEditingController(text: '0');
+  final TextEditingController armZController = TextEditingController(text: '0');
+  final TextEditingController armRotationController = TextEditingController(
+    text: '0',
+  );
+  final TextEditingController serialPortController = TextEditingController(
+    text: '/dev/serial0',
+  );
+  final TextEditingController serialBaudController = TextEditingController(
+    text: '115200',
+  );
+  final TextEditingController serialPickZController = TextEditingController(
+    text: '0',
+  );
+  final TextEditingController serialPlaceZController = TextEditingController(
+    text: '0',
+  );
+  AppPage page = AppPage.puzzle;
+  SettingsPage settingsPage = SettingsPage.vision;
   PuzzleMode mode = PuzzleMode.cardPuzzle;
   bool solving = false;
   bool hasResult = false;
   bool connected = false;
+  bool cameraOnline = false;
+  bool serialConnected = false;
   bool polling = false;
   bool tuningOpen = false;
   bool initializedFromBackend = false;
@@ -62,6 +88,15 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   double solverMs = 0;
   String solverMessage = '';
   String lastCaptureName = '';
+  String serialPort = '/dev/serial0';
+  int serialBaud = 115200;
+  int serialPickZ = 0;
+  int serialPlaceZ = 0;
+  int motionPlanCount = 0;
+  String serialLastReply = '';
+  String serialError = '';
+  String backendLog = '正在读取后端日志…';
+  DateTime lastLogRead = DateTime.fromMillisecondsSinceEpoch(0);
   Uint8List? cameraFrame;
   Uint8List? resultFrame;
   Timer? pollTimer;
@@ -104,6 +139,14 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     pollTimer?.cancel();
     settingsTimer?.cancel();
     binaryPreview.dispose();
+    armXController.dispose();
+    armYController.dispose();
+    armZController.dispose();
+    armRotationController.dispose();
+    serialPortController.dispose();
+    serialBaudController.dispose();
+    serialPickZController.dispose();
+    serialPlaceZController.dispose();
     super.dispose();
   }
 
@@ -145,7 +188,8 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
         snapshot.lastCaptureName.isNotEmpty &&
         snapshot.lastCaptureName != lastCaptureName;
     setState(() {
-      connected = snapshot.backendAlive && snapshot.cameraOk;
+      connected = snapshot.backendAlive;
+      cameraOnline = snapshot.cameraOk;
       solving = snapshot.solving;
       hasResult = snapshot.resultAvailable;
       pieceCount = snapshot.pieceCount;
@@ -153,6 +197,14 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       score = snapshot.score;
       solverMs = snapshot.solverMs;
       solverMessage = snapshot.solverMessage;
+      serialConnected = snapshot.serialConnected;
+      serialPort = snapshot.serialPort;
+      serialBaud = snapshot.serialBaud;
+      serialPickZ = snapshot.serialPickZ;
+      serialPlaceZ = snapshot.serialPlaceZ;
+      motionPlanCount = snapshot.motionPlanCount;
+      serialLastReply = snapshot.serialLastReply;
+      serialError = snapshot.serialError;
       if (!tuningOpen) {
         autoThreshold = snapshot.autoThreshold;
         threshold = snapshot.autoThreshold
@@ -165,6 +217,10 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       lastCaptureName = snapshot.lastCaptureName;
       if (!initializedFromBackend) {
         mode = _parseMode(snapshot.mode);
+        serialPortController.text = snapshot.serialPort;
+        serialBaudController.text = snapshot.serialBaud.toString();
+        serialPickZController.text = snapshot.serialPickZ.toString();
+        serialPlaceZController.text = snapshot.serialPlaceZ.toString();
         initializedFromBackend = true;
       }
       if (update.frame != null) {
@@ -179,7 +235,20 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     if (update.binary != null) {
       binaryPreview.value = update.binary;
     }
+    final now = DateTime.now();
+    if (page == AppPage.settings &&
+        settingsPage == SettingsPage.logs &&
+        now.difference(lastLogRead) > const Duration(milliseconds: 600)) {
+      backendLog = await backend.readBackendLog();
+      lastLogRead = now;
+      if (mounted) {
+        setState(() {});
+      }
+    }
 
+    if (!mounted) {
+      return;
+    }
     if (captureChanged) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -191,7 +260,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   }
 
   Future<void> solve() async {
-    if (solving || !connected) {
+    if (solving || !connected || !cameraOnline) {
       return;
     }
     setState(() {
@@ -214,20 +283,11 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                 builder: (context, constraints) {
                   return Padding(
                     padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        SizedBox(
-                          width: (constraints.maxWidth * 0.31).clamp(
-                            285.0,
-                            390.0,
-                          ),
-                          child: _buildCameraPanel(),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(child: _buildControlPanel()),
-                      ],
-                    ),
+                    child: switch (page) {
+                      AppPage.puzzle => _buildPuzzlePage(constraints),
+                      AppPage.arm => _buildArmPage(),
+                      AppPage.settings => _buildSettingsPage(),
+                    },
                   );
                 },
               ),
@@ -235,6 +295,20 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildPuzzlePage(BoxConstraints constraints) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          width: (constraints.maxWidth * 0.31).clamp(285.0, 390.0),
+          child: _buildCameraPanel(),
+        ),
+        const SizedBox(width: 12),
+        Expanded(child: _buildControlPanel()),
+      ],
     );
   }
 
@@ -265,17 +339,44 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
               fontWeight: FontWeight.w800,
             ),
           ),
+          const SizedBox(width: 30),
+          _HeaderNavButton(
+            label: '拼图',
+            icon: Icons.dashboard_outlined,
+            selected: page == AppPage.puzzle,
+            onTap: () => setState(() => page = AppPage.puzzle),
+          ),
+          const SizedBox(width: 6),
+          _HeaderNavButton(
+            label: '机械臂',
+            icon: Icons.precision_manufacturing_outlined,
+            selected: page == AppPage.arm,
+            onTap: () => setState(() => page = AppPage.arm),
+          ),
+          const SizedBox(width: 6),
+          _HeaderNavButton(
+            label: '设置',
+            icon: Icons.tune,
+            selected: page == AppPage.settings,
+            onTap: () => setState(() => page = AppPage.settings),
+          ),
           const Spacer(),
           Icon(
             Icons.circle,
             size: 9,
-            color: connected
+            color: !connected
+                ? const Color(0xFFEF4444)
+                : cameraOnline
                 ? const Color(0xFF10A37F)
-                : const Color(0xFFEF4444),
+                : const Color(0xFFF59E0B),
           ),
           const SizedBox(width: 7),
           Text(
-            connected ? '相机正常' : '后端未连接',
+            !connected
+                ? '后端离线'
+                : cameraOnline
+                ? '相机正常'
+                : '相机离线',
             style: const TextStyle(
               color: Color(0xFF334155),
               fontSize: 12,
@@ -284,7 +385,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
           ),
           const SizedBox(width: 12),
           Text(
-            '${fps.toStringAsFixed(1)} FPS',
+            cameraOnline ? '${fps.toStringAsFixed(1)} FPS' : '等待摄像头',
             style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
           ),
         ],
@@ -300,8 +401,18 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
           borderRadius: BorderRadius.circular(14),
           child: ColoredBox(
             color: const Color(0xFF111827),
-            child: cameraFrame == null
-                ? const SizedBox.expand()
+            child: cameraFrame == null || !cameraOnline
+                ? const Center(
+                    child: Text(
+                      '摄像头离线\n串口与设置功能仍可使用',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Color(0xFFCBD5E1),
+                        height: 1.7,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  )
                 : Image.memory(
                     cameraFrame!,
                     fit: BoxFit.contain,
@@ -406,13 +517,25 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
             const Spacer(),
             _ActionButton(label: '拍照', onPressed: _capture),
             const SizedBox(width: 8),
-            _ActionButton(label: '调参', onPressed: _showTuningSheet),
+            _ActionButton(
+              label: '设置',
+              onPressed: () => setState(() {
+                page = AppPage.settings;
+                settingsPage = SettingsPage.vision;
+              }),
+            ),
+            if (motionPlanCount > 0) ...[
+              const SizedBox(width: 8),
+              _ActionButton(label: '发送执行', onPressed: _sendMotionPlan),
+            ],
             const SizedBox(width: 9),
             SizedBox(
               height: 50,
               width: 166,
               child: FilledButton(
-                onPressed: solving || !connected ? null : solve,
+                onPressed: solving || !connected || !cameraOnline
+                    ? null
+                    : solve,
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFF2563EB),
                   foregroundColor: Colors.white,
@@ -436,10 +559,716 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   }
 
   Future<void> _capture() async {
-    if (!connected) {
+    if (!connected || !cameraOnline) {
       return;
     }
     await backend.sendControl(mode: backendMode, action: 'capture');
+  }
+
+  Future<void> _sendMotionPlan() async {
+    if (!connected || motionPlanCount < 1) {
+      return;
+    }
+    await backend.sendControl(action: 'arm_send_plan');
+    await Future<void>.delayed(const Duration(milliseconds: 160));
+    await _pollBackend();
+  }
+
+  int _readInteger(TextEditingController controller) {
+    return int.tryParse(controller.text.trim()) ?? 0;
+  }
+
+  int _readRotationCdeg() {
+    final degrees = double.tryParse(armRotationController.text.trim()) ?? 0;
+    return (degrees * 100).round().clamp(-18000, 18000);
+  }
+
+  Future<void> _sendArmMove({required bool relative}) async {
+    if (!connected) {
+      return;
+    }
+    await backend.sendControl(
+      action: relative ? 'arm_move_relative' : 'arm_move_absolute',
+      armX: _readInteger(armXController),
+      armY: _readInteger(armYController),
+      armZ: _readInteger(armZController),
+      armRotationCdeg: _readRotationCdeg(),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 160));
+    await _pollBackend();
+  }
+
+  Future<void> _homeArm() async {
+    if (!connected) {
+      return;
+    }
+    await backend.sendControl(action: 'arm_home');
+    await Future<void>.delayed(const Duration(milliseconds: 160));
+    await _pollBackend();
+  }
+
+  Future<void> _saveSerialSettings({bool connect = false}) async {
+    await backend.sendControl(
+      action: connect ? 'serial_connect' : null,
+      serialPort: serialPortController.text.trim(),
+      serialBaud: int.tryParse(serialBaudController.text.trim()) ?? 115200,
+      serialPickZ: int.tryParse(serialPickZController.text.trim()) ?? 0,
+      serialPlaceZ: int.tryParse(serialPlaceZController.text.trim()) ?? 0,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    await _pollBackend();
+  }
+
+  Future<void> _disconnectSerial() async {
+    await backend.sendControl(action: 'serial_disconnect');
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    await _pollBackend();
+  }
+
+  Widget _buildArmPage() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          width: 300,
+          child: Column(
+            children: [
+              _Panel(
+                child: Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '串口通信',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _ConnectionRow(
+                        connected: serialConnected,
+                        connectedText: '串口已连接',
+                        disconnectedText: '串口未连接',
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        '$serialPort  ·  $serialBaud',
+                        style: const TextStyle(
+                          color: Color(0xFF64748B),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton(
+                          onPressed: () => setState(() {
+                            page = AppPage.settings;
+                            settingsPage = SettingsPage.serial;
+                          }),
+                          child: const Text('打开串口设置'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: _Panel(
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          '当前拼图动作',
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          motionPlanCount > 0
+                              ? '已生成 $motionPlanCount 个完整抓取动作'
+                              : '尚未生成抓取动作',
+                          style: const TextStyle(
+                            color: Color(0xFF64748B),
+                            height: 1.5,
+                          ),
+                        ),
+                        const Spacer(),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 48,
+                          child: FilledButton(
+                            onPressed: motionPlanCount > 0 && connected
+                                ? _sendMotionPlan
+                                : null,
+                            child: const Text('发送并开始执行'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _Panel(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '机械臂手动控制',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    '输入目标坐标后选择绝对移动或相对移动，旋转角单位为度。',
+                    style: TextStyle(color: Color(0xFF64748B)),
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _CoordinateField(
+                          label: 'X',
+                          unit: '坐标单位',
+                          controller: armXController,
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: _CoordinateField(
+                          label: 'Y',
+                          unit: '坐标单位',
+                          controller: armYController,
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: _CoordinateField(
+                          label: 'Z',
+                          unit: '坐标单位',
+                          controller: armZController,
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: _CoordinateField(
+                          label: '旋转',
+                          unit: '°',
+                          controller: armRotationController,
+                          allowDecimal: true,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 22),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: SizedBox(
+                          height: 52,
+                          child: FilledButton.icon(
+                            onPressed: connected
+                                ? () => _sendArmMove(relative: false)
+                                : null,
+                            icon: const Icon(Icons.my_location),
+                            label: const Text('移动到绝对位置'),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: SizedBox(
+                          height: 52,
+                          child: OutlinedButton.icon(
+                            onPressed: connected
+                                ? () => _sendArmMove(relative: true)
+                                : null,
+                            icon: const Icon(Icons.open_with),
+                            label: const Text('按输入量相对移动'),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      SizedBox(
+                        height: 52,
+                        width: 150,
+                        child: OutlinedButton.icon(
+                          onPressed: connected ? _homeArm : null,
+                          icon: const Icon(Icons.home_outlined),
+                          label: const Text('归零'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  Expanded(
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            '通信结果',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            serialLastReply.isEmpty
+                                ? '等待发送命令'
+                                : serialLastReply,
+                            style: TextStyle(
+                              color: serialError.isEmpty
+                                  ? const Color(0xFF0F766E)
+                                  : const Color(0xFFDC2626),
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          if (serialError.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              serialError,
+                              style: const TextStyle(color: Color(0xFF64748B)),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSettingsPage() {
+    return Column(
+      children: [
+        _Panel(
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Row(
+              children: [
+                _SettingsTabButton(
+                  label: '视觉调参',
+                  selected: settingsPage == SettingsPage.vision,
+                  onTap: () =>
+                      setState(() => settingsPage = SettingsPage.vision),
+                ),
+                const SizedBox(width: 8),
+                _SettingsTabButton(
+                  label: '串口设置',
+                  selected: settingsPage == SettingsPage.serial,
+                  onTap: () =>
+                      setState(() => settingsPage = SettingsPage.serial),
+                ),
+                const SizedBox(width: 8),
+                _SettingsTabButton(
+                  label: '后端日志',
+                  selected: settingsPage == SettingsPage.logs,
+                  onTap: () async {
+                    backendLog = await backend.readBackendLog();
+                    if (mounted) {
+                      setState(() => settingsPage = SettingsPage.logs);
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Expanded(
+          child: switch (settingsPage) {
+            SettingsPage.vision => _buildVisionSettings(),
+            SettingsPage.serial => _buildSerialSettings(),
+            SettingsPage.logs => _buildLogSettings(),
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildVisionSettings() {
+    return _Panel(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Row(
+          children: [
+            Expanded(
+              flex: 5,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '二值化实时预览',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: ColoredBox(
+                        color: const Color(0xFF111827),
+                        child: ValueListenableBuilder<Uint8List?>(
+                          valueListenable: binaryPreview,
+                          builder: (context, bytes, child) {
+                            if (bytes == null || !cameraOnline) {
+                              return const Center(
+                                child: Text(
+                                  '摄像头离线',
+                                  style: TextStyle(color: Color(0xFFCBD5E1)),
+                                ),
+                              );
+                            }
+                            return Image.memory(
+                              bytes,
+                              fit: BoxFit.contain,
+                              gaplessPlayback: true,
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 24),
+            Expanded(
+              flex: 6,
+              child: StatefulBuilder(
+                builder: (context, setSettingsState) {
+                  return SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          '检测参数',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        const Text(
+                          '背景颜色',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 8),
+                        SegmentedButton<String>(
+                          segments: const [
+                            ButtonSegment(value: 'BLACK', label: Text('黑色')),
+                            ButtonSegment(value: 'GREEN', label: Text('绿色')),
+                          ],
+                          selected: {backgroundMode},
+                          showSelectedIcon: false,
+                          onSelectionChanged: (values) {
+                            setState(() => backgroundMode = values.first);
+                            setSettingsState(() {});
+                            _queueSettings();
+                          },
+                        ),
+                        const SizedBox(height: 18),
+                        Row(
+                          children: [
+                            const Text(
+                              '二值化阈值',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            const Spacer(),
+                            FilterChip(
+                              selected: autoThreshold,
+                              label: const Text('自动 OTSU'),
+                              onSelected: (_) {
+                                setState(() => autoThreshold = true);
+                                setSettingsState(() {});
+                                _queueSettings();
+                              },
+                            ),
+                          ],
+                        ),
+                        Slider(
+                          value: threshold.toDouble(),
+                          min: 0,
+                          max: 255,
+                          label: threshold.toString(),
+                          onChanged: (value) {
+                            setState(() {
+                              threshold = value.round();
+                              autoThreshold = false;
+                            });
+                            setSettingsState(() {});
+                            _queueSettings();
+                          },
+                        ),
+                        Center(
+                          child: Text(
+                            '当前阈值：$threshold',
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        const Text(
+                          '目标极性',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 8),
+                        SegmentedButton<String>(
+                          segments: const [
+                            ButtonSegment(value: 'AUTO', label: Text('自动')),
+                            ButtonSegment(value: 'LIGHT', label: Text('亮色')),
+                            ButtonSegment(value: 'DARK', label: Text('暗色')),
+                          ],
+                          selected: {polarityMode},
+                          showSelectedIcon: false,
+                          onSelectionChanged: (values) {
+                            setState(() => polarityMode = values.first);
+                            setSettingsState(() {});
+                            _queueSettings();
+                          },
+                        ),
+                        const SizedBox(height: 20),
+                        Row(
+                          children: [
+                            const Text(
+                              '最小碎片面积',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            const Spacer(),
+                            Text(
+                              minPieceArea.toString(),
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Slider(
+                          value: minPieceArea.toDouble(),
+                          min: 100,
+                          max: 10000,
+                          divisions: 99,
+                          onChanged: (value) {
+                            setState(() => minPieceArea = value.round());
+                            setSettingsState(() {});
+                            _queueSettings();
+                          },
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSerialSettings() {
+    return _Panel(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  '串口设置',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+                ),
+                const Spacer(),
+                _ConnectionRow(
+                  connected: serialConnected,
+                  connectedText: '已连接',
+                  disconnectedText: '未连接',
+                ),
+              ],
+            ),
+            const SizedBox(height: 22),
+            Row(
+              children: [
+                Expanded(
+                  flex: 2,
+                  child: _CoordinateField(
+                    label: '串口设备',
+                    unit: '例如 /dev/serial0',
+                    controller: serialPortController,
+                    numeric: false,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: _CoordinateField(
+                    label: '波特率',
+                    unit: 'bit/s',
+                    controller: serialBaudController,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: _CoordinateField(
+                    label: '自动抓取Z',
+                    unit: '坐标单位',
+                    controller: serialPickZController,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: _CoordinateField(
+                    label: '自动放置Z',
+                    unit: '坐标单位',
+                    controller: serialPlaceZController,
+                  ),
+                ),
+                const Spacer(flex: 2),
+              ],
+            ),
+            const SizedBox(height: 22),
+            Row(
+              children: [
+                SizedBox(
+                  height: 48,
+                  child: FilledButton(
+                    onPressed: connected
+                        ? () => _saveSerialSettings(connect: true)
+                        : null,
+                    child: Text(serialConnected ? '重新连接' : '保存并连接'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                SizedBox(
+                  height: 48,
+                  child: OutlinedButton(
+                    onPressed: connected
+                        ? () => _saveSerialSettings(connect: false)
+                        : null,
+                    child: const Text('仅保存'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                SizedBox(
+                  height: 48,
+                  child: OutlinedButton(
+                    onPressed: serialConnected ? _disconnectSerial : null,
+                    child: const Text('断开串口'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Text(
+                serialError.isEmpty
+                    ? (serialLastReply.isEmpty ? '等待串口操作' : serialLastReply)
+                    : '$serialLastReply\n$serialError',
+                style: TextStyle(
+                  color: serialError.isEmpty
+                      ? const Color(0xFF0F766E)
+                      : const Color(0xFFDC2626),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLogSettings() {
+    return _Panel(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  '后端日志',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+                ),
+                const Spacer(),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    backendLog = await backend.readBackendLog();
+                    if (mounted) {
+                      setState(() {});
+                    }
+                  },
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('刷新'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF111827),
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: SingleChildScrollView(
+                  reverse: true,
+                  child: SelectableText(
+                    backendLog,
+                    style: const TextStyle(
+                      color: Color(0xFFD1FAE5),
+                      fontFamily: 'PuzzleLatin',
+                      fontSize: 12,
+                      height: 1.45,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _changeThreshold(int amount, StateSetter setSheetState) {
@@ -473,6 +1302,8 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     );
   }
 
+  // 保留旧弹窗作为触摸屏兼容入口，新界面统一使用设置页。
+  // ignore: unused_element
   Future<void> _showTuningSheet() async {
     tuningOpen = true;
     try {
@@ -710,6 +1541,175 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       tuningOpen = false;
       unawaited(_pollBackend());
     }
+  }
+}
+
+class _HeaderNavButton extends StatelessWidget {
+  const _HeaderNavButton({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        height: 38,
+        padding: const EdgeInsets.symmetric(horizontal: 13),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFFEFF6FF) : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: selected ? const Color(0xFFBFDBFE) : Colors.transparent,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              size: 17,
+              color: selected
+                  ? const Color(0xFF2563EB)
+                  : const Color(0xFF64748B),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: selected
+                    ? const Color(0xFF1D4ED8)
+                    : const Color(0xFF475569),
+                fontWeight: FontWeight.w800,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsTabButton extends StatelessWidget {
+  const _SettingsTabButton({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: SizedBox(
+        height: 46,
+        child: selected
+            ? FilledButton(onPressed: onTap, child: Text(label))
+            : OutlinedButton(onPressed: onTap, child: Text(label)),
+      ),
+    );
+  }
+}
+
+class _CoordinateField extends StatelessWidget {
+  const _CoordinateField({
+    required this.label,
+    required this.unit,
+    required this.controller,
+    this.allowDecimal = false,
+    this.numeric = true,
+  });
+
+  final String label;
+  final String unit;
+  final TextEditingController controller;
+  final bool allowDecimal;
+  final bool numeric;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: Color(0xFF334155),
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: controller,
+          keyboardType: numeric
+              ? TextInputType.numberWithOptions(
+                  signed: true,
+                  decimal: allowDecimal,
+                )
+              : TextInputType.text,
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: const Color(0xFFF8FAFC),
+            suffixText: unit,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFFD6DEE8)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFFD6DEE8)),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ConnectionRow extends StatelessWidget {
+  const _ConnectionRow({
+    required this.connected,
+    required this.connectedText,
+    required this.disconnectedText,
+  });
+
+  final bool connected;
+  final String connectedText;
+  final String disconnectedText;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.circle,
+          size: 10,
+          color: connected ? const Color(0xFF10A37F) : const Color(0xFFEF4444),
+        ),
+        const SizedBox(width: 7),
+        Text(
+          connected ? connectedText : disconnectedText,
+          style: const TextStyle(
+            color: Color(0xFF334155),
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    );
   }
 }
 
