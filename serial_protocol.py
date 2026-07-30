@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import json
+import math
 import os
 import struct
 import threading
@@ -62,9 +63,13 @@ class SerialController:
         self.position_valid = False
         self.visual_a = None
         self.visual_b = None
+        self.visual_c = None
         self.platform_a = None
         self.platform_b = None
+        self.platform_c = None
         self.calibration_valid = False
+        self.affine = None
+        self.affine_determinant = 0.0
         self.scale_x = 0.0
         self.scale_y = 0.0
         self._lock = threading.RLock()
@@ -95,8 +100,10 @@ class SerialController:
         self.place_z = int(settings.get("place_z", self.place_z))
         self.visual_a = settings.get("visual_a")
         self.visual_b = settings.get("visual_b")
+        self.visual_c = settings.get("visual_c")
         self.platform_a = settings.get("platform_a")
         self.platform_b = settings.get("platform_b")
+        self.platform_c = settings.get("platform_c")
         self._calculate_calibration(save=False)
 
     def _save_settings(self):
@@ -107,8 +114,10 @@ class SerialController:
             "place_z": self.place_z,
             "visual_a": self.visual_a,
             "visual_b": self.visual_b,
+            "visual_c": self.visual_c,
             "platform_a": self.platform_a,
             "platform_b": self.platform_b,
+            "platform_c": self.platform_c,
         }
         temporary = "%s.%d.tmp" % (
             self.settings_path,
@@ -337,8 +346,10 @@ class SerialController:
         point = [float(x), float(y)]
         if name == "a":
             self.visual_a = point
-        else:
+        elif name == "b":
             self.visual_b = point
+        else:
+            self.visual_c = point
         self.calibration_valid = False
         self._save_settings()
         self._set_status("已记录视觉点%s" % name.upper())
@@ -349,36 +360,111 @@ class SerialController:
         point = [self.current_x, self.current_y]
         if name == "a":
             self.platform_a = point
-        else:
+        elif name == "b":
             self.platform_b = point
+        else:
+            self.platform_c = point
         self.calibration_valid = False
         self._save_settings()
         self._set_status("已记录平台点%s" % name.upper())
         return True
 
+    @staticmethod
+    def _triangle_quality(points):
+        ax, ay = points[0]
+        bx, by = points[1]
+        cx, cy = points[2]
+        twice_area = abs(
+            (bx - ax) * (cy - ay)
+            - (by - ay) * (cx - ax)
+        )
+        edge_squares = (
+            (bx - ax) ** 2 + (by - ay) ** 2,
+            (cx - ax) ** 2 + (cy - ay) ** 2,
+            (cx - bx) ** 2 + (cy - by) ** 2,
+        )
+        longest_edge_square = max(edge_squares)
+        if longest_edge_square < 1e-9:
+            return 0.0
+        return twice_area / longest_edge_square
+
+    @staticmethod
+    def _solve_3x3(matrix, values):
+        rows = [
+            [float(value) for value in matrix[row]]
+            + [float(values[row])]
+            for row in range(3)
+        ]
+        for column in range(3):
+            pivot = max(
+                range(column, 3),
+                key=lambda row: abs(rows[row][column]),
+            )
+            if abs(rows[pivot][column]) < 1e-9:
+                return None
+            rows[column], rows[pivot] = rows[pivot], rows[column]
+            divisor = rows[column][column]
+            rows[column] = [value / divisor for value in rows[column]]
+            for row in range(3):
+                if row == column:
+                    continue
+                factor = rows[row][column]
+                rows[row] = [
+                    rows[row][index] - factor * rows[column][index]
+                    for index in range(4)
+                ]
+        return [rows[row][3] for row in range(3)]
+
     def _calculate_calibration(self, save=True):
         self.calibration_valid = False
+        self.affine = None
+        self.affine_determinant = 0.0
         if not all(
             (
                 self.visual_a,
                 self.visual_b,
+                self.visual_c,
                 self.platform_a,
                 self.platform_b,
+                self.platform_c,
             )
         ):
             return False
-        visual_dx = float(self.visual_b[0]) - float(self.visual_a[0])
-        visual_dy = float(self.visual_b[1]) - float(self.visual_a[1])
-        if abs(visual_dx) < 5.0 or abs(visual_dy) < 5.0:
+        visual_points = (
+            self.visual_a,
+            self.visual_b,
+            self.visual_c,
+        )
+        platform_points = (
+            self.platform_a,
+            self.platform_b,
+            self.platform_c,
+        )
+        if (
+            self._triangle_quality(visual_points) < 0.05
+            or self._triangle_quality(platform_points) < 0.05
+        ):
             return False
-        self.scale_x = (
-            float(self.platform_b[0]) - float(self.platform_a[0])
-        ) / visual_dx
-        self.scale_y = (
-            float(self.platform_b[1]) - float(self.platform_a[1])
-        ) / visual_dy
+        visual_matrix = [
+            [float(point[0]), float(point[1]), 1.0]
+            for point in visual_points
+        ]
+        platform_x = [float(point[0]) for point in platform_points]
+        platform_y = [float(point[1]) for point in platform_points]
+        affine_x = self._solve_3x3(visual_matrix, platform_x)
+        affine_y = self._solve_3x3(visual_matrix, platform_y)
+        if affine_x is None or affine_y is None:
+            return False
+        self.affine = [affine_x, affine_y]
+        self.affine_determinant = (
+            affine_x[0] * affine_y[1]
+            - affine_x[1] * affine_y[0]
+        )
+        self.scale_x = math.hypot(affine_x[0], affine_y[0])
+        self.scale_y = math.hypot(affine_x[1], affine_y[1])
         self.calibration_valid = (
-            abs(self.scale_x) > 1e-9
+            abs(self.affine_determinant) > 1e-9
+            and abs(self.scale_x) > 1e-9
             and abs(self.scale_y) > 1e-9
         )
         if save:
@@ -387,22 +473,24 @@ class SerialController:
 
     def calculate_calibration(self):
         if self._calculate_calibration():
-            self._set_status("两点坐标系标定完成")
+            self._set_status("三点仿射标定完成")
             return True
         self._set_status(
-            "标定点不完整或距离过近",
-            "invalid calibration points",
+            "标定失败：请记录三个不共线点",
+            "three non-collinear points required",
         )
         return False
 
     def vision_to_platform(self, x, y):
-        if not self.calibration_valid:
+        if not self.calibration_valid or self.affine is None:
             raise RuntimeError("platform calibration required")
         return (
-            float(self.platform_a[0])
-            + (float(x) - float(self.visual_a[0])) * self.scale_x,
-            float(self.platform_a[1])
-            + (float(y) - float(self.visual_a[1])) * self.scale_y,
+            self.affine[0][0] * float(x)
+            + self.affine[0][1] * float(y)
+            + self.affine[0][2],
+            self.affine[1][0] * float(x)
+            + self.affine[1][1] * float(y)
+            + self.affine[1][2],
         )
 
     def send_motion_plan(self, motion_plan):
@@ -436,7 +524,7 @@ class SerialController:
                 place[1],
             )
             rotation = float(move["rotation"])
-            if self.scale_x * self.scale_y < 0:
+            if self.affine_determinant < 0:
                 rotation = -rotation
             payload = struct.pack(
                 "<BBBBiiiiiih",
@@ -484,9 +572,13 @@ class SerialController:
             "platform_position_valid": self.position_valid,
             "calibration_visual_a": self.visual_a,
             "calibration_visual_b": self.visual_b,
+            "calibration_visual_c": self.visual_c,
             "calibration_platform_a": self.platform_a,
             "calibration_platform_b": self.platform_b,
+            "calibration_platform_c": self.platform_c,
             "calibration_valid": self.calibration_valid,
             "calibration_scale_x": self.scale_x,
             "calibration_scale_y": self.scale_y,
+            "calibration_affine": self.affine,
+            "calibration_affine_determinant": self.affine_determinant,
         }

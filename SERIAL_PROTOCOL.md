@@ -98,21 +98,23 @@ Payload 第一个字节为需要重发数据包的 `SEQ`。
 树莓派等待回复 120ms，失败后最多重发 3 次。重发时保持原 SEQ，
 并设置 FLAGS.bit4。
 
-## 两点坐标标定
+## 三点仿射坐标标定
 
 树莓派记录：
 
 - A点：A4纸右上角的视觉像素坐标和平台坐标
 - B点：A4纸左下角的视觉像素坐标和平台坐标
+- C点：A4纸左上角的视觉像素坐标和平台坐标
 
-在图像XY轴与平台XY轴基本平行、透视较小时：
+三个点必须不共线。树莓派根据三组对应坐标计算二维仿射矩阵：
 
 ```text
-scale_x = (platform_b_x - platform_a_x) / (visual_b_x - visual_a_x)
-scale_y = (platform_b_y - platform_a_y) / (visual_b_y - visual_a_y)
-
-platform_x = platform_a_x + (visual_x - visual_a_x) * scale_x
-platform_y = platform_a_y + (visual_y - visual_a_y) * scale_y
+[platform_x]   [a b c] [visual_x]
+[platform_y] = [d e f] [visual_y]
+                        [   1    ]
 ```
+
+它可以同时补偿平移、旋转、X/Y 比例差异和轻微斜切。三个点近似
+共线时会拒绝保存，避免产生不稳定的坐标换算结果。
 
 自动抓取动作只有在标定完成后才允许发送。
