@@ -2093,6 +2093,102 @@ def best_effort_layout_score(layout):
     return score, report
 
 
+def build_last_resort_layout(pieces, roi):
+    """所有搜索器都无候选时，紧凑排列碎片并保证仍可输出无重叠方案。"""
+    polygons = [
+        normalize_polygon(piece["points"])
+        for piece in pieces
+    ]
+    total_area = sum(
+        abs(cv2.contourArea(polygon))
+        for polygon in polygons
+    )
+    if not 2 <= len(polygons) <= 4 or total_area < 100.0:
+        return None, 0.0, None
+
+    solve_scale = math.sqrt(4320.0 / total_area)
+    polygons = [
+        polygon * solve_scale
+        for polygon in polygons
+    ]
+    columns = len(polygons) if len(polygons) == 2 else 2
+    rows = (len(polygons) + columns - 1) // columns
+    sizes = []
+    local_polygons = []
+    for polygon in polygons:
+        minimum = np.min(polygon, axis=0)
+        local = polygon - minimum
+        local_polygons.append(local)
+        sizes.append(np.max(local, axis=0))
+
+    column_widths = [
+        max(
+            (
+                sizes[index][0]
+                for index in range(column, len(sizes), columns)
+            ),
+            default=0.0,
+        )
+        for column in range(columns)
+    ]
+    row_heights = [
+        max(
+            (
+                sizes[index][1]
+                for index in range(
+                    row * columns,
+                    min((row + 1) * columns, len(sizes)),
+                )
+            ),
+            default=0.0,
+        )
+        for row in range(rows)
+    ]
+    gap = 2.0
+    x_offsets = [
+        sum(column_widths[:column]) + column * gap
+        for column in range(columns)
+    ]
+    y_offsets = [
+        sum(row_heights[:row]) + row * gap
+        for row in range(rows)
+    ]
+    layout = {}
+    for piece_id, (polygon, size) in enumerate(
+        zip(local_polygons, sizes)
+    ):
+        row = piece_id // columns
+        column = piece_id % columns
+        offset = np.array(
+            [
+                x_offsets[column]
+                + (column_widths[column] - size[0]) * 0.5,
+                y_offsets[row]
+                + (row_heights[row] - size[1]) * 0.5,
+            ],
+            dtype=np.float32,
+        )
+        layout[piece_id] = polygon + offset
+
+    info = {
+        "solve_scale": solve_scale,
+        "method": "last-resort-grid",
+        "forced": True,
+        "boundary_safe": False,
+    }
+    prepared, repair_info = prepare_best_effort_layout(
+        layout,
+        info,
+        roi,
+    )
+    if prepared is None:
+        return None, 0.0, None
+    score, _ = best_effort_layout_score(prepared)
+    info["method"] = "last-resort-grid"
+    info["repair"] = repair_info
+    return prepared, score, info
+
+
 def build_motion_plan(pieces, fitted_layout):
     """
     计算每块拼片的吸取点、放置点和图像坐标系旋转角。
@@ -3079,6 +3175,17 @@ def solve_piece_set_worker(pieces, roi):
             solved_score = candidate_score
             solve_info = candidate_info
 
+    if solved_layout is None:
+        (
+            candidate_layout,
+            candidate_score,
+            candidate_info,
+        ) = build_last_resort_layout(pieces, roi)
+        if candidate_layout is not None:
+            solved_layout = candidate_layout
+            solved_score = candidate_score
+            solve_info = candidate_info
+
     return {
         "layout": solved_layout,
         "score": solved_score,
@@ -3186,9 +3293,7 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
     for fill_ratio, position_step in (
         (0.92, 3),
         (0.88, 4),
-        (0.84, 3),
-        (0.80, 4),
-        (0.76, 3),
+        (0.80, 3),
         (0.72, 2),
     ):
         (
@@ -3225,68 +3330,60 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
                 solve_info,
                 roi,
             )
+            strict_candidate = prepared is not None
             if prepared is None:
-                first_repair = repair_info
-                solve_info["forced"] = True
-                prepared, repair_info = prepare_layout_for_execution(
+                prepared, repair_info = prepare_best_effort_layout(
                     layout,
                     solve_info,
                     roi,
                 )
                 if prepared is None:
                     print(
-                        "CARD_CANDIDATE_REJECT fill=%.2f order=%s %s %s"
+                        "CARD_CANDIDATE_REJECT fill=%.2f order=%s %s"
                         % (
                             fill_ratio,
                             assignment,
-                            first_repair,
                             repair_info,
                         ),
                         flush=True,
                     )
                     continue
+                solve_info["method"] = "card-best-effort"
+                solve_info["execution_mode"] = "BEST"
 
             initial_geometry = (
                 solve_info["constraint_report"]["coverage"] * 0.58
                 + solve_info["constraint_report"]["internal_match"] * 0.42
             )
-            refined_layout, refined_report = (
-                refine_card_layout_geometry(layout)
-            )
-            refined_info = dict(base_info)
-            refined_info["boundary_safe"] = False
-            refined_info["method"] = "card-cpp-rerank"
-            if solve_info.get("forced", False):
-                refined_info["forced"] = True
-            refined_prepared, _ = prepare_layout_for_execution(
-                refined_layout,
-                refined_info,
-                roi,
-            )
-            if refined_prepared is None:
-                refined_info["forced"] = True
+            if strict_candidate:
+                refined_layout, refined_report = (
+                    refine_card_layout_geometry(layout)
+                )
+                refined_info = dict(base_info)
+                refined_info["boundary_safe"] = False
+                refined_info["method"] = "card-cpp-rerank"
                 refined_prepared, _ = prepare_layout_for_execution(
                     refined_layout,
                     refined_info,
                     roi,
                 )
-            if refined_prepared is not None:
-                refined_geometry = (
-                    refined_info["constraint_report"]["coverage"] * 0.58
-                    + refined_info["constraint_report"]["internal_match"]
-                    * 0.42
-                )
-                if refined_geometry > initial_geometry + 1e-4:
-                    prepared = refined_prepared
-                    solve_info = refined_info
-                    solve_info["geometry_refined"] = True
-                    solve_info["refined_raw_report"] = {
-                        "coverage": refined_report["coverage"],
-                        "overlap": refined_report["overlap"],
-                        "internal_match": refined_report[
-                            "internal_match"
-                        ],
-                    }
+                if refined_prepared is not None:
+                    refined_geometry = (
+                        refined_info["constraint_report"]["coverage"] * 0.58
+                        + refined_info["constraint_report"]["internal_match"]
+                        * 0.42
+                    )
+                    if refined_geometry > initial_geometry + 1e-4:
+                        prepared = refined_prepared
+                        solve_info = refined_info
+                        solve_info["geometry_refined"] = True
+                        solve_info["refined_raw_report"] = {
+                            "coverage": refined_report["coverage"],
+                            "overlap": refined_report["overlap"],
+                            "internal_match": refined_report[
+                                "internal_match"
+                            ],
+                        }
 
             pattern_layout = close_card_pattern_layout(
                 prepared,
@@ -3366,9 +3463,11 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
 
         if (
             best is not None
-            and best[2]["constraint_report"]["coverage"] >= 0.88
-            and best[2]["constraint_report"]["internal_match"] >= 0.80
-            and best[2].get("corner_diagonal_score", 0.0) >= 0.80
+            and best[0] >= 0.84
+            and best[2]["constraint_report"]["coverage"] >= 0.86
+            and best[2]["constraint_report"]["internal_match"] >= 0.60
+            and best[2].get("global_pattern_score", 0.0) >= 0.68
+            and best[2].get("corner_diagonal_score", 0.0) >= 0.82
             and (
                 best[2].get("rank_index_confidence", 0.0) < 0.55
                 or best[2].get("rank_index_valid") is True
@@ -3407,13 +3506,17 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
             result["info"],
             roi,
         )
-        result["layout"] = prepared
         if prepared is None:
-            print(
-                "CARD_REJECT %s" % repair_info,
-                flush=True,
+            prepared, repair_info = prepare_best_effort_layout(
+                result["layout"],
+                result["info"],
+                roi,
             )
-        else:
+            if prepared is not None:
+                result["info"]["method"] = "card-face-best-effort"
+                result["info"]["execution_mode"] = "BEST"
+        result["layout"] = prepared
+        if prepared is not None:
             pattern_layout = close_card_pattern_layout(
                 prepared,
                 result["info"],
@@ -3424,6 +3527,26 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
                 pattern_layout,
                 fill_rectangle=True,
             )
+    if result["layout"] is None:
+        geometry_result = solve_piece_set_worker(pieces, roi)
+        if geometry_result["layout"] is not None:
+            geometry_result["info"]["method"] = "card-geometry-best"
+            geometry_result["info"]["execution_mode"] = "BEST"
+            pattern_layout = close_card_pattern_layout(
+                geometry_result["layout"],
+                geometry_result["info"],
+            )
+            geometry_result["preview_rgb"] = render_layout_preview(
+                frame_rgb,
+                pieces,
+                pattern_layout,
+                fill_rectangle=True,
+            )
+            geometry_result["mode"] = "CARD"
+            geometry_result["elapsed_ms"] = (
+                time.monotonic() - started
+            ) * 1000.0
+            return geometry_result
     result["elapsed_ms"] = (
         time.monotonic() - started
     ) * 1000.0
@@ -4024,7 +4147,11 @@ def main():
                                     move["place"][1],
                                 )
                         if result_mode == "CARD":
-                            solver_message = "CARD RECT"
+                            solver_message = (
+                                "CARD BEST"
+                                if solve_info.get("execution_mode") == "BEST"
+                                else "CARD RECT"
+                            )
                         elif solve_info.get("execution_mode") == "RECT":
                             solver_message = "SOLVE RECT"
                         elif solve_info.get("execution_mode") == "BEST":

@@ -104,6 +104,40 @@ def main():
             }
         )
 
+    if "--worker" in sys.argv:
+        from main import solve_card_piece_set_worker
+
+        result = solve_card_piece_set_worker(
+            frame_rgb,
+            pieces,
+            tuple(metadata["roi"]),
+        )
+        if result["layout"] is None:
+            raise RuntimeError("card worker returned no layout")
+        if result.get("preview_rgb") is None:
+            raise RuntimeError("card worker returned no preview")
+        output_path = (
+            os.path.splitext(metadata_path)[0]
+            + "_worker.png"
+        )
+        cv2.imwrite(
+            output_path,
+            cv2.cvtColor(result["preview_rgb"], cv2.COLOR_RGB2BGR),
+        )
+        print(
+            "CARD_WORKER_OK score=%.3f mode=%s method=%s "
+            "nodes=%d time=%.1fms output=%s"
+            % (
+                result["score"],
+                result["info"]["execution_mode"],
+                result["info"]["method"],
+                result["nodes"],
+                result["elapsed_ms"],
+                output_path,
+            )
+        )
+        return
+
     if "--swaps" in sys.argv:
         from cpp_rectangle_solver import solve as solve_cpp
         from main import prepare_layout_for_execution
