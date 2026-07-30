@@ -48,6 +48,7 @@ class PuzzleDashboard extends StatefulWidget {
 class _PuzzleDashboardState extends State<PuzzleDashboard> {
   final BackendBridge backend = BackendBridge();
   final ValueNotifier<Uint8List?> binaryPreview = ValueNotifier(null);
+  final ScrollController calibrationScrollController = ScrollController();
   final TextEditingController serialPortController = TextEditingController(
     text: '/dev/serial0',
   );
@@ -148,6 +149,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     pollTimer?.cancel();
     settingsTimer?.cancel();
     binaryPreview.dispose();
+    calibrationScrollController.dispose();
     serialPortController.dispose();
     serialBaudController.dispose();
     serialPickZController.dispose();
@@ -1453,79 +1455,86 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
 
   Widget _buildCalibrationSettings() {
     return _Panel(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SizedBox(
-              width: 300,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    '视觉点选择',
-                    style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    calibrationTarget == 'a'
-                        ? '当前：点击 A4 纸右上角'
-                        : '当前：点击 A4 纸左下角',
-                    style: const TextStyle(
-                      color: Color(0xFF2563EB),
-                      fontWeight: FontWeight.w800,
+      child: Scrollbar(
+        controller: calibrationScrollController,
+        thumbVisibility: true,
+        child: SingleChildScrollView(
+          controller: calibrationScrollController,
+          padding: const EdgeInsets.fromLTRB(20, 20, 28, 20),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 300,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '视觉点选择',
+                      style: TextStyle(
+                        fontSize: 19,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  Expanded(
-                    child: Center(
-                      child: AspectRatio(
-                        aspectRatio: 9 / 16,
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            return GestureDetector(
-                              onTapDown: cameraOnline
-                                  ? (details) => _recordVisualCalibration(
-                                      details,
-                                      constraints.biggest,
-                                    )
-                                  : null,
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(14),
-                                child: ColoredBox(
-                                  color: const Color(0xFF111827),
-                                  child: cameraFrame == null || !cameraOnline
-                                      ? const Center(
-                                          child: Text(
-                                            '摄像头离线\n上线后可选择视觉点',
-                                            textAlign: TextAlign.center,
-                                            style: TextStyle(
-                                              color: Color(0xFFCBD5E1),
-                                              height: 1.6,
+                    const SizedBox(height: 6),
+                    Text(
+                      calibrationTarget == 'a'
+                          ? '当前：点击 A4 纸右上角'
+                          : '当前：点击 A4 纸左下角',
+                      style: const TextStyle(
+                        color: Color(0xFF2563EB),
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      height: 520,
+                      child: Center(
+                        child: AspectRatio(
+                          aspectRatio: 9 / 16,
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              return GestureDetector(
+                                onTapDown: cameraOnline
+                                    ? (details) => _recordVisualCalibration(
+                                        details,
+                                        constraints.biggest,
+                                      )
+                                    : null,
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(14),
+                                  child: ColoredBox(
+                                    color: const Color(0xFF111827),
+                                    child: cameraFrame == null || !cameraOnline
+                                        ? const Center(
+                                            child: Text(
+                                              '摄像头离线\n上线后可选择视觉点',
+                                              textAlign: TextAlign.center,
+                                              style: TextStyle(
+                                                color: Color(0xFFCBD5E1),
+                                                height: 1.6,
+                                              ),
                                             ),
+                                          )
+                                        : Image.memory(
+                                            cameraFrame!,
+                                            fit: BoxFit.fill,
+                                            gaplessPlayback: true,
+                                            filterQuality: FilterQuality.low,
                                           ),
-                                        )
-                                      : Image.memory(
-                                          cameraFrame!,
-                                          fit: BoxFit.fill,
-                                          gaplessPlayback: true,
-                                          filterQuality: FilterQuality.low,
-                                        ),
+                                  ),
                                 ),
-                              ),
-                            );
-                          },
+                              );
+                            },
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(width: 24),
-            Expanded(
-              child: SingleChildScrollView(
+              const SizedBox(width: 24),
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1657,8 +1666,8 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                   ],
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
