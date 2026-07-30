@@ -2016,6 +2016,83 @@ def prepare_layout_for_execution(layout, solve_info, roi):
     return prepared, repair_info
 
 
+def prepare_best_effort_layout(layout, solve_info, roi):
+    """比赛保底：严格矩形无解时，保留无重叠且几何评分最高的候选。"""
+    report = evaluate_layout(
+        layout,
+        edge_tolerance_ratio=0.035,
+    )
+    prepared = report["normalized_layout"]
+    repair_info = {
+        "valid": True,
+        "forced": True,
+        "stage": "best-effort",
+        "reasons": report["competition_reasons"],
+        "maximum_move": 0.0,
+        "gap": {
+            "applied": False,
+            "reason": "preserve-best-candidate",
+        },
+    }
+    if layout_has_interior_overlap(prepared):
+        prepared, repair_info = repair_layout_for_competition(
+            prepared,
+            gap_pixels=max(1.0, roi[3] / 297.0) * solve_info[
+                "solve_scale"
+            ],
+            force=True,
+        )
+    if prepared is None or layout_has_interior_overlap(prepared):
+        return None, {
+            "valid": False,
+            "stage": "best-effort",
+            "reasons": ["overlap"],
+        }
+
+    report = evaluate_layout(
+        prepared,
+        edge_tolerance_ratio=0.05,
+    )
+    solve_info["width"] = report["width"]
+    solve_info["height"] = report["height"]
+    solve_info["ratio"] = report["width"] / max(1.0, report["height"])
+    solve_info["method"] = "cpp-best-effort"
+    solve_info["execution_mode"] = "BEST"
+    solve_info["forced"] = True
+    solve_info["constraint_report"] = {
+        "coverage": report["coverage"],
+        "overlap": report["overlap"],
+        "outer_piece_ratio": report["outer_piece_ratio"],
+        "internal_match": report["internal_match"],
+        "boundary_min_coverage": report["boundary_min_coverage"],
+        "boundary_max_gap_ratio": report["boundary_max_gap_ratio"],
+        "boundary_angle_error": report["boundary_angle_error"],
+    }
+    solve_info["repair"] = repair_info
+    return prepared, repair_info
+
+
+def best_effort_layout_score(layout):
+    report = evaluate_layout(
+        layout,
+        edge_tolerance_ratio=0.035,
+    )
+    angle_score = max(
+        0.0,
+        1.0 - report["boundary_angle_error"] / 15.0,
+    )
+    score = (
+        report["coverage"] * 0.32
+        + report["internal_match"] * 0.28
+        + report["boundary_min_coverage"] * 0.22
+        + (1.0 - report["boundary_max_gap_ratio"]) * 0.10
+        + angle_score * 0.05
+        + report["corners"] * 0.03
+        - report["overlap"] * 8.0
+    )
+    return score, report
+
+
 def build_motion_plan(pieces, fitted_layout):
     """
     计算每块拼片的吸取点、放置点和图像坐标系旋转角。
@@ -2747,14 +2824,15 @@ def solve_piece_set_worker(pieces, roi):
         flush=True,
     )
     best_cpp_result = None
-    for fill_ratio, position_step in (
+    best_effort_result = None
+    search_settings = (
         (0.96, 4),
         (0.88, 4),
-        (0.80, 4),
         (0.80, 3),
-        (0.76, 3),
         (0.72, 2),
-    ):
+    )
+
+    for fill_ratio, position_step in search_settings:
         (
             candidate_layout,
             candidate_score,
@@ -2770,6 +2848,37 @@ def solve_piece_set_worker(pieces, roi):
         if candidate_layout is None:
             continue
         candidate_info = dict(candidate_info)
+        fallback_score, fallback_report = best_effort_layout_score(
+            candidate_layout
+        )
+        if (
+            not layout_has_interior_overlap(candidate_layout)
+            and (
+                best_effort_result is None
+                or fallback_score > best_effort_result[0]
+            )
+        ):
+            fallback_info = dict(candidate_info)
+            fallback_info["best_effort_score"] = fallback_score
+            fallback_info["best_effort_report"] = {
+                "coverage": fallback_report["coverage"],
+                "internal_match": fallback_report["internal_match"],
+                "boundary_min_coverage": fallback_report[
+                    "boundary_min_coverage"
+                ],
+                "boundary_max_gap_ratio": fallback_report[
+                    "boundary_max_gap_ratio"
+                ],
+                "boundary_angle_error": fallback_report[
+                    "boundary_angle_error"
+                ],
+            }
+            best_effort_result = (
+                fallback_score,
+                candidate_score,
+                candidate_layout,
+                fallback_info,
+            )
         candidate_layout, repair_info = (
             prepare_layout_for_execution(
                 candidate_layout,
@@ -2787,14 +2896,39 @@ def solve_piece_set_worker(pieces, roi):
                     candidate_layout,
                     candidate_info,
                 )
+            break
+
+        if best_effort_result is not None:
+            fallback_report = best_effort_result[3][
+                "best_effort_report"
+            ]
             if (
-                candidate_info.get("internal_quality", 0.0) >= 0.50
-                and candidate_info.get("boundary_quality", 0.0) >= 0.70
+                best_effort_result[0] >= 0.78
+                and fallback_report["coverage"] >= 0.86
+                and fallback_report["internal_match"] >= 0.55
+                and fallback_report["boundary_min_coverage"] >= 0.78
+                and fallback_report["boundary_max_gap_ratio"] <= 0.22
             ):
                 break
 
     if best_cpp_result is not None:
         solved_score, solved_layout, solve_info = best_cpp_result
+    elif best_effort_result is not None:
+        (
+            fallback_score,
+            candidate_score,
+            candidate_layout,
+            candidate_info,
+        ) = best_effort_result
+        candidate_layout, repair_info = prepare_best_effort_layout(
+            candidate_layout,
+            candidate_info,
+            roi,
+        )
+        if candidate_layout is not None:
+            solved_score = fallback_score
+            solved_layout = candidate_layout
+            solve_info = candidate_info
 
     if solved_layout is None and 2 <= len(pieces) <= 4:
         (
@@ -3891,25 +4025,16 @@ def main():
                                 )
                         if result_mode == "CARD":
                             solver_message = "CARD RECT"
+                        elif solve_info.get("execution_mode") == "RECT":
+                            solver_message = "SOLVE RECT"
+                        elif solve_info.get("execution_mode") == "BEST":
+                            solver_message = "SOLVE BEST"
+                        elif solve_info.get("execution_mode") == "ASSUME":
+                            solver_message = "SOLVE BEST G1.0"
+                        elif solve_info["method"] == "legacy-cover":
+                            solver_message = "SOLVE COVER G1.0"
                         else:
-                            solver_message = (
-                                "SOLVE RECT"
-                                if solve_info.get("execution_mode")
-                                == "RECT"
-                                else (
-                                    "SOLVE BEST G1.0"
-                                    if solve_info.get(
-                                        "execution_mode"
-                                    )
-                                    == "ASSUME"
-                                    else (
-                                        "SOLVE COVER G1.0"
-                                        if solve_info["method"]
-                                        == "legacy-cover"
-                                        else "SOLVE HYB G1.0"
-                                    )
-                                )
-                            )
+                            solver_message = "SOLVE HYB G1.0"
                         print_motion_plan(motion_plan)
                 print(
                     "%s score=%.3f ratio=%.3f tested=%d "

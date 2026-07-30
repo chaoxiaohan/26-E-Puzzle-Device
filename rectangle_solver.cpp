@@ -1169,16 +1169,6 @@ static SearchResult search_ratio(
             height
         );
         double coverage = double(state.covered) / pixel_count;
-        if (
-            coverage < 0.82
-            || quality.internal < 0.42
-            || quality.boundary_min < 0.88
-            || quality.boundary_max_gap > 0.12
-            || quality.boundary_angle_error > 7.0
-            || quality.connected < 0.5
-        ) {
-            continue;
-        }
         double score = (
             coverage * 1.35
             + quality.internal * 0.30
