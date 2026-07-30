@@ -79,6 +79,8 @@ def main():
     same_side_card = rank_card.copy()
     same_side_card[-48:, -64:] = 245
     same_side_card[-48:, :64] = corner_patch
+    wrong_orientation_card = rank_card.copy()
+    wrong_orientation_card[-48:, -64:] = rank_card[:48, :64]
     correct_rank = score_rank_index_diagonal(
         rank_card,
         rank_pieces,
@@ -89,14 +91,34 @@ def main():
         rank_pieces,
         correct_rank_layout,
     )
+    wrong_orientation_rank = score_rank_index_diagonal(
+        wrong_orientation_card,
+        rank_pieces,
+        correct_rank_layout,
+    )
     assert correct_rank["confidence"] >= 0.55, correct_rank
     assert correct_rank["valid"] is True, correct_rank
+    assert correct_rank["orientation_valid"] is True, correct_rank
+    assert correct_rank["orientation_rotation"] == 180, correct_rank
     assert same_side_rank["confidence"] >= 0.55, same_side_rank
     assert same_side_rank["valid"] is False, same_side_rank
+    assert wrong_orientation_rank["position_valid"] is True, (
+        wrong_orientation_rank
+    )
+    assert wrong_orientation_rank["orientation_valid"] is False, (
+        wrong_orientation_rank
+    )
+    assert wrong_orientation_rank["valid"] is False, (
+        wrong_orientation_rank
+    )
     assert correct_rank["score"] > same_side_rank["score"] + 0.5, (
         correct_rank,
         same_side_rank,
     )
+    assert (
+        correct_rank["score"]
+        > wrong_orientation_rank["score"] + 0.5
+    ), (correct_rank, wrong_orientation_rank)
 
     card = np.full((160, 250, 3), 245, dtype=np.uint8)
     cv2.line(card, (18, 20), (232, 142), (170, 20, 25), 11)
