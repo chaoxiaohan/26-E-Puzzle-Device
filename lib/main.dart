@@ -43,12 +43,13 @@ class PuzzleDashboard extends StatefulWidget {
 
 class _PuzzleDashboardState extends State<PuzzleDashboard> {
   final BackendBridge backend = BackendBridge();
-  final ValueNotifier<int> tuningRevision = ValueNotifier(0);
+  final ValueNotifier<Uint8List?> binaryPreview = ValueNotifier(null);
   PuzzleMode mode = PuzzleMode.cardPuzzle;
   bool solving = false;
   bool hasResult = false;
   bool connected = false;
   bool polling = false;
+  bool tuningOpen = false;
   bool initializedFromBackend = false;
   bool autoThreshold = true;
   int threshold = 128;
@@ -61,7 +62,6 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   String solverMessage = '';
   String lastCaptureName = '';
   Uint8List? cameraFrame;
-  Uint8List? binaryFrame;
   Uint8List? resultFrame;
   Timer? pollTimer;
   Timer? settingsTimer;
@@ -102,7 +102,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   void dispose() {
     pollTimer?.cancel();
     settingsTimer?.cancel();
-    tuningRevision.dispose();
+    binaryPreview.dispose();
     super.dispose();
   }
 
@@ -152,12 +152,14 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       score = snapshot.score;
       solverMs = snapshot.solverMs;
       solverMessage = snapshot.solverMessage;
-      autoThreshold = snapshot.autoThreshold;
-      threshold = snapshot.autoThreshold
-          ? snapshot.currentThreshold
-          : snapshot.manualThreshold;
-      polarityMode = snapshot.polarityMode;
-      minPieceArea = snapshot.minPieceArea;
+      if (!tuningOpen) {
+        autoThreshold = snapshot.autoThreshold;
+        threshold = snapshot.autoThreshold
+            ? snapshot.currentThreshold
+            : snapshot.manualThreshold;
+        polarityMode = snapshot.polarityMode;
+        minPieceArea = snapshot.minPieceArea;
+      }
       lastCaptureName = snapshot.lastCaptureName;
       if (!initializedFromBackend) {
         mode = _parseMode(snapshot.mode);
@@ -166,16 +168,15 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       if (update.frame != null) {
         cameraFrame = update.frame;
       }
-      if (update.binary != null) {
-        binaryFrame = update.binary;
-      }
       if (update.result != null) {
         resultFrame = update.result;
       } else if (update.clearResult) {
         resultFrame = null;
       }
     });
-    tuningRevision.value++;
+    if (update.binary != null) {
+      binaryPreview.value = update.binary;
+    }
 
     if (captureChanged) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -440,26 +441,24 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   }
 
   void _changeThreshold(int amount, StateSetter setSheetState) {
-    setState(() {
+    setSheetState(() {
       threshold = (threshold + amount).clamp(0, 255);
       autoThreshold = false;
     });
-    setSheetState(() {});
     _queueSettings();
   }
 
   void _changeArea(int amount, StateSetter setSheetState) {
-    setState(() {
+    setSheetState(() {
       minPieceArea = (minPieceArea + amount).clamp(100, 50000);
     });
-    setSheetState(() {});
     _queueSettings();
   }
 
   void _queueSettings() {
     settingsTimer?.cancel();
     settingsTimer = Timer(
-      const Duration(milliseconds: 60),
+      const Duration(milliseconds: 110),
       () => unawaited(
         backend.sendControl(
           autoThreshold: autoThreshold,
@@ -472,214 +471,219 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   }
 
   Future<void> _showTuningSheet() async {
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (context) {
-        return ValueListenableBuilder<int>(
-          valueListenable: tuningRevision,
-          builder: (context, revision, child) {
-            void setSheetState(VoidCallback callback) {
-              callback();
-              tuningRevision.value++;
-            }
-
-            return Container(
-              height: 430,
-              margin: const EdgeInsets.all(12),
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x260F172A),
-                    blurRadius: 30,
-                    offset: Offset(0, -4),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    flex: 5,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          '二值化实时预览',
-                          style: TextStyle(
-                            color: Color(0xFF111827),
-                            fontSize: 17,
-                            fontWeight: FontWeight.w800,
+    tuningOpen = true;
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        isScrollControlled: true,
+        builder: (context) {
+          return StatefulBuilder(
+            builder: (context, setSheetState) {
+              return Container(
+                height: 430,
+                margin: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x260F172A),
+                      blurRadius: 30,
+                      offset: Offset(0, -4),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: 5,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            '二值化实时预览',
+                            style: TextStyle(
+                              color: Color(0xFF111827),
+                              fontSize: 17,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 12),
-                        Expanded(
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(14),
-                            child: ColoredBox(
-                              color: const Color(0xFF111827),
-                              child: binaryFrame == null
-                                  ? const SizedBox.expand()
-                                  : Image.memory(
-                                      binaryFrame!,
+                          const SizedBox(height: 12),
+                          Expanded(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(14),
+                              child: ColoredBox(
+                                color: const Color(0xFF111827),
+                                child: ValueListenableBuilder<Uint8List?>(
+                                  valueListenable: binaryPreview,
+                                  builder: (context, bytes, child) {
+                                    if (bytes == null) {
+                                      return const SizedBox.expand();
+                                    }
+                                    return Image.memory(
+                                      bytes,
                                       fit: BoxFit.contain,
                                       gaplessPlayback: true,
                                       filterQuality: FilterQuality.low,
-                                    ),
+                                    );
+                                  },
+                                ),
+                              ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 22),
-                  Expanded(
-                    flex: 6,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            const Text(
-                              '检测参数',
-                              style: TextStyle(
-                                color: Color(0xFF111827),
-                                fontSize: 19,
-                                fontWeight: FontWeight.w800,
+                    const SizedBox(width: 22),
+                    Expanded(
+                      flex: 6,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Text(
+                                '检测参数',
+                                style: TextStyle(
+                                  color: Color(0xFF111827),
+                                  fontSize: 19,
+                                  fontWeight: FontWeight.w800,
+                                ),
                               ),
-                            ),
-                            const Spacer(),
-                            TextButton(
-                              onPressed: () => Navigator.pop(context),
-                              child: const Text('完成'),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        Row(
-                          children: [
-                            const Text(
-                              '二值化阈值',
-                              style: TextStyle(
-                                color: Color(0xFF334155),
-                                fontWeight: FontWeight.w700,
+                              const Spacer(),
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text('完成'),
                               ),
-                            ),
-                            const Spacer(),
-                            FilterChip(
-                              selected: autoThreshold,
-                              label: const Text('自动 OTSU'),
-                              onSelected: (_) {
-                                setState(() => autoThreshold = true);
-                                setSheetState(() {});
-                                _queueSettings();
-                              },
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 7),
-                        Row(
-                          children: [
-                            _AdjustButton(
-                              label: '-5',
-                              onPressed: () =>
-                                  _changeThreshold(-5, setSheetState),
-                            ),
-                            const SizedBox(width: 9),
-                            Expanded(
-                              child: _ValueBox(
-                                value: threshold.toString(),
-                                active: !autoThreshold,
-                              ),
-                            ),
-                            const SizedBox(width: 9),
-                            _AdjustButton(
-                              label: '+5',
-                              onPressed: () =>
-                                  _changeThreshold(5, setSheetState),
-                            ),
-                          ],
-                        ),
-                        Slider(
-                          value: threshold.toDouble(),
-                          min: 0,
-                          max: 255,
-                          onChanged: (value) {
-                            setState(() {
-                              threshold = value.round();
-                              autoThreshold = false;
-                            });
-                            setSheetState(() {});
-                            _queueSettings();
-                          },
-                        ),
-                        const Text(
-                          '目标极性',
-                          style: TextStyle(
-                            color: Color(0xFF334155),
-                            fontWeight: FontWeight.w700,
+                            ],
                           ),
-                        ),
-                        const SizedBox(height: 7),
-                        SegmentedButton<String>(
-                          segments: const [
-                            ButtonSegment(value: 'AUTO', label: Text('自动')),
-                            ButtonSegment(value: 'LIGHT', label: Text('亮色')),
-                            ButtonSegment(value: 'DARK', label: Text('暗色')),
-                          ],
-                          selected: {polarityMode},
-                          showSelectedIcon: false,
-                          onSelectionChanged: (values) {
-                            setState(() {
-                              polarityMode = values.first;
-                            });
-                            setSheetState(() {});
-                            _queueSettings();
-                          },
-                        ),
-                        const SizedBox(height: 15),
-                        const Text(
-                          '最小碎片面积',
-                          style: TextStyle(
-                            color: Color(0xFF334155),
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(height: 7),
-                        Row(
-                          children: [
-                            _AdjustButton(
-                              label: '-250',
-                              onPressed: () => _changeArea(-250, setSheetState),
-                            ),
-                            const SizedBox(width: 9),
-                            Expanded(
-                              child: _ValueBox(
-                                value: minPieceArea.toString(),
-                                active: true,
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              const Text(
+                                '二值化阈值',
+                                style: TextStyle(
+                                  color: Color(0xFF334155),
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
+                              const Spacer(),
+                              FilterChip(
+                                selected: autoThreshold,
+                                label: const Text('自动 OTSU'),
+                                onSelected: (_) {
+                                  setSheetState(() => autoThreshold = true);
+                                  _queueSettings();
+                                },
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 7),
+                          Row(
+                            children: [
+                              _AdjustButton(
+                                label: '-5',
+                                onPressed: () =>
+                                    _changeThreshold(-5, setSheetState),
+                              ),
+                              const SizedBox(width: 9),
+                              Expanded(
+                                child: _ValueBox(
+                                  value: threshold.toString(),
+                                  active: !autoThreshold,
+                                ),
+                              ),
+                              const SizedBox(width: 9),
+                              _AdjustButton(
+                                label: '+5',
+                                onPressed: () =>
+                                    _changeThreshold(5, setSheetState),
+                              ),
+                            ],
+                          ),
+                          Slider(
+                            value: threshold.toDouble(),
+                            min: 0,
+                            max: 255,
+                            onChanged: (value) {
+                              setSheetState(() {
+                                threshold = value.round();
+                                autoThreshold = false;
+                              });
+                              _queueSettings();
+                            },
+                          ),
+                          const Text(
+                            '目标极性',
+                            style: TextStyle(
+                              color: Color(0xFF334155),
+                              fontWeight: FontWeight.w700,
                             ),
-                            const SizedBox(width: 9),
-                            _AdjustButton(
-                              label: '+250',
-                              onPressed: () => _changeArea(250, setSheetState),
+                          ),
+                          const SizedBox(height: 7),
+                          SegmentedButton<String>(
+                            segments: const [
+                              ButtonSegment(value: 'AUTO', label: Text('自动')),
+                              ButtonSegment(value: 'LIGHT', label: Text('亮色')),
+                              ButtonSegment(value: 'DARK', label: Text('暗色')),
+                            ],
+                            selected: {polarityMode},
+                            showSelectedIcon: false,
+                            onSelectionChanged: (values) {
+                              setSheetState(() {
+                                polarityMode = values.first;
+                              });
+                              _queueSettings();
+                            },
+                          ),
+                          const SizedBox(height: 15),
+                          const Text(
+                            '最小碎片面积',
+                            style: TextStyle(
+                              color: Color(0xFF334155),
+                              fontWeight: FontWeight.w700,
                             ),
-                          ],
-                        ),
-                      ],
+                          ),
+                          const SizedBox(height: 7),
+                          Row(
+                            children: [
+                              _AdjustButton(
+                                label: '-250',
+                                onPressed: () =>
+                                    _changeArea(-250, setSheetState),
+                              ),
+                              const SizedBox(width: 9),
+                              Expanded(
+                                child: _ValueBox(
+                                  value: minPieceArea.toString(),
+                                  active: true,
+                                ),
+                              ),
+                              const SizedBox(width: 9),
+                              _AdjustButton(
+                                label: '+250',
+                                onPressed: () =>
+                                    _changeArea(250, setSheetState),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      tuningOpen = false;
+      unawaited(_pollBackend());
+    }
   }
 }
 
