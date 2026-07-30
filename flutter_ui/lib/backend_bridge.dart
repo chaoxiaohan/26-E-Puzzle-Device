@@ -52,11 +52,14 @@ class BackendSnapshot {
     required this.platformPositionValid,
     required this.calibrationVisualA,
     required this.calibrationVisualB,
+    required this.calibrationVisualC,
     required this.calibrationPlatformA,
     required this.calibrationPlatformB,
+    required this.calibrationPlatformC,
     required this.calibrationValid,
     required this.calibrationScaleX,
     required this.calibrationScaleY,
+    required this.calibrationAffineDeterminant,
   });
 
   factory BackendSnapshot.fromJson(Map<String, dynamic> json) {
@@ -98,11 +101,15 @@ class BackendSnapshot {
       platformPositionValid: json['platform_position_valid'] == true,
       calibrationVisualA: _pointFromJson(json['calibration_visual_a']),
       calibrationVisualB: _pointFromJson(json['calibration_visual_b']),
+      calibrationVisualC: _pointFromJson(json['calibration_visual_c']),
       calibrationPlatformA: _pointFromJson(json['calibration_platform_a']),
       calibrationPlatformB: _pointFromJson(json['calibration_platform_b']),
+      calibrationPlatformC: _pointFromJson(json['calibration_platform_c']),
       calibrationValid: json['calibration_valid'] == true,
       calibrationScaleX: (json['calibration_scale_x'] as num?)?.toDouble() ?? 0,
       calibrationScaleY: (json['calibration_scale_y'] as num?)?.toDouble() ?? 0,
+      calibrationAffineDeterminant:
+          (json['calibration_affine_determinant'] as num?)?.toDouble() ?? 0,
     );
   }
 
@@ -142,11 +149,14 @@ class BackendSnapshot {
   final bool platformPositionValid;
   final List<double>? calibrationVisualA;
   final List<double>? calibrationVisualB;
+  final List<double>? calibrationVisualC;
   final List<double>? calibrationPlatformA;
   final List<double>? calibrationPlatformB;
+  final List<double>? calibrationPlatformC;
   final bool calibrationValid;
   final double calibrationScaleX;
   final double calibrationScaleY;
+  final double calibrationAffineDeterminant;
 }
 
 class BackendUpdate {
