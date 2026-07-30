@@ -100,11 +100,14 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   int rotationStep = 5;
   List<double>? calibrationVisualA;
   List<double>? calibrationVisualB;
+  List<double>? calibrationVisualC;
   List<double>? calibrationPlatformA;
   List<double>? calibrationPlatformB;
+  List<double>? calibrationPlatformC;
   bool calibrationValid = false;
   double calibrationScaleX = 0;
   double calibrationScaleY = 0;
+  double calibrationAffineDeterminant = 0;
   String calibrationTarget = 'a';
   String backendLog = '正在读取后端日志…';
   DateTime lastLogRead = DateTime.fromMillisecondsSinceEpoch(0);
@@ -221,11 +224,14 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       platformPositionValid = snapshot.platformPositionValid;
       calibrationVisualA = snapshot.calibrationVisualA;
       calibrationVisualB = snapshot.calibrationVisualB;
+      calibrationVisualC = snapshot.calibrationVisualC;
       calibrationPlatformA = snapshot.calibrationPlatformA;
       calibrationPlatformB = snapshot.calibrationPlatformB;
+      calibrationPlatformC = snapshot.calibrationPlatformC;
       calibrationValid = snapshot.calibrationValid;
       calibrationScaleX = snapshot.calibrationScaleX;
       calibrationScaleY = snapshot.calibrationScaleY;
+      calibrationAffineDeterminant = snapshot.calibrationAffineDeterminant;
       if (!tuningOpen) {
         autoThreshold = snapshot.autoThreshold;
         threshold = snapshot.autoThreshold
@@ -683,9 +689,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
         .round()
         .clamp(0, 639);
     await backend.sendControl(
-      action: calibrationTarget == 'a'
-          ? 'calibration_visual_a'
-          : 'calibration_visual_b',
+      action: 'calibration_visual_$calibrationTarget',
       calibrationPreviewX: previewX,
       calibrationPreviewY: previewY,
     );
@@ -697,11 +701,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     if (!connected || !serialConnected) {
       return;
     }
-    await backend.sendControl(
-      action: point == 'a'
-          ? 'calibration_platform_a'
-          : 'calibration_platform_b',
-    );
+    await backend.sendControl(action: 'calibration_platform_$point');
     await Future<void>.delayed(const Duration(milliseconds: 240));
     await _pollBackend();
   }
@@ -1493,9 +1493,11 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      calibrationTarget == 'a'
-                          ? '当前：点击 A4 纸右上角'
-                          : '当前：点击 A4 纸左下角',
+                      switch (calibrationTarget) {
+                        'a' => '当前：点击 A4 纸右上角',
+                        'b' => '当前：点击 A4 纸左下角',
+                        _ => '当前：点击 A4 纸左上角',
+                      },
                       style: const TextStyle(
                         color: Color(0xFF2563EB),
                         fontWeight: FontWeight.w800,
@@ -1556,7 +1558,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                     Row(
                       children: [
                         const Text(
-                          '平台两点标定',
+                          '平台三点仿射标定',
                           style: TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.w800,
@@ -1572,7 +1574,8 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                     ),
                     const SizedBox(height: 7),
                     const Text(
-                      '分别记录 A4 纸右上角与左下角的视觉坐标和平台坐标，再计算像素到平台的换算关系。',
+                      '依次记录 A4 纸右上角、左下角和左上角的视觉坐标与平台坐标，'
+                      '三个点不共线时计算像素到平台的仿射换算关系。',
                       style: TextStyle(color: Color(0xFF64748B), height: 1.5),
                     ),
                     const SizedBox(height: 16),
@@ -1580,6 +1583,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                       segments: const [
                         ButtonSegment(value: 'a', label: Text('A：右上角')),
                         ButtonSegment(value: 'b', label: Text('B：左下角')),
+                        ButtonSegment(value: 'c', label: Text('C：左上角')),
                       ],
                       selected: {calibrationTarget},
                       showSelectedIcon: false,
@@ -1588,44 +1592,72 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                       },
                     ),
                     const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _CalibrationPointCard(
-                            title: 'A · A4 纸右上角',
-                            visualText: _formatCalibrationPoint(
-                              calibrationVisualA,
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final cardWidth = constraints.maxWidth >= 720
+                            ? (constraints.maxWidth - 24) / 3
+                            : constraints.maxWidth;
+                        return Wrap(
+                          spacing: 12,
+                          runSpacing: 12,
+                          children: [
+                            SizedBox(
+                              width: cardWidth,
+                              child: _CalibrationPointCard(
+                                title: 'A · A4 纸右上角',
+                                visualText: _formatCalibrationPoint(
+                                  calibrationVisualA,
+                                ),
+                                platformText: _formatCalibrationPoint(
+                                  calibrationPlatformA,
+                                ),
+                                selected: calibrationTarget == 'a',
+                                onSelect: () =>
+                                    setState(() => calibrationTarget = 'a'),
+                                onRecordPlatform: serialConnected
+                                    ? () => _recordPlatformCalibration('a')
+                                    : null,
+                              ),
                             ),
-                            platformText: _formatCalibrationPoint(
-                              calibrationPlatformA,
+                            SizedBox(
+                              width: cardWidth,
+                              child: _CalibrationPointCard(
+                                title: 'B · A4 纸左下角',
+                                visualText: _formatCalibrationPoint(
+                                  calibrationVisualB,
+                                ),
+                                platformText: _formatCalibrationPoint(
+                                  calibrationPlatformB,
+                                ),
+                                selected: calibrationTarget == 'b',
+                                onSelect: () =>
+                                    setState(() => calibrationTarget = 'b'),
+                                onRecordPlatform: serialConnected
+                                    ? () => _recordPlatformCalibration('b')
+                                    : null,
+                              ),
                             ),
-                            selected: calibrationTarget == 'a',
-                            onSelect: () =>
-                                setState(() => calibrationTarget = 'a'),
-                            onRecordPlatform: serialConnected
-                                ? () => _recordPlatformCalibration('a')
-                                : null,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _CalibrationPointCard(
-                            title: 'B · A4 纸左下角',
-                            visualText: _formatCalibrationPoint(
-                              calibrationVisualB,
+                            SizedBox(
+                              width: cardWidth,
+                              child: _CalibrationPointCard(
+                                title: 'C · A4 纸左上角',
+                                visualText: _formatCalibrationPoint(
+                                  calibrationVisualC,
+                                ),
+                                platformText: _formatCalibrationPoint(
+                                  calibrationPlatformC,
+                                ),
+                                selected: calibrationTarget == 'c',
+                                onSelect: () =>
+                                    setState(() => calibrationTarget = 'c'),
+                                onRecordPlatform: serialConnected
+                                    ? () => _recordPlatformCalibration('c')
+                                    : null,
+                              ),
                             ),
-                            platformText: _formatCalibrationPoint(
-                              calibrationPlatformB,
-                            ),
-                            selected: calibrationTarget == 'b',
-                            onSelect: () =>
-                                setState(() => calibrationTarget = 'b'),
-                            onRecordPlatform: serialConnected
-                                ? () => _recordPlatformCalibration('b')
-                                : null,
-                          ),
-                        ),
-                      ],
+                          ],
+                        );
+                      },
                     ),
                     const SizedBox(height: 14),
                     Container(
@@ -1656,8 +1688,12 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                           Expanded(
                             child: Text(
                               calibrationValid
-                                  ? '标定有效：X比例 ${calibrationScaleX.toStringAsFixed(5)}，'
-                                        'Y比例 ${calibrationScaleY.toStringAsFixed(5)}'
+                                  ? '仿射标定有效：X轴单位比例 '
+                                        '${calibrationScaleX.toStringAsFixed(5)}，'
+                                        'Y轴单位比例 '
+                                        '${calibrationScaleY.toStringAsFixed(5)}，'
+                                        '行列式 '
+                                        '${calibrationAffineDeterminant.toStringAsFixed(6)}'
                                   : '尚未完成标定，自动抓取动作不会发送。',
                               style: const TextStyle(
                                 fontWeight: FontWeight.w700,
@@ -1673,8 +1709,9 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                     ),
                     const SizedBox(height: 12),
                     const Text(
-                      '两点法适合摄像头基本垂直、视觉轴与平台轴基本平行的情况。'
-                      '如果画面有明显透视或旋转，仅用两个点不能完整校正，后续应改用 3 点仿射或 4 点单应性标定。'
+                      '三点仿射可以补偿平移、旋转、X/Y 比例差异和轻微斜切。'
+                      '三个点必须分散且不共线，建议直接使用 A4 纸的三个角。'
+                      '若摄像头存在明显透视畸变，仍需后续升级为四点单应性标定。'
                       'Z 轴高度仍使用串口设置中的抓取 Z 与放置 Z。',
                       style: TextStyle(color: Color(0xFF64748B), height: 1.55),
                     ),
