@@ -97,7 +97,7 @@ class UiBridge:
             return None
 
         revision = int(control.get("revision", -1))
-        if revision <= self.last_control_revision:
+        if revision == self.last_control_revision:
             return None
         self.last_control_revision = revision
         return control
