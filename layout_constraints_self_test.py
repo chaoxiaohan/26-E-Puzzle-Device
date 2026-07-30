@@ -154,3 +154,24 @@ l_report = evaluate_layout(l_shape)
 if l_report["valid"]:
     raise RuntimeError("L shape accepted: %s" % l_report)
 print("non-rectangle rejection OK", l_report["reasons"])
+
+four_corners_with_broken_sides = {
+    0: polygon([(0, 0), (100, 0), (70, 30), (0, 20)]),
+    1: polygon([(100, 0), (200, 0), (200, 50), (170, 30)]),
+    2: polygon([(200, 50), (200, 100), (100, 100), (140, 70)]),
+    3: polygon([(0, 50), (60, 70), (100, 100), (0, 100)]),
+}
+broken_report = evaluate_layout(four_corners_with_broken_sides)
+if broken_report["corners"] < 0.99:
+    raise RuntimeError("broken-side fixture does not cover four corners")
+if broken_report["outer_piece_ratio"] < 0.999:
+    raise RuntimeError("broken-side fixture lacks outer-edge pieces")
+if "rectangle-boundary" not in broken_report["reasons"]:
+    raise RuntimeError("broken rectangle boundary accepted: %s" % broken_report)
+print(
+    "broken four-corner frame rejected coverage=%.3f gap=%.3f"
+    % (
+        broken_report["boundary_min_coverage"],
+        broken_report["boundary_max_gap_ratio"],
+    )
+)

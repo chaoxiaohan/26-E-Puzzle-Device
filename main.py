@@ -1916,12 +1916,17 @@ def prepare_layout_for_execution(layout, solve_info, roi):
         if (
             frame_report["corners"] < 0.99
             or frame_report["outer_piece_ratio"] < 0.999
+            or frame_report["coverage"] < 0.82
+            or frame_report["internal_match"] < 0.42
+            or frame_report["boundary_min_coverage"] < 0.88
+            or frame_report["boundary_max_gap_ratio"] > 0.12
+            or frame_report["boundary_angle_error"] > 7.0
             or layout_has_interior_overlap(layout)
         ):
             return None, {
                 "valid": False,
                 "stage": "rectangle-frame",
-                "reasons": ["four-right-corners"],
+                "reasons": ["straight-four-side-frame"],
             }
         prepared = frame_report["normalized_layout"]
         mode = "RECT"
@@ -1973,12 +1978,17 @@ def prepare_layout_for_execution(layout, solve_info, roi):
     if (
         final_report["corners"] < 0.99
         or final_report["outer_piece_ratio"] < 0.999
+        or final_report["coverage"] < 0.82
+        or final_report["internal_match"] < 0.42
+        or final_report["boundary_min_coverage"] < 0.88
+        or final_report["boundary_max_gap_ratio"] > 0.12
+        or final_report["boundary_angle_error"] > 7.0
         or layout_has_interior_overlap(prepared)
     ):
         return None, {
             "valid": False,
             "stage": "final-rectangle",
-            "reasons": ["four-right-corners"],
+            "reasons": ["straight-four-side-frame"],
         }
     solve_info["width"] = final_report["width"]
     solve_info["height"] = final_report["height"]
@@ -1992,6 +2002,15 @@ def prepare_layout_for_execution(layout, solve_info, roi):
         "overlap": final_report["overlap"],
         "outer_piece_ratio": final_report["outer_piece_ratio"],
         "internal_match": final_report["internal_match"],
+        "boundary_min_coverage": final_report[
+            "boundary_min_coverage"
+        ],
+        "boundary_max_gap_ratio": final_report[
+            "boundary_max_gap_ratio"
+        ],
+        "boundary_angle_error": final_report[
+            "boundary_angle_error"
+        ],
     }
     solve_info["repair"] = repair_info
     return prepared, repair_info

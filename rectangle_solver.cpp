@@ -564,6 +564,9 @@ struct EdgeRecord {
 struct DetailedQuality {
     double internal = 0.0;
     double boundary = 0.0;
+    double boundary_min = 0.0;
+    double boundary_max_gap = 1.0;
+    double boundary_angle_error = 0.0;
     double connected = 0.0;
 };
 
@@ -589,6 +592,27 @@ static double interval_union_length(
     return total + end - start;
 }
 
+static double interval_max_gap_ratio(
+    std::vector<std::pair<double, double>> intervals,
+    double side_length
+) {
+    if (intervals.empty() || side_length <= 0.0) {
+        return 1.0;
+    }
+    std::sort(intervals.begin(), intervals.end());
+    double maximum_gap = std::max(0.0, intervals[0].first);
+    double end = intervals[0].second;
+    for (std::size_t index = 1; index < intervals.size(); ++index) {
+        maximum_gap = std::max(
+            maximum_gap,
+            intervals[index].first - end
+        );
+        end = std::max(end, intervals[index].second);
+    }
+    maximum_gap = std::max(maximum_gap, side_length - end);
+    return maximum_gap / side_length;
+}
+
 static DetailedQuality evaluate_detailed_quality(
     const std::vector<std::vector<Point>>& layout,
     int width,
@@ -596,6 +620,7 @@ static DetailedQuality evaluate_detailed_quality(
 ) {
     std::vector<EdgeRecord> edges;
     std::vector<std::pair<double, double>> boundary_intervals[4];
+    double boundary_angle_error = 0.0;
     for (int piece_id = 0; piece_id < int(layout.size()); ++piece_id) {
         const std::vector<Point>& polygon = layout[piece_id];
         Point center{0.0, 0.0};
@@ -650,6 +675,18 @@ static DetailedQuality evaluate_detailed_quality(
                     std::max(0.0, std::min(start.y, end.y)),
                     std::min(double(height - 1), std::max(start.y, end.y)),
                 });
+            }
+            if (outer_side >= 0 && length > 1e-6) {
+                double axis_error = (
+                    outer_side <= 1
+                    ? std::abs(end.y - start.y)
+                    : std::abs(end.x - start.x)
+                );
+                boundary_angle_error = std::max(
+                    boundary_angle_error,
+                    std::asin(std::min(1.0, axis_error / length))
+                    * 180.0 / std::acos(-1.0)
+                );
             }
             edges.push_back({
                 piece_id,
@@ -802,6 +839,37 @@ static DetailedQuality evaluate_detailed_quality(
         + interval_union_length(boundary_intervals[2])
         + interval_union_length(boundary_intervals[3])
     ) / std::max(1.0, 2.0 * (width + height - 2));
+    double horizontal_length = std::max(1.0, double(width - 1));
+    double vertical_length = std::max(1.0, double(height - 1));
+    double side_coverage[4] = {
+        interval_union_length(boundary_intervals[0]) / horizontal_length,
+        interval_union_length(boundary_intervals[1]) / horizontal_length,
+        interval_union_length(boundary_intervals[2]) / vertical_length,
+        interval_union_length(boundary_intervals[3]) / vertical_length,
+    };
+    quality.boundary_min = *std::min_element(
+        side_coverage,
+        side_coverage + 4
+    );
+    quality.boundary_max_gap = std::max({
+        interval_max_gap_ratio(
+            boundary_intervals[0],
+            horizontal_length
+        ),
+        interval_max_gap_ratio(
+            boundary_intervals[1],
+            horizontal_length
+        ),
+        interval_max_gap_ratio(
+            boundary_intervals[2],
+            vertical_length
+        ),
+        interval_max_gap_ratio(
+            boundary_intervals[3],
+            vertical_length
+        ),
+    });
+    quality.boundary_angle_error = boundary_angle_error;
     quality.connected = (
         reached == (1u << layout.size()) - 1
         ? 1.0
@@ -1101,6 +1169,16 @@ static SearchResult search_ratio(
             height
         );
         double coverage = double(state.covered) / pixel_count;
+        if (
+            coverage < 0.82
+            || quality.internal < 0.42
+            || quality.boundary_min < 0.88
+            || quality.boundary_max_gap > 0.12
+            || quality.boundary_angle_error > 7.0
+            || quality.connected < 0.5
+        ) {
+            continue;
+        }
         double score = (
             coverage * 1.35
             + quality.internal * 0.30

@@ -75,6 +75,39 @@ def _interval_union_length(intervals):
     return total + end - start
 
 
+def _interval_metrics(intervals, side_length, merge_tolerance):
+    if side_length <= 1e-6:
+        return 0.0, 1.0
+    clipped = []
+    for start, end in intervals:
+        start = max(0.0, min(side_length, float(start)))
+        end = max(0.0, min(side_length, float(end)))
+        if end < start:
+            start, end = end, start
+        if end - start > 1e-6:
+            clipped.append((start, end))
+    if not clipped:
+        return 0.0, 1.0
+
+    merged = []
+    for start, end in sorted(clipped):
+        if merged and start <= merged[-1][1] + merge_tolerance:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+
+    covered = sum(end - start for start, end in merged)
+    gaps = [merged[0][0], side_length - merged[-1][1]]
+    gaps.extend(
+        merged[index + 1][0] - merged[index][1]
+        for index in range(len(merged) - 1)
+    )
+    return (
+        min(1.0, covered / side_length),
+        max(0.0, max(gaps)) / side_length,
+    )
+
+
 def _outer_side(start, end, width, height, tolerance):
     if abs(start[0]) <= tolerance and abs(end[0]) <= tolerance:
         return "left"
@@ -244,6 +277,17 @@ def evaluate_layout(layout, edge_tolerance_ratio=0.012):
 
     diagonal = math.hypot(float(width), float(height))
     tolerance = max(1.5, diagonal * edge_tolerance_ratio)
+    frame_tolerance = max(
+        1.5,
+        diagonal * min(edge_tolerance_ratio, 0.018),
+    )
+    boundary_intervals = {
+        "left": [],
+        "right": [],
+        "top": [],
+        "bottom": [],
+    }
+    boundary_angle_error = 0.0
     edge_records = []
     piece_has_outer = {
         piece_id: False
@@ -257,10 +301,25 @@ def evaluate_layout(layout, edge_tolerance_ratio=0.012):
                 end,
                 float(width),
                 float(height),
-                tolerance,
+                frame_tolerance,
             )
             if side is not None and length > tolerance:
                 piece_has_outer[piece_id] = True
+                if side in ("top", "bottom"):
+                    interval = sorted((float(start[0]), float(end[0])))
+                    axis_error = abs(float(end[1] - start[1]))
+                else:
+                    interval = sorted((float(start[1]), float(end[1])))
+                    axis_error = abs(float(end[0] - start[0]))
+                boundary_intervals[side].append(tuple(interval))
+                boundary_angle_error = max(
+                    boundary_angle_error,
+                    math.degrees(
+                        math.asin(
+                            min(1.0, axis_error / max(length, 1e-6))
+                        )
+                    ),
+                )
             edge_records.append(
                 {
                     "piece_id": piece_id,
@@ -338,6 +397,23 @@ def evaluate_layout(layout, edge_tolerance_ratio=0.012):
     outer_piece_ratio = sum(piece_has_outer.values()) / len(
         piece_has_outer
     )
+    boundary_side_coverage = {}
+    boundary_side_gap = {}
+    for side in ("left", "right", "top", "bottom"):
+        side_length = (
+            float(height)
+            if side in ("left", "right")
+            else float(width)
+        )
+        coverage, gap_ratio = _interval_metrics(
+            boundary_intervals[side],
+            side_length,
+            frame_tolerance,
+        )
+        boundary_side_coverage[side] = coverage
+        boundary_side_gap[side] = gap_ratio
+    boundary_min_coverage = min(boundary_side_coverage.values())
+    boundary_max_gap_ratio = max(boundary_side_gap.values())
     aspect_ratio = max(width, height) / max(1.0, min(width, height))
 
     reasons = []
@@ -355,6 +431,12 @@ def evaluate_layout(layout, edge_tolerance_ratio=0.012):
         reasons.append("perimeter")
     if raster["components"] != 1:
         reasons.append("disconnected")
+    if (
+        boundary_min_coverage < 0.94
+        or boundary_max_gap_ratio > 0.06
+        or boundary_angle_error > 4.5
+    ):
+        reasons.append("rectangle-boundary")
     if not 0.98 <= aspect_ratio <= 2.45:
         reasons.append("aspect")
 
@@ -381,6 +463,12 @@ def evaluate_layout(layout, edge_tolerance_ratio=0.012):
         competition_reasons.append("perimeter")
     if raster["components"] != 1:
         competition_reasons.append("disconnected")
+    if (
+        boundary_min_coverage < 0.88
+        or boundary_max_gap_ratio > 0.12
+        or boundary_angle_error > 7.0
+    ):
+        competition_reasons.append("rectangle-boundary")
     if not 0.98 <= aspect_ratio <= 2.45:
         competition_reasons.append("aspect")
 
@@ -397,6 +485,11 @@ def evaluate_layout(layout, edge_tolerance_ratio=0.012):
         "internal_match": internal_match,
         "perimeter_error": raster["perimeter_error"],
         "components": raster["components"],
+        "boundary_side_coverage": boundary_side_coverage,
+        "boundary_side_gap": boundary_side_gap,
+        "boundary_min_coverage": boundary_min_coverage,
+        "boundary_max_gap_ratio": boundary_max_gap_ratio,
+        "boundary_angle_error": boundary_angle_error,
         "width": float(max(width, height)),
         "height": float(min(width, height)),
         "aspect": float(aspect_ratio),
