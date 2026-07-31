@@ -114,16 +114,9 @@ class UiBridge:
         self.last_frame_time = now
 
         roi_x, roi_y, roi_width, roi_height = roi
-        margin_x = 24
-        margin_y = 12
-        x0 = max(0, roi_x - margin_x)
-        y0 = max(0, roi_y - margin_y)
-        x1 = min(frame_rgb.shape[1], roi_x + roi_width + margin_x)
-        y1 = min(frame_rgb.shape[0], roi_y + roi_height + margin_y)
-        source_width = max(1, x1 - x0)
-        source_height = max(1, y1 - y0)
-        self.preview_source_x = float(x0)
-        self.preview_source_y = float(y0)
+        source_height, source_width = frame_rgb.shape[:2]
+        self.preview_source_x = 0.0
+        self.preview_source_y = 0.0
         self.preview_scale = min(
             360.0 / source_width,
             640.0 / source_height,
@@ -132,8 +125,17 @@ class UiBridge:
         resized_height = round(source_height * self.preview_scale)
         self.preview_offset_x = (360.0 - resized_width) * 0.5
         self.preview_offset_y = (640.0 - resized_height) * 0.5
+        preview_source = frame_rgb.copy()
+        cv2.rectangle(
+            preview_source,
+            (roi_x, roi_y),
+            (roi_x + roi_width - 1, roi_y + roi_height - 1),
+            (255, 220, 0),
+            3,
+            cv2.LINE_AA,
+        )
         camera_preview = self._fit_preview(
-            frame_rgb[y0:y1, x0:x1],
+            preview_source,
             360,
             640,
         )

@@ -63,8 +63,9 @@ def _sample_edge_strip(
         return None
 
     unit = vector / full_length
-    sample_count = max(20, min(56, int(shared_length * 0.65)))
-    margin = min(3.0, shared_length * 0.08)
+    # 提高采样密度：比赛碎片边长≥2cm，需要足够样本区分花纹
+    sample_count = max(36, min(80, int(shared_length * 0.92)))
+    margin = min(2.5, shared_length * 0.05)
     along = np.linspace(
         offset + margin,
         offset + shared_length - margin,
@@ -74,7 +75,8 @@ def _sample_edge_strip(
     if reverse:
         along = along[::-1].copy()
 
-    depths = np.array([2.5, 5.0, 8.5], dtype=np.float32)
+    # 增加深度层数以获得更丰富的纹理剖面
+    depths = np.array([1.8, 4.0, 7.0, 11.0], dtype=np.float32)
     map_x = np.empty((len(depths), sample_count), dtype=np.float32)
     map_y = np.empty_like(map_x)
     valid = np.ones((len(depths), sample_count), dtype=bool)
@@ -1246,6 +1248,51 @@ def solve_card_face(
             texture_cache[key] = value
         return value
 
+    def _every_piece_touches_boundary(placed_polygons):
+        """验证每块碎片至少有一条边在拼装矩形外边界上。"""
+        if not placed_polygons:
+            return False
+        all_points = np.vstack(list(placed_polygons.values()))
+        x_min, y_min = np.min(all_points, axis=0)
+        x_max, y_max = np.max(all_points, axis=0)
+        width = x_max - x_min
+        height = y_max - y_min
+        if width < 1e-6 or height < 1e-6:
+            return False
+        diagonal = math.hypot(float(width), float(height))
+        tolerance = max(2.0, diagonal * 0.012)
+
+        for polygon in placed_polygons.values():
+            touches = False
+            for edge_id in range(len(polygon)):
+                start = polygon[edge_id]
+                end = polygon[(edge_id + 1) % len(polygon)]
+                length = float(np.linalg.norm(end - start))
+                if length < tolerance * 0.5:
+                    continue
+                on_left = (
+                    abs(float(start[0]) - x_min) <= tolerance
+                    and abs(float(end[0]) - x_min) <= tolerance
+                )
+                on_right = (
+                    abs(float(start[0]) - x_max) <= tolerance
+                    and abs(float(end[0]) - x_max) <= tolerance
+                )
+                on_top = (
+                    abs(float(start[1]) - y_min) <= tolerance
+                    and abs(float(end[1]) - y_min) <= tolerance
+                )
+                on_bottom = (
+                    abs(float(start[1]) - y_max) <= tolerance
+                    and abs(float(end[1]) - y_max) <= tolerance
+                )
+                if on_left or on_right or on_top or on_bottom:
+                    touches = True
+                    break
+            if not touches:
+                return False
+        return True
+
     def solution_is_strong():
         return (
             best_metrics is not None
@@ -1290,6 +1337,9 @@ def solve_card_face(
                 return
             ratio = metrics["width"] / metrics["height"]
             if ratio > 2.45:
+                return
+            # 边界约束：每块碎片至少有一条边在矩形外边界上
+            if not _every_piece_touches_boundary(placed):
                 return
 
             texture_score, texture_confidence = _texture_summary(

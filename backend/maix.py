@@ -27,6 +27,20 @@ class _Runtime:
 _runtime = _Runtime()
 
 
+def _portrait_frame(rgb):
+    if _runtime.rotation == "CCW":
+        return cv2.rotate(
+            rgb,
+            cv2.ROTATE_90_COUNTERCLOCKWISE,
+        )
+    if _runtime.rotation == "180":
+        return cv2.rotate(rgb, cv2.ROTATE_180)
+    return cv2.rotate(
+        rgb,
+        cv2.ROTATE_90_CLOCKWISE,
+    )
+
+
 class _App:
     @staticmethod
     def need_exit():
@@ -222,25 +236,7 @@ class _CameraDevice:
             raise RuntimeError("camera frame read failed")
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         if _runtime.portrait:
-            crop_x = int(
-                os.environ.get(
-                    "PUZZLE_PORTRAIT_CROP_X",
-                    "280",
-                )
-            )
-            crop_x = max(
-                0,
-                min(crop_x, rgb.shape[1] - 720),
-            )
-            canvas = np.zeros(
-                (1280, 720, 3),
-                dtype=np.uint8,
-            )
-            canvas[:720, :, :] = rgb[
-                :720,
-                crop_x : crop_x + 720,
-            ]
-            rgb = canvas
+            rgb = _portrait_frame(rgb)
         return _ImageFrame(rgb)
 
     def close(self):

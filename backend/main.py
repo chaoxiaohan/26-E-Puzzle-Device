@@ -297,15 +297,10 @@ def green_background_foreground_mask(roi_rgb):
     if float(np.mean(background)) < 0.20:
         return None
     foreground = np.where(background, 0, 255).astype(np.uint8)
+    # 使用矩形核保留边角，仅闭合细小间隙
     foreground = cv2.morphologyEx(
         foreground,
         cv2.MORPH_CLOSE,
-        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
-        iterations=2,
-    )
-    foreground = cv2.morphologyEx(
-        foreground,
-        cv2.MORPH_OPEN,
         cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)),
         iterations=1,
     )
@@ -313,6 +308,76 @@ def green_background_foreground_mask(roi_rgb):
         foreground,
         cv2.RETR_EXTERNAL,
         cv2.CHAIN_APPROX_SIMPLE,
+    )
+    filled = np.zeros_like(foreground)
+    cv2.drawContours(filled, contours, -1, 255, thickness=cv2.FILLED)
+    return filled
+
+
+def green_background_foreground_mask_v2(
+    roi_rgb,
+    hue_min=30,
+    hue_max=95,
+    sat_min=20,
+    val_min=6,
+    green_close_kernel=9,
+    green_close_iter=3,
+    paper_close_kernel=7,
+    paper_close_iter=2,
+):
+    """用ROI内最大绿色连通域定位A4纸区域，再取反得到碎片掩膜。
+
+    全部形态学参数均可调节，以适应不同光照条件下的绿色A4纸。
+    光照好时减小核尺寸和迭代次数可获得更锐利的碎片边角。
+    """
+    hsv = cv2.cvtColor(roi_rgb, cv2.COLOR_RGB2HSV)
+
+    green = (
+        (hsv[:, :, 0] >= int(hue_min))
+        & (hsv[:, :, 0] <= int(hue_max))
+        & (hsv[:, :, 1] >= int(sat_min))
+        & (hsv[:, :, 2] >= int(val_min))
+    ).astype(np.uint8)
+
+    # 形态学闭合连接A4纸的绿色区域
+    kernel_close = cv2.getStructuringElement(
+        cv2.MORPH_RECT if green_close_kernel <= 7 else cv2.MORPH_ELLIPSE,
+        (int(green_close_kernel), int(green_close_kernel)),
+    )
+    green = cv2.morphologyEx(
+        green, cv2.MORPH_CLOSE, kernel_close, iterations=int(green_close_iter),
+    )
+
+    # 取最大的绿色连通域 = A4纸
+    label_count, labels, stats, _ = cv2.connectedComponentsWithStats(
+        green, connectivity=8,
+    )
+    if label_count <= 1:
+        return None
+    largest_label = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    paper = (labels == largest_label).astype(np.uint8)
+
+    # 填充A4纸内部的空洞
+    paper = cv2.morphologyEx(
+        paper, cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(
+            cv2.MORPH_RECT if paper_close_kernel <= 7 else cv2.MORPH_ELLIPSE,
+            (int(paper_close_kernel), int(paper_close_kernel)),
+        ),
+        iterations=int(paper_close_iter),
+    )
+
+    if float(np.mean(paper)) < 0.12:
+        return None
+
+    # 非A4纸区域 = 碎片前景
+    foreground = np.where(paper > 0, 0, 255).astype(np.uint8)
+    foreground = cv2.morphologyEx(
+        foreground, cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)), iterations=1,
+    )
+    contours, _ = cv2.findContours(
+        foreground, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE,
     )
     filled = np.zeros_like(foreground)
     cv2.drawContours(filled, contours, -1, 255, thickness=cv2.FILLED)
@@ -522,7 +587,16 @@ def detect_pieces(
     polygon_epsilon=0.018,
     threshold=None,
     polarity_mode="AUTO",
-    background_mode="BLACK",
+    background_mode="GREEN",
+    green_method="border",
+    green_hue_min=30,
+    green_hue_max=95,
+    green_sat_min=20,
+    green_val_min=6,
+    green_close_kernel=7,
+    green_close_iter=2,
+    paper_close_kernel=5,
+    paper_close_iter=1,
 ):
     """检测ROI内的拼图碎片。"""
     roi_x, roi_y, roi_width, roi_height = roi
@@ -532,7 +606,7 @@ def detect_pieces(
     ]
 
     gray = cv2.cvtColor(roi_rgb, cv2.COLOR_RGB2GRAY)
-    gray = cv2.GaussianBlur(gray, (5, 5), 0)
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
     if threshold is None:
         threshold_value, bright_mask = cv2.threshold(
             gray,
@@ -581,11 +655,22 @@ def detect_pieces(
     max_area = roi_width * roi_height * max_area_ratio
     background_mode = background_mode.upper()
     polarity_mode = polarity_mode.upper()
-    green_mask = (
-        green_background_foreground_mask(roi_rgb)
-        if background_mode == "GREEN"
-        else None
-    )
+    green_mask = None
+    if background_mode == "GREEN":
+        if green_method == "largest":
+            green_mask = green_background_foreground_mask_v2(
+                roi_rgb,
+                hue_min=green_hue_min,
+                hue_max=green_hue_max,
+                sat_min=green_sat_min,
+                val_min=green_val_min,
+                green_close_kernel=green_close_kernel,
+                green_close_iter=green_close_iter,
+                paper_close_kernel=paper_close_kernel,
+                paper_close_iter=paper_close_iter,
+            )
+        else:
+            green_mask = green_background_foreground_mask(roi_rgb)
     if green_mask is not None:
         pieces = find_candidates(
             green_mask,
@@ -642,6 +727,7 @@ def detect_pieces(
         "polarity": polarity,
         "polarity_mode": polarity_mode,
         "background_mode": background_mode,
+        "green_method": green_method,
         "threshold": int(threshold_value),
         "threshold_mode": threshold_mode,
         "mask": selected_mask,
@@ -2184,6 +2270,13 @@ def build_last_resort_layout(pieces, roi):
     )
     if prepared is None:
         return None, 0.0, None
+    # 补充 place_layout_on_paper 需要的宽高字段
+    all_points = np.vstack(list(prepared.values()))
+    x_min, y_min = np.min(all_points, axis=0)
+    x_max, y_max = np.max(all_points, axis=0)
+    info["width"] = float(x_max - x_min)
+    info["height"] = float(y_max - y_min)
+    info["ratio"] = info["width"] / max(1.0, info["height"])
     score, _ = best_effort_layout_score(prepared)
     info["method"] = "last-resort-grid"
     info["repair"] = repair_info
@@ -2789,7 +2882,11 @@ def align_polygon_points(reference, points):
 
 
 def build_stable_piece_set(recent_piece_sets):
-    """从最近的连续画面中生成一组中值轮廓，运动中或顶点跳变时不求解。"""
+    """从最近的连续画面中生成一组中值轮廓，运动中或顶点跳变时不求解。
+
+    优化：缩小采样窗口(12→8帧)、降低对齐要求(8→5组)，
+    并增加快速路径——连续3帧零位移时立即返回。
+    """
     if not recent_piece_sets:
         return None
 
@@ -2797,8 +2894,29 @@ def build_stable_piece_set(recent_piece_sets):
     if not 2 <= len(reference) <= 4:
         return None
 
+    # 快速路径：最近3帧碎片数量和中心位置都一致，立即判定为稳定
+    if len(recent_piece_sets) >= 4:
+        recent_candidates = [item[2] for item in recent_piece_sets[-4:]]
+        if all(len(c) == len(reference) for c in recent_candidates):
+            max_shift = 0.0
+            for piece_id in range(len(reference)):
+                ref_center = np.asarray(
+                    reference[piece_id]["center"], dtype=np.float64
+                )
+                for candidate in recent_candidates[-3:]:
+                    if piece_id < len(candidate):
+                        cand_center = np.asarray(
+                            candidate[piece_id]["center"], dtype=np.float64
+                        )
+                        max_shift = max(
+                            max_shift,
+                            float(np.linalg.norm(ref_center - cand_center)),
+                        )
+            if max_shift <= 3.0:
+                return reference
+
     aligned_sets = []
-    for _, _, candidate in reversed(recent_piece_sets[-12:]):
+    for _, _, candidate in reversed(recent_piece_sets[-8:]):
         if len(candidate) != len(reference):
             continue
         best_order = None
@@ -2833,10 +2951,10 @@ def build_stable_piece_set(recent_piece_sets):
             aligned_sets.append(
                 [candidate[index] for index in best_order]
             )
-        if len(aligned_sets) >= 8:
+        if len(aligned_sets) >= 5:
             break
 
-    if len(aligned_sets) < 4:
+    if len(aligned_sets) < 3:
         return None
 
     stable_pieces = []
@@ -3590,6 +3708,117 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
     return result
 
 
+VISION_SETTINGS_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "vision_settings.json",
+)
+
+
+def load_vision_settings():
+    """从磁盘加载视觉参数，加载失败时返回空字典。"""
+    try:
+        with open(VISION_SETTINGS_PATH, "r", encoding="utf-8") as file:
+            return json.load(file)
+    except (
+        FileNotFoundError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        OSError,
+    ):
+        return {}
+
+
+def save_vision_settings(settings):
+    """将视觉参数写入磁盘，原子写入避免损坏。"""
+    temporary = VISION_SETTINGS_PATH + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as file:
+        json.dump(settings, file, ensure_ascii=False, indent=2)
+    os.replace(temporary, VISION_SETTINGS_PATH)
+
+
+def clamp_roi(roi, frame_width, frame_height):
+    minimum_size = 80
+    x = max(0, min(int(roi[0]), frame_width - minimum_size))
+    y = max(0, min(int(roi[1]), frame_height - minimum_size))
+    width = max(
+        minimum_size,
+        min(int(roi[2]), frame_width - x),
+    )
+    height = max(
+        minimum_size,
+        min(int(roi[3]), frame_height - y),
+    )
+    return x, y, width, height
+
+
+def load_roi(path, default_roi, frame_width, frame_height):
+    try:
+        with open(path, "r", encoding="utf-8") as file:
+            data = json.load(file)
+        roi = (
+            data["x"],
+            data["y"],
+            data["width"],
+            data["height"],
+        )
+    except (
+        FileNotFoundError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        OSError,
+    ):
+        roi = default_roi
+    return clamp_roi(roi, frame_width, frame_height)
+
+
+def save_roi(path, roi):
+    temporary = "%s.%d.tmp" % (path, os.getpid())
+    with open(temporary, "w", encoding="utf-8") as file:
+        json.dump(
+            {
+                "x": roi[0],
+                "y": roi[1],
+                "width": roi[2],
+                "height": roi[3],
+            },
+            file,
+            ensure_ascii=False,
+            indent=2,
+        )
+    os.replace(temporary, path)
+
+
+def get_solution_box(roi):
+    """返回ROI下半区的装配目标矩形区域。
+
+    A4纸上半区为碎片初始位置，下半区为拼装目标区域。
+    """
+    x, y, width, height = roi
+    return (
+        x + 40,
+        y + height // 2 + 65,
+        max(80, width - 80),
+        max(80, height // 2 - 105),
+    )
+
+
+def get_assembly_zone(roi):
+    """返回下半区装配区域的边界 (x, y, w, h) 和分割线y坐标。"""
+    x, y, width, height = roi
+    split_y = y + height // 2
+    return {
+        "split_y": int(split_y),
+        "x": int(x + 40),
+        "y": int(split_y + 65),
+        "width": int(max(80, width - 80)),
+        "height": int(max(80, height // 2 - 105)),
+    }
+
+
 def main():
     cv2.setLogLevel(2)
     portrait_mode = os.environ.get("PUZZLE_PORTRAIT", "0") == "1"
@@ -3597,23 +3826,42 @@ def main():
     capture_height = 720
     camera_width = 720 if portrait_mode else capture_width
     camera_height = 1280 if portrait_mode else capture_height
-    portrait_crop_x = (
-        int(os.environ.get("PUZZLE_PORTRAIT_CROP_X", "280"))
-        if portrait_mode
-        else 0
-    )
+    portrait_rotation = os.environ.get(
+        "PUZZLE_ROTATION",
+        "CW",
+    ).upper()
 
-    # 黄色框必须落在A4纸内部，不能包含纸张外部背景。
-    # 安装好相机后，只需要调整这里的四个数。
-    roi_x = 380 - portrait_crop_x if portrait_mode else 380
-    roi_y = 10
-    roi_width = 520
-    roi_height = 700
+    default_roi = (
+        (10, 100, 700, 900)
+        if portrait_mode
+        else (380, 10, 520, 700)
+    )
+    roi_settings_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "roi_settings.json",
+    )
+    roi_x, roi_y, roi_width, roi_height = load_roi(
+        roi_settings_path,
+        default_roi,
+        camera_width,
+        camera_height,
+    )
+    if portrait_mode and (
+        roi_x,
+        roi_y,
+        roi_width,
+        roi_height,
+    ) in (
+        (100, 10, 520, 700),
+        (10, 380, 700, 520),
+    ):
+        roi_x, roi_y, roi_width, roi_height = default_roi
+        save_roi(roi_settings_path, default_roi)
 
     min_piece_area = 1500
     max_piece_area_ratio = 0.35
     max_piece_count = 4
-    polygon_epsilon = 0.022
+    polygon_epsilon = 0.015
 
     def create_camera():
         return camera.Camera(
@@ -3633,11 +3881,28 @@ def main():
     fps_start = time.monotonic()
     last_print_time = 0.0
     touch_was_pressed = False
-    auto_threshold = True
-    manual_threshold = 128
     current_threshold = 128
-    polarity_mode = "AUTO"
-    background_mode = "BLACK"
+    saved = load_vision_settings()
+    background_mode = str(
+        saved.get("background_mode", "GREEN")
+    ).upper()
+    green_method = str(
+        saved.get("green_method", "largest")
+    ).lower()
+    auto_threshold = bool(saved.get("auto_threshold", True))
+    manual_threshold = min(255, max(0, int(saved.get("manual_threshold", 128))))
+    polarity_mode = str(saved.get("polarity_mode", "AUTO")).upper()
+    green_hue_min = min(255, max(0, int(saved.get("green_hue_min", 30))))
+    green_hue_max = min(255, max(0, int(saved.get("green_hue_max", 95))))
+    green_sat_min = min(255, max(0, int(saved.get("green_sat_min", 20))))
+    green_val_min = min(255, max(0, int(saved.get("green_val_min", 6))))
+    green_close_kernel = min(21, max(1, int(saved.get("green_close_kernel", 7))))
+    green_close_iter = min(5, max(0, int(saved.get("green_close_iter", 2))))
+    paper_close_kernel = min(15, max(1, int(saved.get("paper_close_kernel", 5))))
+    paper_close_iter = min(5, max(0, int(saved.get("paper_close_iter", 1))))
+    min_piece_area = min(
+        50000, max(100, int(saved.get("min_piece_area", 1500)))
+    )
     tuning_open = False
     solve_requested = False
     card_requested = False
@@ -3674,11 +3939,8 @@ def main():
         camera_width,
         camera_height,
     )
-    solution_box = (
-        roi_x + 40,
-        roi_y + roi_height // 2 + 65,
-        roi_width - 80,
-        roi_height // 2 - 105,
+    solution_box = get_solution_box(
+        (roi_x, roi_y, roi_width, roi_height)
     )
     print("Puzzle detector started", flush=True)
 
@@ -3717,11 +3979,66 @@ def main():
                 ).upper()
                 if requested_background in ("BLACK", "GREEN"):
                     background_mode = requested_background
+            if "green_method" in control:
+                requested_method = str(
+                    control["green_method"]
+                ).lower()
+                if requested_method in ("border", "largest"):
+                    green_method = requested_method
+            if "green_hue_min" in control:
+                green_hue_min = min(255, max(0, int(control["green_hue_min"])))
+            if "green_hue_max" in control:
+                green_hue_max = min(255, max(0, int(control["green_hue_max"])))
+            if "green_sat_min" in control:
+                green_sat_min = min(255, max(0, int(control["green_sat_min"])))
+            if "green_val_min" in control:
+                green_val_min = min(255, max(0, int(control["green_val_min"])))
+            if "green_close_kernel" in control:
+                green_close_kernel = min(21, max(1, int(control["green_close_kernel"])))
+            if "green_close_iter" in control:
+                green_close_iter = min(5, max(0, int(control["green_close_iter"])))
+            if "paper_close_kernel" in control:
+                paper_close_kernel = min(15, max(1, int(control["paper_close_kernel"])))
+            if "paper_close_iter" in control:
+                paper_close_iter = min(5, max(0, int(control["paper_close_iter"])))
             if "min_piece_area" in control:
                 min_piece_area = min(
                     50000,
                     max(100, int(control["min_piece_area"])),
                 )
+            if any(
+                key in control
+                for key in (
+                    "roi_x",
+                    "roi_y",
+                    "roi_width",
+                    "roi_height",
+                )
+            ):
+                new_roi = clamp_roi(
+                    (
+                        control.get("roi_x", roi_x),
+                        control.get("roi_y", roi_y),
+                        control.get("roi_width", roi_width),
+                        control.get("roi_height", roi_height),
+                    ),
+                    camera_width,
+                    camera_height,
+                )
+                if new_roi != (
+                    roi_x,
+                    roi_y,
+                    roi_width,
+                    roi_height,
+                ):
+                    roi_x, roi_y, roi_width, roi_height = new_roi
+                    solution_box = get_solution_box(new_roi)
+                    save_roi(roi_settings_path, new_roi)
+                    recent_piece_sets = []
+                    solved_display = None
+                    solved_mode = ""
+                    motion_plan = []
+                    ui_bridge.clear_result()
             serial_controller.configure(
                 port=control.get("serial_port"),
                 baud=control.get("serial_baud"),
@@ -3736,6 +4053,9 @@ def main():
                     solve_requested = True
             elif action == "capture":
                 capture_requested = True
+            elif action == "shutdown":
+                print("Shutdown requested by frontend", flush=True)
+                break
             elif action == "serial_connect":
                 serial_controller.connect()
             elif action == "serial_disconnect":
@@ -3761,6 +4081,9 @@ def main():
                 "calibration_visual_a",
                 "calibration_visual_b",
                 "calibration_visual_c",
+                "calibration_visual_d",
+                "calibration_visual_e",
+                "calibration_visual_f",
             ):
                 point = ui_bridge.preview_to_camera(
                     control.get("calibration_preview_x", 0),
@@ -3776,11 +4099,33 @@ def main():
                 "calibration_platform_a",
                 "calibration_platform_b",
                 "calibration_platform_c",
+                "calibration_platform_d",
+                "calibration_platform_e",
+                "calibration_platform_f",
             ):
                 serial_controller.record_platform_point(action[-1])
             elif action == "calibration_compute":
                 serial_controller.calculate_calibration()
 
+            # 参数变更后立即持久化
+            save_vision_settings({
+                "background_mode": background_mode,
+                "green_method": green_method,
+                "auto_threshold": bool(auto_threshold),
+                "manual_threshold": int(manual_threshold),
+                "polarity_mode": polarity_mode,
+                "green_hue_min": int(green_hue_min),
+                "green_hue_max": int(green_hue_max),
+                "green_sat_min": int(green_sat_min),
+                "green_val_min": int(green_val_min),
+                "green_close_kernel": int(green_close_kernel),
+                "green_close_iter": int(green_close_iter),
+                "paper_close_kernel": int(paper_close_kernel),
+                "paper_close_iter": int(paper_close_iter),
+                "min_piece_area": int(min_piece_area),
+            })
+
+        serial_controller.service()
         img = cam.read()
         if img is None:
             if cam.last_error and cam.last_error != reported_camera_error:
@@ -3836,8 +4181,24 @@ def main():
                     "current_threshold": int(current_threshold),
                     "polarity_mode": polarity_mode,
                     "background_mode": background_mode,
+                    "green_method": green_method,
+                    "green_hue_min": int(green_hue_min),
+                    "green_hue_max": int(green_hue_max),
+                    "green_sat_min": int(green_sat_min),
+                    "green_val_min": int(green_val_min),
+                    "green_close_kernel": int(green_close_kernel),
+                    "green_close_iter": int(green_close_iter),
+                    "paper_close_kernel": int(paper_close_kernel),
+                    "paper_close_iter": int(paper_close_iter),
                     "detected_polarity": "",
                     "min_piece_area": int(min_piece_area),
+                    "camera_width": int(camera_width),
+                    "camera_height": int(camera_height),
+                    "roi_x": int(roi_x),
+                    "roi_y": int(roi_y),
+                    "roi_width": int(roi_width),
+                    "roi_height": int(roi_height),
+                    "assembly_split_y": int(roi_y + roi_height // 2),
                     "solving": bool(solver_future is not None),
                     "solver_message": solver_message,
                     "score": round(float(solved_score), 4),
@@ -3869,6 +4230,25 @@ def main():
             ensure_bgr=False,
             copy=False,
         )
+        frame_height, frame_width = frame_rgb.shape[:2]
+        if (
+            frame_width != camera_width
+            or frame_height != camera_height
+        ):
+            camera_width = frame_width
+            camera_height = frame_height
+            roi_x, roi_y, roi_width, roi_height = clamp_roi(
+                (roi_x, roi_y, roi_width, roi_height),
+                camera_width,
+                camera_height,
+            )
+            solution_box = get_solution_box(
+                (roi_x, roi_y, roi_width, roi_height)
+            )
+            button_boxes = get_button_boxes(
+                camera_width,
+                camera_height,
+            )
         if os.path.exists("/tmp/puzzle_capture_once"):
             os.remove("/tmp/puzzle_capture_once")
             cv2.imwrite(
@@ -3984,6 +4364,15 @@ def main():
             threshold=None if auto_threshold else manual_threshold,
             polarity_mode=polarity_mode,
             background_mode=background_mode,
+            green_method=green_method,
+            green_hue_min=green_hue_min,
+            green_hue_max=green_hue_max,
+            green_sat_min=green_sat_min,
+            green_val_min=green_val_min,
+            green_close_kernel=green_close_kernel,
+            green_close_iter=green_close_iter,
+            paper_close_kernel=paper_close_kernel,
+            paper_close_iter=paper_close_iter,
         )
         current_threshold = threshold_info["threshold"]
         if capture_requested:
@@ -3998,12 +4387,13 @@ def main():
                     "manual_threshold": int(manual_threshold),
                     "polarity_mode": polarity_mode,
                     "background_mode": background_mode,
+                    "green_method": green_method,
                     "min_piece_area": int(min_piece_area),
                     "max_piece_area_ratio": float(
                         max_piece_area_ratio
                     ),
                     "polygon_epsilon": float(polygon_epsilon),
-                    "portrait_crop_x": int(portrait_crop_x),
+                    "portrait_rotation": portrait_rotation,
                 },
             )
             last_capture_time = time.monotonic()
@@ -4154,19 +4544,36 @@ def main():
                 solver_ms = result["elapsed_ms"]
                 solve_info = result["info"]
                 solve_pieces = result["pieces"]
+                is_fallback = False
+                if solved_layout is None:
+                    # 求解器失败时自动降级：用紧凑排列至少完成搬运
+                    solved_layout, solved_score, fallback_info = (
+                        build_last_resort_layout(
+                            solve_pieces,
+                            (roi_x, roi_y, roi_width, roi_height),
+                        )
+                    )
+                    if solved_layout is not None:
+                        solve_info = fallback_info
+                        solver_message = "FALLBACK"
+                        is_fallback = True
                 if solved_layout is None:
                     solved_display = None
                     solved_mode = ""
                     solved_ratio = 0.0
                     motion_plan = []
                     ui_bridge.clear_result()
-                    solver_message = (
-                        "CARD NO RECT"
-                        if result_mode == "CARD"
-                        else "NO RECT"
-                    )
+                    if not is_fallback:
+                        solver_message = (
+                            "CARD NO RECT"
+                            if result_mode == "CARD"
+                            else "NO RECT"
+                        )
                 else:
-                    result_preview = result.get("preview_rgb")
+                    result_preview = (
+                        None if is_fallback
+                        else result.get("preview_rgb")
+                    )
                     if (
                         result_preview is None
                         and active_solve_frame is not None
@@ -4220,19 +4627,9 @@ def main():
                             solve_pieces,
                             solved_display,
                         )
-                        if portrait_mode:
-                            for move in motion_plan:
-                                move["pick"] = (
-                                    move["pick"][0]
-                                    + portrait_crop_x,
-                                    move["pick"][1],
-                                )
-                                move["place"] = (
-                                    move["place"][0]
-                                    + portrait_crop_x,
-                                    move["place"][1],
-                                )
-                        if result_mode == "CARD":
+                        if is_fallback:
+                            solver_message = "FALLBACK"
+                        elif result_mode == "CARD":
                             solver_message = (
                                 "CARD BEST"
                                 if solve_info.get("execution_mode") == "BEST"
@@ -4395,8 +4792,24 @@ def main():
                 "current_threshold": int(current_threshold),
                 "polarity_mode": polarity_mode,
                 "background_mode": background_mode,
+                "green_method": green_method,
+                "green_hue_min": int(green_hue_min),
+                "green_hue_max": int(green_hue_max),
+                "green_sat_min": int(green_sat_min),
+                "green_val_min": int(green_val_min),
+                "green_close_kernel": int(green_close_kernel),
+                "green_close_iter": int(green_close_iter),
+                "paper_close_kernel": int(paper_close_kernel),
+                "paper_close_iter": int(paper_close_iter),
                 "detected_polarity": threshold_info["polarity"],
                 "min_piece_area": int(min_piece_area),
+                "camera_width": int(camera_width),
+                "camera_height": int(camera_height),
+                "roi_x": int(roi_x),
+                "roi_y": int(roi_y),
+                "roi_width": int(roi_width),
+                "roi_height": int(roi_height),
+                "assembly_split_y": int(roi_y + roi_height // 2),
                 "solving": bool(
                     solver_future is not None
                     or pending_solve_until > 0

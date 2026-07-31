@@ -1,0 +1,16 @@
+{
+  "background_mode": "GREEN",
+  "green_method": "largest",
+  "auto_threshold": false,
+  "manual_threshold": 0,
+  "polarity_mode": "AUTO",
+  "green_hue_min": 45,
+  "green_hue_max": 95,
+  "green_sat_min": 81,
+  "green_val_min": 55,
+  "green_close_kernel": 1,
+  "green_close_iter": 0,
+  "paper_close_kernel": 1,
+  "paper_close_iter": 0,
+  "min_piece_area": 1500
+}

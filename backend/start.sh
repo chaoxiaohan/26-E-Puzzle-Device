@@ -7,7 +7,7 @@ export DISPLAY=:0
 export WAYLAND_DISPLAY=wayland-0
 export XDG_RUNTIME_DIR=/run/user/1000
 export PUZZLE_PORTRAIT=1
-export PUZZLE_PORTRAIT_CROP_X=280
+export PUZZLE_ROTATION=CW
 
 if [ ! -f librectangle_solver.so ] || [ rectangle_solver.cpp -nt librectangle_solver.so ]; then
     ./build_cpp_solver.sh

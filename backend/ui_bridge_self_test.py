@@ -4,6 +4,9 @@ import json
 import os
 import tempfile
 
+import cv2
+import numpy as np
+
 from ui_bridge import UiBridge
 
 
@@ -31,4 +34,19 @@ with tempfile.TemporaryDirectory() as directory:
     assert bridge.read_control()["action"] == "solve"
     assert bridge.read_control() is None
 
-print("ui bridge revision OK")
+    bridge.frame_path = os.path.join(directory, "frame.jpg")
+    bridge.binary_path = os.path.join(directory, "binary.jpg")
+    frame = np.zeros((1280, 720, 3), dtype=np.uint8)
+    mask = np.zeros((700, 520), dtype=np.uint8)
+    bridge.publish_live(
+        frame,
+        mask,
+        (100, 10, 520, 700),
+        force=True,
+    )
+    preview = cv2.imread(bridge.frame_path)
+    assert preview.shape[:2] == (640, 360)
+    assert bridge.preview_to_camera(0, 0) == (0.0, 0.0)
+    assert bridge.preview_to_camera(360, 640) == (720.0, 1280.0)
+
+print("ui bridge revision and full-frame preview OK")

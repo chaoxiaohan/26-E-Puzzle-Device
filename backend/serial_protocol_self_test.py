@@ -4,6 +4,8 @@ import os
 import pty
 import struct
 import threading
+import math
+from unittest import mock
 
 from serial_protocol import SerialController
 from serial_protocol import build_frame
@@ -19,7 +21,7 @@ def read_exact(device, size):
 
 def fake_arm(device, received):
     position_index = 0
-    while len(received) < 7:
+    while len(received) < 10:
         if read_exact(device, 2) != b"\xAA\x55":
             continue
         header = read_exact(device, 4)
@@ -37,6 +39,9 @@ def fake_arm(device, received):
                 (1000, 2000, 300, 100),
                 (1400, 1950, 300, 100),
                 (1100, 2600, 300, 100),
+                (1500, 2550, 300, 100),
+                (1250, 2275, 300, 100),
+                (1750, 2825, 300, 100),
             )
             reply_payload += struct.pack(
                 "<iiih",
@@ -55,6 +60,10 @@ def fake_arm(device, received):
 
 
 def main():
+    try:
+        os.remove("/tmp/puzzle_serial_test.json")
+    except FileNotFoundError:
+        pass
     master, slave = pty.openpty()
     port = os.ttyname(slave)
     received = []
@@ -76,14 +85,20 @@ def main():
     controller.record_visual_point("a", 100, 200)
     controller.record_visual_point("b", 300, 200)
     controller.record_visual_point("c", 100, 400)
+    controller.record_visual_point("d", 300, 400)
+    controller.record_visual_point("e", 200, 300)
+    controller.record_visual_point("f", 400, 500)
     assert controller.record_platform_point("a")
     assert controller.record_platform_point("b")
     assert controller.record_platform_point("c")
+    assert controller.record_platform_point("d")
+    assert controller.record_platform_point("e")
+    assert controller.record_platform_point("f")
     assert controller.calculate_calibration()
-    assert controller.vision_to_platform(200, 300) == (
-        1250.0,
-        2275.0,
-    )
+    mapped = controller.vision_to_platform(200, 300)
+    assert math.isclose(mapped[0], 1250.0, abs_tol=1e-6)
+    assert math.isclose(mapped[1], 2275.0, abs_tol=1e-6)
+    assert controller.calibration_rms_error < 1e-6
     plan = [
         {
             "piece_id": 0,
@@ -105,11 +120,14 @@ def main():
         0x20,
         0x20,
         0x20,
+        0x20,
+        0x20,
+        0x20,
         0x10,
         0x10,
         0x11,
     ]
-    first_action = struct.unpack("<BBBBiiiiiih", received[4][3])
+    first_action = struct.unpack("<BBBBiiiiiih", received[7][3])
     assert first_action[4] == 1000
     assert first_action[5] == 2000
     assert first_action[6] == 120
@@ -118,11 +136,43 @@ def main():
     assert first_action[9] == 80
     assert first_action[10] == -4525
     controller.disconnect()
+
+    controller.configure(port="/dev/puzzle-serial-test-missing")
+    with mock.patch(
+        "serial_protocol.glob.glob",
+        return_value=[port],
+    ), mock.patch(
+        "serial_protocol.os.path.exists",
+        side_effect=lambda path: path == port,
+    ):
+        assert controller.connect()
+        assert controller.active_port == port
+    controller.disconnect()
+
+    class BrokenDevice:
+        is_open = True
+
+        def reset_input_buffer(self):
+            raise RuntimeError("simulated USB disconnect")
+
+        def close(self):
+            self.is_open = False
+
+    controller.device = BrokenDevice()
+    controller.active_port = port
+    controller.connection_requested = True
+    assert not controller.send(0x20, b"")
+    assert controller.device is None
+    assert controller.state()["serial_reconnecting"]
+    controller.disconnect()
     try:
         os.remove("/tmp/puzzle_serial_test.json")
     except FileNotFoundError:
         pass
-    print("SERIAL_PROTOCOL_OK frames=7 calibration=three-point-affine")
+    print(
+        "SERIAL_PROTOCOL_OK frames=10 calibration=six-point-least-squares "
+        "fallback-port=OK disconnect-recovery=OK"
+    )
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ void main() {
     await tester.tap(find.text('设置').first);
     await tester.pump();
 
-    expect(find.text('二值化实时预览'), findsOneWidget);
+    expect(find.text('实时预览'), findsOneWidget);
     expect(find.text('背景颜色'), findsOneWidget);
     expect(find.text('黑色'), findsOneWidget);
     expect(find.text('绿色'), findsOneWidget);
@@ -35,6 +35,9 @@ void main() {
     expect(find.text('亮色'), findsOneWidget);
     expect(find.text('暗色'), findsOneWidget);
     expect(find.text('最小碎片面积'), findsOneWidget);
+    expect(find.text('检测区域 ROI'), findsOneWidget);
+    expect(find.text('ROI 铺满画面'), findsOneWidget);
+    expect(find.text('恢复默认 ROI'), findsOneWidget);
     final otsuChip = find.widgetWithText(FilterChip, '自动 OTSU');
     expect(tester.widget<FilterChip>(otsuChip).selected, isTrue);
     await tester.tap(otsuChip);

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import glob
 import json
 import math
 import os
@@ -50,12 +51,17 @@ class SerialController:
         self.pick_z = 0
         self.place_z = 0
         self.device = None
+        self.active_port = ""
+        self.connection_requested = False
+        self.next_reconnect_at = 0.0
+        self.last_health_check = 0.0
         self.sequence = 0
         self.task_id = 0
         self.last_reply = ""
         self.last_error = ""
         self.event_revision = 0
         self.last_payload = b""
+        self._raw_log = []  # [(timestamp, direction, hex_string), ...]
         self.current_x = 0
         self.current_y = 0
         self.current_z = 0
@@ -64,25 +70,68 @@ class SerialController:
         self.visual_a = None
         self.visual_b = None
         self.visual_c = None
+        self.visual_d = None
+        self.visual_e = None
+        self.visual_f = None
         self.platform_a = None
         self.platform_b = None
         self.platform_c = None
+        self.platform_d = None
+        self.platform_e = None
+        self.platform_f = None
         self.calibration_valid = False
         self.affine = None
         self.affine_determinant = 0.0
         self.scale_x = 0.0
         self.scale_y = 0.0
+        self.calibration_rms_error = 0.0
+        self.calibration_max_error = 0.0
         self._lock = threading.RLock()
         self._load_settings()
 
     def _set_status(self, reply, error=""):
+        if reply == self.last_reply and error == self.last_error:
+            return
         self.last_reply = reply
         self.last_error = error
         self.event_revision += 1
 
     @property
     def connected(self):
-        return self.device is not None and self.device.is_open
+        return (
+            self.device is not None
+            and self.device.is_open
+            and bool(self.active_port)
+            and os.path.exists(self.active_port)
+        )
+
+    def _candidate_ports(self):
+        ports = []
+
+        def add(path):
+            if path and os.path.exists(path) and path not in ports:
+                ports.append(path)
+
+        add(self.port)
+        add("/dev/puzzle-arm")
+        for pattern in (
+            "/dev/serial/by-id/*",
+            "/dev/ttyUSB*",
+            "/dev/ttyACM*",
+        ):
+            for path in sorted(glob.glob(pattern)):
+                add(path)
+        return ports
+
+    def _close_device(self):
+        if self.device is not None:
+            try:
+                self.device.close()
+            except Exception:
+                pass
+        self.device = None
+        self.active_port = ""
+        self.last_health_check = 0.0
 
     def _load_settings(self):
         try:
@@ -98,12 +147,21 @@ class SerialController:
         self.baud = int(settings.get("baud", self.baud))
         self.pick_z = int(settings.get("pick_z", self.pick_z))
         self.place_z = int(settings.get("place_z", self.place_z))
+        self.connection_requested = bool(
+            settings.get("auto_connect", False)
+        )
         self.visual_a = settings.get("visual_a")
         self.visual_b = settings.get("visual_b")
         self.visual_c = settings.get("visual_c")
+        self.visual_d = settings.get("visual_d")
+        self.visual_e = settings.get("visual_e")
+        self.visual_f = settings.get("visual_f")
         self.platform_a = settings.get("platform_a")
         self.platform_b = settings.get("platform_b")
         self.platform_c = settings.get("platform_c")
+        self.platform_d = settings.get("platform_d")
+        self.platform_e = settings.get("platform_e")
+        self.platform_f = settings.get("platform_f")
         self._calculate_calibration(save=False)
 
     def _save_settings(self):
@@ -112,12 +170,19 @@ class SerialController:
             "baud": self.baud,
             "pick_z": self.pick_z,
             "place_z": self.place_z,
+            "auto_connect": self.connection_requested,
             "visual_a": self.visual_a,
             "visual_b": self.visual_b,
             "visual_c": self.visual_c,
+            "visual_d": self.visual_d,
+            "visual_e": self.visual_e,
+            "visual_f": self.visual_f,
             "platform_a": self.platform_a,
             "platform_b": self.platform_b,
             "platform_c": self.platform_c,
+            "platform_d": self.platform_d,
+            "platform_e": self.platform_e,
+            "platform_f": self.platform_f,
         }
         temporary = "%s.%d.tmp" % (
             self.settings_path,
@@ -154,48 +219,105 @@ class SerialController:
             self.pick_z = int(pick_z)
         if place_z is not None:
             self.place_z = int(place_z)
-        if reconnect and self.connected:
-            self.disconnect()
+        if reconnect and self.device is not None:
+            self._close_device()
+            self.next_reconnect_at = 0.0
         self._save_settings()
 
-    def connect(self):
-        with self._lock:
-            if self.connected:
-                return True
+    def _connect_locked(self):
+        if self.connected:
+            return True
+        self._close_device()
+        ports = self._candidate_ports()
+        if not ports:
+            self.next_reconnect_at = time.monotonic() + 1.0
+            self._set_status(
+                "等待USB串口重新上线",
+                "未找到可用USB串口",
+            )
+            return False
+
+        errors = []
+        for port in ports:
             try:
                 self.device = serial.Serial(
-                    self.port,
+                    port,
                     self.baud,
                     timeout=0.035,
                     write_timeout=0.1,
                 )
                 self.device.reset_input_buffer()
+                self.active_port = port
+                self.next_reconnect_at = 0.0
+                self.last_health_check = time.monotonic()
                 self._set_status("串口已连接")
                 print(
                     "SERIAL_CONNECTED %s %d"
-                    % (self.port, self.baud),
+                    % (port, self.baud),
                     flush=True,
                 )
                 return True
-            except (OSError, serial.SerialException) as error:
-                self.device = None
-                self._set_status("串口连接失败", str(error))
-                print(
-                    "SERIAL_CONNECT_ERROR %s" % error,
-                    flush=True,
-                )
-                return False
+            except Exception as error:
+                errors.append("%s: %s" % (port, error))
+                self._close_device()
+
+        message = "; ".join(errors)
+        self.next_reconnect_at = time.monotonic() + 1.0
+        self._set_status("串口连接失败，等待重试", message)
+        print("SERIAL_CONNECT_ERROR %s" % message, flush=True)
+        return False
+
+    def connect(self):
+        with self._lock:
+            self.connection_requested = True
+            self._save_settings()
+            return self._connect_locked()
 
     def disconnect(self):
         with self._lock:
-            if self.device is not None:
-                try:
-                    self.device.close()
-                except (OSError, serial.SerialException):
-                    pass
-            self.device = None
+            self.connection_requested = False
+            self.next_reconnect_at = 0.0
+            self._close_device()
+            self._save_settings()
             self._set_status("串口已断开")
             print("SERIAL_DISCONNECTED", flush=True)
+
+    def service(self, now=None):
+        with self._lock:
+            now = time.monotonic() if now is None else float(now)
+            if (
+                self.device is not None
+                and self.device.is_open
+                and now - self.last_health_check >= 0.5
+            ):
+                self.last_health_check = now
+                try:
+                    self.device.in_waiting
+                except Exception as error:
+                    self._communication_failed(error)
+            if self.device is not None and not self.connected:
+                self._close_device()
+                if self.connection_requested:
+                    self._set_status(
+                        "USB串口已掉线，等待自动重连",
+                        "设备节点已消失",
+                    )
+            if (
+                not self.connection_requested
+                or self.connected
+                or now < self.next_reconnect_at
+            ):
+                return self.connected
+            return self._connect_locked()
+
+    def _communication_failed(self, error):
+        self._close_device()
+        self.next_reconnect_at = time.monotonic() + 0.3
+        self._set_status(
+            "USB串口通信中断，正在自动重连",
+            str(error),
+        )
+        print("SERIAL_IO_ERROR %s" % error, flush=True)
 
     def _next_sequence(self):
         sequence = self.sequence
@@ -234,8 +356,17 @@ class SerialController:
             if crc16_ccitt(header + payload) != received_crc:
                 matched = 0
                 continue
+            full_frame = b"\xAA\x55" + header + payload + tail[length:]
+            self._log_raw("RX", full_frame)
             return command, flags, sequence, payload
         return None
+
+    def _log_raw(self, direction, frame_bytes):
+        hex_str = " ".join("%02X" % b for b in frame_bytes)
+        entry = (time.monotonic(), direction, hex_str)
+        self._raw_log.append(entry)
+        if len(self._raw_log) > 60:
+            self._raw_log = self._raw_log[-40:]
 
     def send(self, command, payload=b"", flags=0x20):
         with self._lock:
@@ -243,6 +374,7 @@ class SerialController:
                 return False
             sequence = self._next_sequence()
             frame = build_frame(command, flags, sequence, payload)
+            self._log_raw("TX", frame)
             self.last_payload = b""
             for attempt in range(3):
                 try:
@@ -259,9 +391,8 @@ class SerialController:
                     response = self._read_response(
                         time.monotonic() + 0.12
                     )
-                except (OSError, serial.SerialException) as error:
-                    self._set_status("串口通信失败", str(error))
-                    self.device = None
+                except Exception as error:
+                    self._communication_failed(error)
                     return False
                 if response is None:
                     continue
@@ -343,50 +474,41 @@ class SerialController:
         return True
 
     def record_visual_point(self, name, x, y):
+        if name not in "abcdef":
+            return False
         point = [float(x), float(y)]
-        if name == "a":
-            self.visual_a = point
-        elif name == "b":
-            self.visual_b = point
-        else:
-            self.visual_c = point
+        setattr(self, "visual_" + name, point)
         self.calibration_valid = False
         self._save_settings()
         self._set_status("已记录视觉点%s" % name.upper())
+        return True
 
     def record_platform_point(self, name):
+        if name not in "abcdef":
+            return False
         if not self.query_position():
             return False
         point = [self.current_x, self.current_y]
-        if name == "a":
-            self.platform_a = point
-        elif name == "b":
-            self.platform_b = point
-        else:
-            self.platform_c = point
+        setattr(self, "platform_" + name, point)
         self.calibration_valid = False
         self._save_settings()
         self._set_status("已记录平台点%s" % name.upper())
         return True
 
     @staticmethod
-    def _triangle_quality(points):
-        ax, ay = points[0]
-        bx, by = points[1]
-        cx, cy = points[2]
-        twice_area = abs(
-            (bx - ax) * (cy - ay)
-            - (by - ay) * (cx - ax)
+    def _point_cloud_quality(points):
+        mean_x = sum(float(point[0]) for point in points) / len(points)
+        mean_y = sum(float(point[1]) for point in points) / len(points)
+        xx = sum((float(point[0]) - mean_x) ** 2 for point in points)
+        yy = sum((float(point[1]) - mean_y) ** 2 for point in points)
+        xy = sum(
+            (float(point[0]) - mean_x) * (float(point[1]) - mean_y)
+            for point in points
         )
-        edge_squares = (
-            (bx - ax) ** 2 + (by - ay) ** 2,
-            (cx - ax) ** 2 + (cy - ay) ** 2,
-            (cx - bx) ** 2 + (cy - by) ** 2,
-        )
-        longest_edge_square = max(edge_squares)
-        if longest_edge_square < 1e-9:
+        longest_variance = max(xx, yy)
+        if longest_variance < 1e-9:
             return 0.0
-        return twice_area / longest_edge_square
+        return max(0.0, (xx * yy - xy * xy) / (longest_variance ** 2))
 
     @staticmethod
     def _solve_3x3(matrix, values):
@@ -419,30 +541,21 @@ class SerialController:
         self.calibration_valid = False
         self.affine = None
         self.affine_determinant = 0.0
-        if not all(
-            (
-                self.visual_a,
-                self.visual_b,
-                self.visual_c,
-                self.platform_a,
-                self.platform_b,
-                self.platform_c,
-            )
-        ):
+        self.calibration_rms_error = 0.0
+        self.calibration_max_error = 0.0
+        visual_points = [
+            getattr(self, "visual_" + name)
+            for name in "abcdef"
+        ]
+        platform_points = [
+            getattr(self, "platform_" + name)
+            for name in "abcdef"
+        ]
+        if not all(visual_points + platform_points):
             return False
-        visual_points = (
-            self.visual_a,
-            self.visual_b,
-            self.visual_c,
-        )
-        platform_points = (
-            self.platform_a,
-            self.platform_b,
-            self.platform_c,
-        )
         if (
-            self._triangle_quality(visual_points) < 0.05
-            or self._triangle_quality(platform_points) < 0.05
+            self._point_cloud_quality(visual_points) < 0.01
+            or self._point_cloud_quality(platform_points) < 0.01
         ):
             return False
         visual_matrix = [
@@ -451,8 +564,29 @@ class SerialController:
         ]
         platform_x = [float(point[0]) for point in platform_points]
         platform_y = [float(point[1]) for point in platform_points]
-        affine_x = self._solve_3x3(visual_matrix, platform_x)
-        affine_y = self._solve_3x3(visual_matrix, platform_y)
+        normal_matrix = [
+            [
+                sum(row[column] * row[other] for row in visual_matrix)
+                for other in range(3)
+            ]
+            for column in range(3)
+        ]
+        normal_x = [
+            sum(
+                visual_matrix[row][column] * platform_x[row]
+                for row in range(6)
+            )
+            for column in range(3)
+        ]
+        normal_y = [
+            sum(
+                visual_matrix[row][column] * platform_y[row]
+                for row in range(6)
+            )
+            for column in range(3)
+        ]
+        affine_x = self._solve_3x3(normal_matrix, normal_x)
+        affine_y = self._solve_3x3(normal_matrix, normal_y)
         if affine_x is None or affine_y is None:
             return False
         self.affine = [affine_x, affine_y]
@@ -467,17 +601,42 @@ class SerialController:
             and abs(self.scale_x) > 1e-9
             and abs(self.scale_y) > 1e-9
         )
+        errors = []
+        for visual, platform in zip(visual_points, platform_points):
+            predicted_x = (
+                affine_x[0] * float(visual[0])
+                + affine_x[1] * float(visual[1])
+                + affine_x[2]
+            )
+            predicted_y = (
+                affine_y[0] * float(visual[0])
+                + affine_y[1] * float(visual[1])
+                + affine_y[2]
+            )
+            errors.append(
+                math.hypot(
+                    predicted_x - float(platform[0]),
+                    predicted_y - float(platform[1]),
+                )
+            )
+        self.calibration_rms_error = math.sqrt(
+            sum(error * error for error in errors) / len(errors)
+        )
+        self.calibration_max_error = max(errors)
         if save:
             self._save_settings()
         return self.calibration_valid
 
     def calculate_calibration(self):
         if self._calculate_calibration():
-            self._set_status("三点仿射标定完成")
+            self._set_status(
+                "六点仿射标定完成，均方根误差 %.1f"
+                % self.calibration_rms_error
+            )
             return True
         self._set_status(
-            "标定失败：请记录三个不共线点",
-            "three non-collinear points required",
+            "标定失败：请记录六个分散的对应点",
+            "six well-spread point pairs required",
         )
         return False
 
@@ -556,14 +715,25 @@ class SerialController:
         return True
 
     def state(self):
+        # 只返回最近30条日志，减少JSON体积
+        recent_log = self._raw_log[-30:] if self._raw_log else []
         return {
             "serial_connected": self.connected,
             "serial_port": self.port,
+            "serial_active_port": self.active_port,
+            "serial_reconnecting": (
+                self.connection_requested and not self.connected
+            ),
+            "serial_device_present": bool(self._candidate_ports()),
             "serial_baud": self.baud,
             "serial_pick_z": self.pick_z,
             "serial_place_z": self.place_z,
             "serial_last_reply": self.last_reply,
             "serial_error": self.last_error,
+            "serial_raw_log": [
+                {"t": round(t, 3), "d": d, "hex": h}
+                for t, d, h in recent_log
+            ],
             "serial_event_revision": self.event_revision,
             "platform_x": self.current_x,
             "platform_y": self.current_y,
@@ -573,12 +743,20 @@ class SerialController:
             "calibration_visual_a": self.visual_a,
             "calibration_visual_b": self.visual_b,
             "calibration_visual_c": self.visual_c,
+            "calibration_visual_d": self.visual_d,
+            "calibration_visual_e": self.visual_e,
+            "calibration_visual_f": self.visual_f,
             "calibration_platform_a": self.platform_a,
             "calibration_platform_b": self.platform_b,
             "calibration_platform_c": self.platform_c,
+            "calibration_platform_d": self.platform_d,
+            "calibration_platform_e": self.platform_e,
+            "calibration_platform_f": self.platform_f,
             "calibration_valid": self.calibration_valid,
             "calibration_scale_x": self.scale_x,
             "calibration_scale_y": self.scale_y,
             "calibration_affine": self.affine,
             "calibration_affine_determinant": self.affine_determinant,
+            "calibration_rms_error": self.calibration_rms_error,
+            "calibration_max_error": self.calibration_max_error,
         }

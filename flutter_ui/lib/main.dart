@@ -12,7 +12,7 @@ enum PuzzleMode { firstQuestion, normalPuzzle, cardPuzzle }
 
 enum AppPage { puzzle, arm, settings }
 
-enum SettingsPage { vision, serial, calibration, logs }
+enum SettingsPage { vision, serial, calibration, logs, system }
 
 class PuzzleStudioApp extends StatelessWidget {
   const PuzzleStudioApp({super.key});
@@ -49,6 +49,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   final BackendBridge backend = BackendBridge();
   final ValueNotifier<Uint8List?> binaryPreview = ValueNotifier(null);
   final ScrollController calibrationScrollController = ScrollController();
+  final ScrollController _serialScrollController = ScrollController();
   final TextEditingController serialPortController = TextEditingController(
     text: '/dev/ttyUSB0',
   );
@@ -67,6 +68,8 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   bool solving = false;
   bool hasResult = false;
   bool connected = false;
+  int _offlineCount = 0;
+  static const int _offlineRestartThreshold = 25; // ~2s at 80ms polling
   bool cameraOnline = false;
   bool serialConnected = false;
   bool polling = false;
@@ -77,9 +80,26 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   bool initializedFromBackend = false;
   bool autoThreshold = true;
   int threshold = 128;
+  bool _showBinaryPreview = true; // toggle: binary vs normal camera preview
   int minPieceArea = 1500;
   String polarityMode = 'AUTO';
-  String backgroundMode = 'BLACK';
+  String backgroundMode = 'GREEN';
+  String _greenMethod = 'border';
+  int _greenHueMin = 30;
+  int _greenHueMax = 95;
+  int _greenSatMin = 20;
+  int _greenValMin = 6;
+  int _greenCloseKernel = 7;
+  int _greenCloseIter = 2;
+  int _paperCloseKernel = 5;
+  int _paperCloseIter = 1;
+  int cameraWidth = 720;
+  int cameraHeight = 1280;
+  int roiX = 10;
+  int roiY = 100;
+  int roiWidth = 700;
+  int roiHeight = 900;
+  int _assemblySplitY = 0;
   int pieceCount = 0;
   double fps = 0;
   double score = 0;
@@ -87,12 +107,16 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   String solverMessage = '';
   String lastCaptureName = '';
   String serialPort = '/dev/ttyUSB0';
+  String serialActivePort = '';
+  bool serialReconnecting = false;
+  bool serialDevicePresent = false;
   int serialBaud = 115200;
   int serialPickZ = 0;
   int serialPlaceZ = 0;
   int motionPlanCount = 0;
   String serialLastReply = '';
   String serialError = '';
+  List<Map<String, dynamic>> _serialRawLog = [];
   int serialEventRevision = 0;
   int platformX = 0;
   int platformY = 0;
@@ -104,14 +128,28 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   List<double>? calibrationVisualA;
   List<double>? calibrationVisualB;
   List<double>? calibrationVisualC;
+  List<double>? calibrationVisualD;
+  List<double>? calibrationVisualE;
+  List<double>? calibrationVisualF;
   List<double>? calibrationPlatformA;
   List<double>? calibrationPlatformB;
   List<double>? calibrationPlatformC;
+  List<double>? calibrationPlatformD;
+  List<double>? calibrationPlatformE;
+  List<double>? calibrationPlatformF;
   bool calibrationValid = false;
   double calibrationScaleX = 0;
   double calibrationScaleY = 0;
   double calibrationAffineDeterminant = 0;
+  double calibrationRmsError = 0;
+  double calibrationMaxError = 0;
   String calibrationTarget = 'a';
+  Offset? _previewPointA;
+  Offset? _previewPointB;
+  Offset? _previewPointC;
+  Offset? _previewPointD;
+  Offset? _previewPointE;
+  Offset? _previewPointF;
   String backendLog = '正在读取后端日志…';
   DateTime lastLogRead = DateTime.fromMillisecondsSinceEpoch(0);
   Uint8List? cameraFrame;
@@ -128,7 +166,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
 
   String get resultHint {
     if (!connected) {
-      return '视觉后端未连接';
+      return backend.isRestarting ? '视觉后端重连中…' : '视觉后端未连接';
     }
     return switch (solverMessage) {
       'NO STABLE' || 'CARD NO STABLE' => '请保持碎片静止后重试',
@@ -153,8 +191,11 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   @override
   void dispose() {
     pollTimer?.cancel();
+    // 通知后端关闭
+    backend.sendControl(action: 'shutdown');
     binaryPreview.dispose();
     calibrationScrollController.dispose();
+    _serialScrollController.dispose();
     serialPortController.dispose();
     serialBaudController.dispose();
     serialPickZController.dispose();
@@ -189,11 +230,20 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       return;
     }
     if (update == null) {
+      _offlineCount++;
+      if (_offlineCount == _offlineRestartThreshold && !backend.isRestarting) {
+        // Backend has been unresponsive for ~2 seconds — try to restart it.
+        await backend.restartBackend();
+        _offlineCount = 0;
+      }
       if (connected) {
         setState(() => connected = false);
       }
       return;
     }
+
+    // Backend responded — reset the offline counter.
+    _offlineCount = 0;
 
     final snapshot = update.snapshot;
     final captureChanged =
@@ -211,12 +261,16 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       solverMessage = snapshot.solverMessage;
       serialConnected = snapshot.serialConnected;
       serialPort = snapshot.serialPort;
+      serialActivePort = snapshot.serialActivePort;
+      serialReconnecting = snapshot.serialReconnecting;
+      serialDevicePresent = snapshot.serialDevicePresent;
       serialBaud = snapshot.serialBaud;
       serialPickZ = snapshot.serialPickZ;
       serialPlaceZ = snapshot.serialPlaceZ;
       motionPlanCount = snapshot.motionPlanCount;
       serialLastReply = snapshot.serialLastReply;
       serialError = snapshot.serialError;
+      _serialRawLog = snapshot.serialRawLog;
       serialEventRevision = snapshot.serialEventRevision;
       platformX = snapshot.platformX;
       platformY = snapshot.platformY;
@@ -226,13 +280,23 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       calibrationVisualA = snapshot.calibrationVisualA;
       calibrationVisualB = snapshot.calibrationVisualB;
       calibrationVisualC = snapshot.calibrationVisualC;
+      calibrationVisualD = snapshot.calibrationVisualD;
+      calibrationVisualE = snapshot.calibrationVisualE;
+      calibrationVisualF = snapshot.calibrationVisualF;
       calibrationPlatformA = snapshot.calibrationPlatformA;
       calibrationPlatformB = snapshot.calibrationPlatformB;
       calibrationPlatformC = snapshot.calibrationPlatformC;
+      calibrationPlatformD = snapshot.calibrationPlatformD;
+      calibrationPlatformE = snapshot.calibrationPlatformE;
+      calibrationPlatformF = snapshot.calibrationPlatformF;
       calibrationValid = snapshot.calibrationValid;
       calibrationScaleX = snapshot.calibrationScaleX;
       calibrationScaleY = snapshot.calibrationScaleY;
-      calibrationAffineDeterminant = snapshot.calibrationAffineDeterminant;
+      calibrationAffineDeterminant =
+          snapshot.calibrationAffineDeterminant;
+      calibrationRmsError = snapshot.calibrationRmsError;
+      calibrationMaxError = snapshot.calibrationMaxError;
+      _assemblySplitY = snapshot.assemblySplitY;
       if (!tuningOpen && !settingsSyncPending) {
         autoThreshold = snapshot.autoThreshold;
         threshold = snapshot.autoThreshold
@@ -240,7 +304,24 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
             : snapshot.manualThreshold;
         polarityMode = snapshot.polarityMode;
         backgroundMode = snapshot.backgroundMode;
+        if (snapshot.greenMethod.isNotEmpty) {
+          _greenMethod = snapshot.greenMethod;
+        }
+        _greenHueMin = snapshot.greenHueMin;
+        _greenHueMax = snapshot.greenHueMax;
+        _greenSatMin = snapshot.greenSatMin;
+        _greenValMin = snapshot.greenValMin;
+        _greenCloseKernel = snapshot.greenCloseKernel;
+        _greenCloseIter = snapshot.greenCloseIter;
+        _paperCloseKernel = snapshot.paperCloseKernel;
+        _paperCloseIter = snapshot.paperCloseIter;
         minPieceArea = snapshot.minPieceArea;
+        cameraWidth = snapshot.cameraWidth;
+        cameraHeight = snapshot.cameraHeight;
+        roiX = snapshot.roiX;
+        roiY = snapshot.roiY;
+        roiWidth = snapshot.roiWidth;
+        roiHeight = snapshot.roiHeight;
       }
       lastCaptureName = snapshot.lastCaptureName;
       if (!initializedFromBackend) {
@@ -419,7 +500,9 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
           const SizedBox(width: 7),
           Text(
             !connected
-                ? '后端离线'
+                ? backend.isRestarting
+                    ? '后端重连中…'
+                    : '后端离线'
                 : cameraOnline
                 ? '相机正常'
                 : '相机离线',
@@ -443,29 +526,53 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     return Center(
       child: AspectRatio(
         aspectRatio: 9 / 16,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(14),
-          child: ColoredBox(
-            color: const Color(0xFF111827),
-            child: cameraFrame == null || !cameraOnline
-                ? const Center(
-                    child: Text(
-                      '摄像头离线\n串口与设置功能仍可使用',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Color(0xFFCBD5E1),
-                        height: 1.7,
-                        fontWeight: FontWeight.w700,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // 分割线在widget中的y坐标 = assemblySplitY / cameraHeight * widgetHeight
+            final lineY = cameraHeight > 0
+                ? (_assemblySplitY / cameraHeight) * constraints.maxHeight
+                : constraints.maxHeight / 2;
+            return ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Stack(
+                children: [
+                  ColoredBox(
+                    color: const Color(0xFF111827),
+                    child: cameraFrame == null || !cameraOnline
+                        ? const Center(
+                            child: Text(
+                              '摄像头离线\n串口与设置功能仍可使用',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Color(0xFFCBD5E1),
+                                height: 1.7,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          )
+                        : Image.memory(
+                            cameraFrame!,
+                            fit: BoxFit.contain,
+                            gaplessPlayback: true,
+                            filterQuality: FilterQuality.low,
+                          ),
+                  ),
+                  // 上/下半区分割线
+                  if (cameraFrame != null &&
+                      cameraOnline &&
+                      _assemblySplitY > 0)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      top: lineY,
+                      child: CustomPaint(
+                        painter: _SplitLinePainter(),
                       ),
                     ),
-                  )
-                : Image.memory(
-                    cameraFrame!,
-                    fit: BoxFit.contain,
-                    gaplessPlayback: true,
-                    filterQuality: FilterQuality.low,
-                  ),
-          ),
+                ],
+              ),
+            );
+          },
         ),
       ),
     );
@@ -689,6 +796,24 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     final previewY = (details.localPosition.dy / size.height * 640)
         .round()
         .clamp(0, 639);
+    // Save the tap position for visual dot overlay on the preview.
+    final localPos = details.localPosition;
+    setState(() {
+      switch (calibrationTarget) {
+        case 'a':
+          _previewPointA = localPos;
+        case 'b':
+          _previewPointB = localPos;
+        case 'c':
+          _previewPointC = localPos;
+        case 'd':
+          _previewPointD = localPos;
+        case 'e':
+          _previewPointE = localPos;
+        case 'f':
+          _previewPointF = localPos;
+      }
+    });
     await backend.sendControl(
       action: 'calibration_visual_$calibrationTarget',
       calibrationPreviewX: previewX,
@@ -702,7 +827,9 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     if (!connected || !serialConnected) {
       return;
     }
-    await backend.sendControl(action: 'calibration_platform_$point');
+    await backend.sendControl(
+      action: 'calibration_platform_$point',
+    );
     await Future<void>.delayed(const Duration(milliseconds: 240));
     await _pollBackend();
   }
@@ -748,11 +875,16 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                       _ConnectionRow(
                         connected: serialConnected,
                         connectedText: '串口已连接',
-                        disconnectedText: '串口未连接',
+                        disconnectedText: serialReconnecting
+                            ? '自动重连中'
+                            : serialDevicePresent
+                            ? '串口待连接'
+                            : '未发现USB串口',
                       ),
                       const SizedBox(height: 12),
                       Text(
-                        '$serialPort  ·  $serialBaud',
+                        '${serialActivePort.isEmpty ? serialPort : serialActivePort}'
+                        '  ·  $serialBaud',
                         style: const TextStyle(
                           color: Color(0xFF64748B),
                           fontWeight: FontWeight.w700,
@@ -1006,7 +1138,14 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                                     child: _DropdownField<int>(
                                       label: 'XYZ 单次步长',
                                       value: moveStep,
-                                      items: const [1, 5, 10, 20, 50],
+                                      items: const [
+                                        10,
+                                        50,
+                                        100,
+                                        200,
+                                        500,
+                                        6400,
+                                      ],
                                       itemText: (value) => value.toString(),
                                       onChanged: (value) {
                                         if (value != null) {
@@ -1120,6 +1259,13 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                     }
                   },
                 ),
+                const SizedBox(width: 8),
+                _SettingsTabButton(
+                  label: '系统',
+                  selected: settingsPage == SettingsPage.system,
+                  onTap: () =>
+                      setState(() => settingsPage = SettingsPage.system),
+                ),
               ],
             ),
           ),
@@ -1131,6 +1277,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
             SettingsPage.serial => _buildSerialSettings(),
             SettingsPage.calibration => _buildCalibrationSettings(),
             SettingsPage.logs => _buildLogSettings(),
+            SettingsPage.system => _buildSystemSettings(),
           },
         ),
       ],
@@ -1148,9 +1295,29 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    '二值化实时预览',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                  Row(
+                    children: [
+                      const Text(
+                        '实时预览',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                      ),
+                      const Spacer(),
+                      SegmentedButton<bool>(
+                        segments: const [
+                          ButtonSegment(value: true, label: Text('二值化')),
+                          ButtonSegment(value: false, label: Text('原图')),
+                        ],
+                        selected: {_showBinaryPreview},
+                        showSelectedIcon: false,
+                        onSelectionChanged: (values) {
+                          setState(() => _showBinaryPreview = values.first);
+                        },
+                        style: const ButtonStyle(
+                          visualDensity: VisualDensity.compact,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 12),
                   Expanded(
@@ -1161,7 +1328,9 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                         child: ValueListenableBuilder<Uint8List?>(
                           valueListenable: binaryPreview,
                           builder: (context, bytes, child) {
-                            if (bytes == null || !cameraOnline) {
+                            final imageBytes =
+                                _showBinaryPreview ? bytes : cameraFrame;
+                            if (imageBytes == null || !cameraOnline) {
                               return const Center(
                                 child: Text(
                                   '摄像头离线',
@@ -1170,7 +1339,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                               );
                             }
                             return Image.memory(
-                              bytes,
+                              imageBytes,
                               fit: BoxFit.contain,
                               gaplessPlayback: true,
                             );
@@ -1187,274 +1356,687 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
               flex: 6,
               child: SingleChildScrollView(
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      '检测参数',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    const Text(
-                      '背景颜色',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 8),
-                    SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment(value: 'BLACK', label: Text('黑色')),
-                        ButtonSegment(value: 'GREEN', label: Text('绿色')),
-                      ],
-                      selected: {backgroundMode},
-                      showSelectedIcon: false,
-                      onSelectionChanged: (values) {
-                        setState(() => backgroundMode = values.first);
-                        _queueSettings();
-                      },
-                    ),
-                    const SizedBox(height: 18),
-                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          '二值化阈值',
-                          style: TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        const Spacer(),
-                        FilterChip(
-                          selected: autoThreshold,
-                          label: const Text('自动 OTSU'),
-                          onSelected: (selected) {
-                            setState(() => autoThreshold = selected);
-                            _queueSettings();
-                          },
-                        ),
-                      ],
-                    ),
-                    Slider(
-                      value: threshold.toDouble(),
-                      min: 0,
-                      max: 255,
-                      label: threshold.toString(),
-                      onChanged: (value) {
-                        setState(() {
-                          threshold = value.round();
-                          autoThreshold = false;
-                        });
-                        _queueSettings();
-                      },
-                    ),
-                    Center(
-                      child: Text(
-                        '当前阈值：$threshold',
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    const Text(
-                      '目标极性',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 8),
-                    SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment(value: 'AUTO', label: Text('自动')),
-                        ButtonSegment(value: 'LIGHT', label: Text('亮色')),
-                        ButtonSegment(value: 'DARK', label: Text('暗色')),
-                      ],
-                      selected: {polarityMode},
-                      showSelectedIcon: false,
-                      onSelectionChanged: (values) {
-                        setState(() => polarityMode = values.first);
-                        _queueSettings();
-                      },
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        const Text(
-                          '最小碎片面积',
-                          style: TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        const Spacer(),
-                        Text(
-                          minPieceArea.toString(),
-                          style: const TextStyle(
-                            fontSize: 16,
+                          '检测参数',
+                          style: TextStyle(
+                            fontSize: 20,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
+                        const SizedBox(height: 18),
+                        const Text(
+                          '背景颜色',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 8),
+                        SegmentedButton<String>(
+                          segments: const [
+                            ButtonSegment(value: 'BLACK', label: Text('黑色')),
+                            ButtonSegment(value: 'GREEN', label: Text('绿色')),
+                          ],
+                          selected: {backgroundMode},
+                          showSelectedIcon: false,
+                          onSelectionChanged: (values) {
+                            setState(() => backgroundMode = values.first);
+                            _queueSettings();
+                          },
+                        ),
+                        if (backgroundMode == 'GREEN') ...[
+                          const SizedBox(height: 18),
+                          const Text(
+                            '绿膜提取方法',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 8),
+                          SegmentedButton<String>(
+                            segments: const [
+                              ButtonSegment(
+                                value: 'border',
+                                label: Text('边框采样'),
+                              ),
+                              ButtonSegment(
+                                value: 'largest',
+                                label: Text('最大连通域'),
+                              ),
+                            ],
+                            selected: {_greenMethod},
+                            showSelectedIcon: false,
+                            onSelectionChanged: (values) {
+                              setState(() => _greenMethod = values.first);
+                              _queueSettings();
+                            },
+                            style: const ButtonStyle(
+                              visualDensity: VisualDensity.compact,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 18),
+                        Row(
+                          children: [
+                            const Text(
+                              '二值化阈值',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            const Spacer(),
+                            FilterChip(
+                              selected: autoThreshold,
+                              label: const Text('自动 OTSU'),
+                              onSelected: (selected) {
+                                setState(() => autoThreshold = selected);
+                                _queueSettings();
+                              },
+                            ),
+                          ],
+                        ),
+                        Slider(
+                          value: threshold.toDouble(),
+                          min: 0,
+                          max: 255,
+                          label: threshold.toString(),
+                          onChanged: (value) {
+                            setState(() {
+                              threshold = value.round();
+                              autoThreshold = false;
+                            });
+                            _queueSettings();
+                          },
+                        ),
+                        Center(
+                          child: Text(
+                            '当前阈值：$threshold',
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        const Text(
+                          '目标极性',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 8),
+                        SegmentedButton<String>(
+                          segments: const [
+                            ButtonSegment(value: 'AUTO', label: Text('自动')),
+                            ButtonSegment(value: 'LIGHT', label: Text('亮色')),
+                            ButtonSegment(value: 'DARK', label: Text('暗色')),
+                          ],
+                          selected: {polarityMode},
+                          showSelectedIcon: false,
+                          onSelectionChanged: (values) {
+                            setState(() => polarityMode = values.first);
+                            _queueSettings();
+                          },
+                        ),
+                        const SizedBox(height: 20),
+                        Row(
+                          children: [
+                            const Text(
+                              '最小碎片面积',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            const Spacer(),
+                            Text(
+                              minPieceArea.toString(),
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Slider(
+                          value: minPieceArea.toDouble(),
+                          min: 100,
+                          max: 10000,
+                          divisions: 99,
+                          onChanged: (value) {
+                            setState(() => minPieceArea = value.round());
+                            _queueSettings();
+                          },
+                        ),
+                        const Divider(height: 34),
+                        // 绿膜参数（仅GREEN+最大连通域时显示）
+                        if (backgroundMode == 'GREEN' &&
+                            _greenMethod == 'largest') ...[
+                          const Text(
+                            '绿膜形态学参数',
+                            style: TextStyle(
+                                fontWeight: FontWeight.w800, fontSize: 15),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            '光照差时增大、光照好时减小，越小边角越锐利',
+                            style: TextStyle(
+                                color: Color(0xFF94A3B8), fontSize: 12),
+                          ),
+                          const SizedBox(height: 10),
+                          _buildGreenParamSlider(
+                            '绿色闭运算核大小',
+                            _greenCloseKernel,
+                            1, 21,
+                            (v) {
+                              setState(() =>
+                                  _greenCloseKernel = v.round());
+                              _queueSettings();
+                            },
+                          ),
+                          _buildGreenParamSlider(
+                            '绿色闭运算迭代次数',
+                            _greenCloseIter,
+                            0, 5,
+                            (v) {
+                              setState(() =>
+                                  _greenCloseIter = v.round());
+                              _queueSettings();
+                            },
+                          ),
+                          _buildGreenParamSlider(
+                            'A4纸闭运算核大小',
+                            _paperCloseKernel,
+                            1, 15,
+                            (v) {
+                              setState(() =>
+                                  _paperCloseKernel = v.round());
+                              _queueSettings();
+                            },
+                          ),
+                          _buildGreenParamSlider(
+                            'A4纸闭运算迭代次数',
+                            _paperCloseIter,
+                            0, 5,
+                            (v) {
+                              setState(() =>
+                                  _paperCloseIter = v.round());
+                              _queueSettings();
+                            },
+                          ),
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              const Text('HSV色相',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 12)),
+                              const Spacer(),
+                              SizedBox(
+                                width: 60,
+                                child: Text(
+                                  '$_greenHueMin–$_greenHueMax',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 12,
+                                      color: Color(0xFF2563EB)),
+                                ),
+                              ),
+                            ],
+                          ),
+                          RangeSlider(
+                            values: RangeValues(
+                              _greenHueMin.toDouble(),
+                              _greenHueMax.toDouble(),
+                            ),
+                            min: 0, max: 120,
+                            divisions: 24,
+                            onChanged: (values) {
+                              setState(() {
+                                _greenHueMin = values.start.round();
+                                _greenHueMax = values.end.round();
+                              });
+                            },
+                            onChangeEnd: (_) => _queueSettings(),
+                          ),
+                          const SizedBox(height: 6),
+                          _buildGreenParamSlider(
+                            '饱和度下限', _greenSatMin, 0, 100, (v) {
+                            setState(() => _greenSatMin = v.round());
+                            _queueSettings();
+                          }),
+                          _buildGreenParamSlider(
+                            '亮度下限', _greenValMin, 0, 80, (v) {
+                            setState(() => _greenValMin = v.round());
+                            _queueSettings();
+                          }),
+                          const Divider(height: 28),
+                        ],
+                        Row(
+                          children: [
+                            const Text(
+                              '检测区域 ROI',
+                              style: TextStyle(fontWeight: FontWeight.w800),
+                            ),
+                            const Spacer(),
+                            Text(
+                              '完整画面 $cameraWidth×$cameraHeight',
+                              style: const TextStyle(
+                                color: Color(0xFF64748B),
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '当前 ROI：X $roiX，Y $roiY，宽 $roiWidth，高 $roiHeight',
+                          style: const TextStyle(
+                            color: Color(0xFF2563EB),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        _buildRoiSlider(
+                          label: 'X',
+                          value: roiX,
+                          minimum: 0,
+                          maximum: cameraWidth > 80
+                              ? cameraWidth - 80
+                              : 1,
+                          onChanged: (value) {
+                            setState(() {
+                              roiX = value;
+                              roiWidth = roiWidth.clamp(
+                                80,
+                                cameraWidth - roiX,
+                              ).toInt();
+                            });
+                            _queueSettings();
+                          },
+                        ),
+                        _buildRoiSlider(
+                          label: 'Y',
+                          value: roiY,
+                          minimum: 0,
+                          maximum: cameraHeight > 80
+                              ? cameraHeight - 80
+                              : 1,
+                          onChanged: (value) {
+                            setState(() {
+                              roiY = value;
+                              roiHeight = roiHeight.clamp(
+                                80,
+                                cameraHeight - roiY,
+                              ).toInt();
+                            });
+                            _queueSettings();
+                          },
+                        ),
+                        _buildRoiSlider(
+                          label: '宽',
+                          value: roiWidth,
+                          minimum: 80,
+                          maximum: cameraWidth - roiX,
+                          onChanged: (value) {
+                            setState(() => roiWidth = value);
+                            _queueSettings();
+                          },
+                        ),
+                        _buildRoiSlider(
+                          label: '高',
+                          value: roiHeight,
+                          minimum: 80,
+                          maximum: cameraHeight - roiY,
+                          onChanged: (value) {
+                            setState(() => roiHeight = value);
+                            _queueSettings();
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            OutlinedButton(
+                              onPressed: () {
+                                setState(() {
+                                  roiX = 0;
+                                  roiY = 0;
+                                  roiWidth = cameraWidth;
+                                  roiHeight = cameraHeight;
+                                });
+                                _queueSettings();
+                              },
+                              child: const Text('ROI 铺满画面'),
+                            ),
+                            const SizedBox(width: 10),
+                            OutlinedButton(
+                              onPressed: () {
+                                setState(() {
+                                  roiWidth = cameraWidth < 700
+                                      ? cameraWidth
+                                      : 700;
+                                  roiHeight = cameraHeight < 900
+                                      ? cameraHeight
+                                      : 900;
+                                  roiX = (cameraWidth - roiWidth) ~/ 2;
+                                  roiY = cameraHeight >= 1000 ? 100 : 0;
+                                });
+                                _queueSettings();
+                              },
+                              child: const Text('恢复默认 ROI'),
+                            ),
+                          ],
+                        ),
                       ],
                     ),
-                    Slider(
-                      value: minPieceArea.toDouble(),
-                      min: 100,
-                      max: 10000,
-                      divisions: 99,
-                      onChanged: (value) {
-                        setState(() => minPieceArea = value.round());
-                        _queueSettings();
-                      },
-                    ),
-                  ],
-                ),
+                  ),
               ),
-            ),
           ],
         ),
       ),
     );
   }
 
+  Widget _buildGreenParamSlider(
+    String label,
+    int value,
+    int min,
+    int max,
+    ValueChanged<double> onChanged,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(label,
+                style: const TextStyle(
+                    fontWeight: FontWeight.w700, fontSize: 12)),
+          ),
+          Expanded(
+            child: Slider(
+              value: value.toDouble(),
+              min: min.toDouble(),
+              max: max.toDouble(),
+              divisions: max - min,
+              onChanged: onChanged,
+              onChangeEnd: (_) => _queueSettings(),
+            ),
+          ),
+          SizedBox(
+            width: 30,
+            child: Text(
+              value.toString(),
+              style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                  color: Color(0xFF2563EB)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRoiSlider({
+    required String label,
+    required int value,
+    required int minimum,
+    required int maximum,
+    required ValueChanged<int> onChanged,
+  }) {
+    final safeMaximum = maximum > minimum ? maximum : minimum + 1;
+    final safeValue = value.clamp(minimum, safeMaximum).toInt();
+    return Row(
+      children: [
+        SizedBox(
+          width: 28,
+          child: Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+        Expanded(
+          child: Slider(
+            value: safeValue.toDouble(),
+            min: minimum.toDouble(),
+            max: safeMaximum.toDouble(),
+            onChanged: (newValue) => onChanged(newValue.round()),
+          ),
+        ),
+        SizedBox(
+          width: 42,
+          child: Text(
+            value.toString(),
+            textAlign: TextAlign.right,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildSerialSettings() {
     return _Panel(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Text(
-                  '串口设置',
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-                ),
-                const Spacer(),
-                _ConnectionRow(
-                  connected: serialConnected,
-                  connectedText: '已连接',
-                  disconnectedText: '未连接',
-                ),
-              ],
-            ),
-            const SizedBox(height: 22),
-            Row(
-              children: [
-                Expanded(
-                  flex: 2,
-                  child: _CoordinateField(
-                    label: '串口设备',
-                    unit: 'CH340 通常为 /dev/ttyUSB0',
-                    controller: serialPortController,
-                    numeric: false,
+      child: Scrollbar(
+        controller: _serialScrollController,
+        thumbVisibility: true,
+        interactive: true,
+        child: SingleChildScrollView(
+          controller: _serialScrollController,
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Text(
+                    '串口设置',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
                   ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: _DropdownField<int>(
-                    label: '波特率',
-                    value:
-                        const [
-                          9600,
-                          19200,
-                          38400,
-                          57600,
-                          115200,
-                          230400,
-                          460800,
-                          921600,
-                        ].contains(serialBaud)
-                        ? serialBaud
-                        : 115200,
-                    items: const [
-                      9600,
-                      19200,
-                      38400,
-                      57600,
-                      115200,
-                      230400,
-                      460800,
-                      921600,
-                    ],
-                    itemText: (value) => '$value bit/s',
-                    onChanged: (value) {
-                      if (value != null) {
-                        setState(() {
-                          serialBaud = value;
-                          serialBaudController.text = value.toString();
-                        });
-                      }
-                    },
+                  const Spacer(),
+                  _ConnectionRow(
+                    connected: serialConnected,
+                    connectedText: '已连接',
+                    disconnectedText: serialReconnecting
+                        ? '自动重连中'
+                        : serialDevicePresent
+                        ? '待连接'
+                        : '未发现USB串口',
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: _CoordinateField(
-                    label: '自动抓取Z',
-                    unit: '坐标单位',
-                    controller: serialPickZController,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: _CoordinateField(
-                    label: '自动放置Z',
-                    unit: '坐标单位',
-                    controller: serialPlaceZController,
-                  ),
-                ),
-                const Spacer(flex: 2),
-              ],
-            ),
-            const SizedBox(height: 22),
-            Row(
-              children: [
-                SizedBox(
-                  height: 48,
-                  child: FilledButton(
-                    onPressed: connected
-                        ? () => _saveSerialSettings(connect: true)
-                        : null,
-                    child: Text(serialConnected ? '重新连接' : '保存并连接'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                SizedBox(
-                  height: 48,
-                  child: OutlinedButton(
-                    onPressed: connected
-                        ? () => _saveSerialSettings(connect: false)
-                        : null,
-                    child: const Text('仅保存'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                SizedBox(
-                  height: 48,
-                  child: OutlinedButton(
-                    onPressed: serialConnected ? _disconnectSerial : null,
-                    child: const Text('断开串口'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
+                ],
               ),
-              child: Text(
-                serialError.isEmpty
-                    ? (serialLastReply.isEmpty ? '等待串口操作' : serialLastReply)
-                    : '$serialLastReply\n$serialError',
-                style: TextStyle(
-                  color: serialError.isEmpty
-                      ? const Color(0xFF0F766E)
-                      : const Color(0xFFDC2626),
-                  fontWeight: FontWeight.w700,
+              const SizedBox(height: 22),
+              Row(
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: _CoordinateField(
+                      label: '串口设备',
+                      unit: '自动兼容 /dev/ttyUSB0 与 ttyUSB1',
+                      controller: serialPortController,
+                      numeric: false,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: _DropdownField<int>(
+                      label: '波特率',
+                      value:
+                          const [
+                            9600,
+                            19200,
+                            38400,
+                            57600,
+                            115200,
+                            230400,
+                            460800,
+                            921600,
+                          ].contains(serialBaud)
+                          ? serialBaud
+                          : 115200,
+                      items: const [
+                        9600,
+                        19200,
+                        38400,
+                        57600,
+                        115200,
+                        230400,
+                        460800,
+                        921600,
+                      ],
+                      itemText: (value) => '$value bit/s',
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() {
+                            serialBaud = value;
+                            serialBaudController.text = value.toString();
+                          });
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: _CoordinateField(
+                      label: '自动抓取Z',
+                      unit: '坐标单位',
+                      controller: serialPickZController,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: _CoordinateField(
+                      label: '自动放置Z',
+                      unit: '坐标单位',
+                      controller: serialPlaceZController,
+                    ),
+                  ),
+                  const Spacer(flex: 2),
+                ],
+              ),
+              const SizedBox(height: 22),
+              Row(
+                children: [
+                  SizedBox(
+                    height: 48,
+                    child: FilledButton(
+                      onPressed: connected
+                          ? () => _saveSerialSettings(connect: true)
+                          : null,
+                      child: Text(serialConnected ? '重新连接' : '保存并连接'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    height: 48,
+                    child: OutlinedButton(
+                      onPressed: connected
+                          ? () => _saveSerialSettings(connect: false)
+                          : null,
+                      child: const Text('仅保存'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    height: 48,
+                    child: OutlinedButton(
+                      onPressed: serialConnected ? _disconnectSerial : null,
+                      child: const Text('断开串口'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Text(
+                  '实际设备：'
+                  '${serialActivePort.isEmpty ? "等待设备上线" : serialActivePort}\n'
+                  '${serialError.isEmpty
+                      ? (serialLastReply.isEmpty ? "等待串口操作" : serialLastReply)
+                      : "$serialLastReply\n$serialError"}',
+                  style: TextStyle(
+                    color: serialError.isEmpty
+                        ? const Color(0xFF0F766E)
+                        : const Color(0xFFDC2626),
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
-            ),
-          ],
+              const SizedBox(height: 24),
+              // 原始收发日志
+              Row(
+                children: [
+                  const Text(
+                    '原始收发日志',
+                    style: TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w800),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${_serialRawLog.length} 条',
+                    style: const TextStyle(
+                        color: Color(0xFF94A3B8), fontSize: 12),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                height: 220,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F172A),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: _serialRawLog.isEmpty
+                    ? const Center(
+                        child: Text(
+                          '暂无收发数据',
+                          style: TextStyle(color: Color(0xFF64748B)),
+                        ),
+                      )
+                    : ListView.builder(
+                        itemCount: _serialRawLog.length,
+                        itemBuilder: (context, index) {
+                          final entry = _serialRawLog[index];
+                          final isTx = entry['d'] == 'TX';
+                          final hex = entry['hex'] as String;
+                          final parsed = _parseSerialFrame(hex, isTx);
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '${entry['d']}  $hex',
+                                  style: TextStyle(
+                                    fontFamily: 'PuzzleLatin',
+                                    fontSize: 11,
+                                    color: isTx
+                                        ? const Color(0xFF7DD3FC)
+                                        : const Color(0xFF86EFAC),
+                                    height: 1.4,
+                                  ),
+                                ),
+                                if (parsed != null)
+                                  Text(
+                                    parsed,
+                                    style: const TextStyle(
+                                      fontFamily: 'PuzzleLatin',
+                                      fontSize: 10,
+                                      color: Color(0xFFFDE68A),
+                                      height: 1.3,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1486,9 +2068,12 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                     const SizedBox(height: 6),
                     Text(
                       switch (calibrationTarget) {
-                        'a' => '当前：点击 A4 纸右上角',
-                        'b' => '当前：点击 A4 纸左下角',
-                        _ => '当前：点击 A4 纸左上角',
+                        'a' => '当前：记录左上区域点 A',
+                        'b' => '当前：记录右上区域点 B',
+                        'c' => '当前：记录左中区域点 C',
+                        'd' => '当前：记录右中区域点 D',
+                        'e' => '当前：记录左下区域点 E',
+                        _ => '当前：记录右下区域点 F',
                       },
                       style: const TextStyle(
                         color: Color(0xFF2563EB),
@@ -1503,34 +2088,53 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                           aspectRatio: 9 / 16,
                           child: LayoutBuilder(
                             builder: (context, constraints) {
+                              final size = constraints.biggest;
                               return GestureDetector(
                                 onTapDown: cameraOnline
                                     ? (details) => _recordVisualCalibration(
                                         details,
-                                        constraints.biggest,
+                                        size,
                                       )
                                     : null,
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(14),
-                                  child: ColoredBox(
-                                    color: const Color(0xFF111827),
-                                    child: cameraFrame == null || !cameraOnline
-                                        ? const Center(
-                                            child: Text(
-                                              '摄像头离线\n上线后可选择视觉点',
-                                              textAlign: TextAlign.center,
-                                              style: TextStyle(
-                                                color: Color(0xFFCBD5E1),
-                                                height: 1.6,
+                                  child: Stack(
+                                    children: [
+                                      ColoredBox(
+                                        color: const Color(0xFF111827),
+                                        child: cameraFrame == null || !cameraOnline
+                                            ? const Center(
+                                                child: Text(
+                                                  '摄像头离线\n上线后可选择视觉点',
+                                                  textAlign: TextAlign.center,
+                                                  style: TextStyle(
+                                                    color: Color(0xFFCBD5E1),
+                                                    height: 1.6,
+                                                  ),
+                                                ),
+                                              )
+                                            : Image.memory(
+                                                cameraFrame!,
+                                                fit: BoxFit.contain,
+                                                gaplessPlayback: true,
+                                                filterQuality: FilterQuality.low,
                                               ),
-                                            ),
-                                          )
-                                        : Image.memory(
-                                            cameraFrame!,
-                                            fit: BoxFit.fill,
-                                            gaplessPlayback: true,
-                                            filterQuality: FilterQuality.low,
+                                      ),
+                                      // Calibration dot overlay.
+                                      if (cameraFrame != null && cameraOnline)
+                                        CustomPaint(
+                                          size: Size.infinite,
+                                          painter: _CalibrationDotPainter(
+                                             pointA: _previewPointA,
+                                             pointB: _previewPointB,
+                                             pointC: _previewPointC,
+                                             pointD: _previewPointD,
+                                             pointE: _previewPointE,
+                                             pointF: _previewPointF,
+                                             selected: calibrationTarget,
                                           ),
+                                        ),
+                                    ],
                                   ),
                                 ),
                               );
@@ -1550,7 +2154,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                     Row(
                       children: [
                         const Text(
-                          '平台三点仿射标定',
+                          '平台六点仿射标定',
                           style: TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.w800,
@@ -1566,16 +2170,20 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                     ),
                     const SizedBox(height: 7),
                     const Text(
-                      '依次记录 A4 纸右上角、左下角和左上角的视觉坐标与平台坐标，'
-                      '三个点不共线时计算像素到平台的仿射换算关系。',
+                      '依次记录六组视觉坐标与平台坐标，点位可以任意选择，'
+                      '但应分散覆盖整个抓取和放置区域。系统使用最小二乘拟合，'
+                      '降低单个点测量误差造成的整体偏差。',
                       style: TextStyle(color: Color(0xFF64748B), height: 1.5),
                     ),
                     const SizedBox(height: 16),
                     SegmentedButton<String>(
                       segments: const [
-                        ButtonSegment(value: 'a', label: Text('A：右上角')),
-                        ButtonSegment(value: 'b', label: Text('B：左下角')),
-                        ButtonSegment(value: 'c', label: Text('C：左上角')),
+                        ButtonSegment(value: 'a', label: Text('A')),
+                        ButtonSegment(value: 'b', label: Text('B')),
+                        ButtonSegment(value: 'c', label: Text('C')),
+                        ButtonSegment(value: 'd', label: Text('D')),
+                        ButtonSegment(value: 'e', label: Text('E')),
+                        ButtonSegment(value: 'f', label: Text('F')),
                       ],
                       selected: {calibrationTarget},
                       showSelectedIcon: false,
@@ -1596,7 +2204,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                             SizedBox(
                               width: cardWidth,
                               child: _CalibrationPointCard(
-                                title: 'A · A4 纸右上角',
+                                title: 'A · 左上区域',
                                 visualText: _formatCalibrationPoint(
                                   calibrationVisualA,
                                 ),
@@ -1614,7 +2222,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                             SizedBox(
                               width: cardWidth,
                               child: _CalibrationPointCard(
-                                title: 'B · A4 纸左下角',
+                                title: 'B · 右上区域',
                                 visualText: _formatCalibrationPoint(
                                   calibrationVisualB,
                                 ),
@@ -1632,7 +2240,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                             SizedBox(
                               width: cardWidth,
                               child: _CalibrationPointCard(
-                                title: 'C · A4 纸左上角',
+                                title: 'C · 左中区域',
                                 visualText: _formatCalibrationPoint(
                                   calibrationVisualC,
                                 ),
@@ -1644,6 +2252,60 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                                     setState(() => calibrationTarget = 'c'),
                                 onRecordPlatform: serialConnected
                                     ? () => _recordPlatformCalibration('c')
+                                    : null,
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              child: _CalibrationPointCard(
+                                title: 'D · 右中区域',
+                                visualText: _formatCalibrationPoint(
+                                  calibrationVisualD,
+                                ),
+                                platformText: _formatCalibrationPoint(
+                                  calibrationPlatformD,
+                                ),
+                                selected: calibrationTarget == 'd',
+                                onSelect: () =>
+                                    setState(() => calibrationTarget = 'd'),
+                                onRecordPlatform: serialConnected
+                                    ? () => _recordPlatformCalibration('d')
+                                    : null,
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              child: _CalibrationPointCard(
+                                title: 'E · 左下区域',
+                                visualText: _formatCalibrationPoint(
+                                  calibrationVisualE,
+                                ),
+                                platformText: _formatCalibrationPoint(
+                                  calibrationPlatformE,
+                                ),
+                                selected: calibrationTarget == 'e',
+                                onSelect: () =>
+                                    setState(() => calibrationTarget = 'e'),
+                                onRecordPlatform: serialConnected
+                                    ? () => _recordPlatformCalibration('e')
+                                    : null,
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              child: _CalibrationPointCard(
+                                title: 'F · 右下区域',
+                                visualText: _formatCalibrationPoint(
+                                  calibrationVisualF,
+                                ),
+                                platformText: _formatCalibrationPoint(
+                                  calibrationPlatformF,
+                                ),
+                                selected: calibrationTarget == 'f',
+                                onSelect: () =>
+                                    setState(() => calibrationTarget = 'f'),
+                                onRecordPlatform: serialConnected
+                                    ? () => _recordPlatformCalibration('f')
                                     : null,
                               ),
                             ),
@@ -1684,8 +2346,10 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                                         '${calibrationScaleX.toStringAsFixed(5)}，'
                                         'Y轴单位比例 '
                                         '${calibrationScaleY.toStringAsFixed(5)}，'
-                                        '行列式 '
-                                        '${calibrationAffineDeterminant.toStringAsFixed(6)}'
+                                        '均方根误差 '
+                                        '${calibrationRmsError.toStringAsFixed(1)}，'
+                                        '最大误差 '
+                                        '${calibrationMaxError.toStringAsFixed(1)}'
                                   : '尚未完成标定，自动抓取动作不会发送。',
                               style: const TextStyle(
                                 fontWeight: FontWeight.w700,
@@ -1701,9 +2365,10 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                     ),
                     const SizedBox(height: 12),
                     const Text(
-                      '三点仿射可以补偿平移、旋转、X/Y 比例差异和轻微斜切。'
-                      '三个点必须分散且不共线，建议直接使用 A4 纸的三个角。'
-                      '若摄像头存在明显透视畸变，仍需后续升级为四点单应性标定。'
+                      '六点不需要固定在 A4 纸角上，但不要集中在同一区域。'
+                      '建议按左上、右上、左中、右中、左下、右下分布，'
+                      '并覆盖拼图最终放置位置。标定后误差越小越好；'
+                      '若最大误差明显高于其他点，应重新记录对应点。'
                       'Z 轴高度仍使用串口设置中的抓取 Z 与放置 Z。',
                       style: TextStyle(color: Color(0xFF64748B), height: 1.55),
                     ),
@@ -1772,6 +2437,51 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     );
   }
 
+  Widget _buildSystemSettings() {
+    return _Panel(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '系统控制',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              '重启后端进程，前端自动重连。',
+              style: TextStyle(color: Color(0xFF64748B), height: 1.5),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              height: 50,
+              child: OutlinedButton.icon(
+                onPressed: () async {
+                  await backend.restartBackend();
+                },
+                icon: const Icon(Icons.restart_alt, size: 18),
+                label: const Text('重启后端'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFFF59E0B),
+                  side: const BorderSide(color: Color(0xFFF59E0B)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              '关闭前端应用时后端也会自动退出。',
+              style: TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _changeThreshold(int amount, StateSetter setSheetState) {
     setSheetState(() {
       threshold = (threshold + amount).clamp(0, 255);
@@ -1805,7 +2515,20 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
           manualThreshold: threshold,
           polarityMode: polarityMode,
           backgroundMode: backgroundMode,
+          greenMethod: _greenMethod,
+          greenHueMin: _greenHueMin,
+          greenHueMax: _greenHueMax,
+          greenSatMin: _greenSatMin,
+          greenValMin: _greenValMin,
+          greenCloseKernel: _greenCloseKernel,
+          greenCloseIter: _greenCloseIter,
+          paperCloseKernel: _paperCloseKernel,
+          paperCloseIter: _paperCloseIter,
           minPieceArea: minPieceArea,
+          roiX: roiX,
+          roiY: roiY,
+          roiWidth: roiWidth,
+          roiHeight: roiHeight,
         );
         await Future<void>.delayed(const Duration(milliseconds: 80));
       }
@@ -1855,13 +2578,35 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            '二值化实时预览',
-                            style: TextStyle(
-                              color: Color(0xFF111827),
-                              fontSize: 17,
-                              fontWeight: FontWeight.w800,
-                            ),
+                          Row(
+                            children: [
+                              const Text(
+                                '实时预览',
+                                style: TextStyle(
+                                  color: Color(0xFF111827),
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const Spacer(),
+                              SegmentedButton<bool>(
+                                segments: const [
+                                  ButtonSegment(value: true, label: Text('二值化')),
+                                  ButtonSegment(value: false, label: Text('原图')),
+                                ],
+                                selected: {_showBinaryPreview},
+                                showSelectedIcon: false,
+                                onSelectionChanged: (values) {
+                                  setSheetState(
+                                    () => _showBinaryPreview = values.first,
+                                  );
+                                },
+                                style: const ButtonStyle(
+                                  visualDensity: VisualDensity.compact,
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                ),
+                              ),
+                            ],
                           ),
                           const SizedBox(height: 12),
                           Expanded(
@@ -1872,11 +2617,13 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                                 child: ValueListenableBuilder<Uint8List?>(
                                   valueListenable: binaryPreview,
                                   builder: (context, bytes, child) {
-                                    if (bytes == null) {
+                                    final imageBytes =
+                                        _showBinaryPreview ? bytes : cameraFrame;
+                                    if (imageBytes == null) {
                                       return const SizedBox.expand();
                                     }
                                     return Image.memory(
-                                      bytes,
+                                      imageBytes,
                                       fit: BoxFit.contain,
                                       gaplessPlayback: true,
                                       filterQuality: FilterQuality.low,
@@ -1935,6 +2682,41 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                               _queueSettings();
                             },
                           ),
+                          if (backgroundMode == 'GREEN') ...[
+                            const SizedBox(height: 12),
+                            const Text(
+                              '绿膜提取方法',
+                              style: TextStyle(
+                                color: Color(0xFF334155),
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 7),
+                            SegmentedButton<String>(
+                              segments: const [
+                                ButtonSegment(
+                                  value: 'border',
+                                  label: Text('边框采样'),
+                                ),
+                                ButtonSegment(
+                                  value: 'largest',
+                                  label: Text('最大连通域'),
+                                ),
+                              ],
+                              selected: {_greenMethod},
+                              showSelectedIcon: false,
+                              onSelectionChanged: (values) {
+                                setSheetState(
+                                  () => _greenMethod = values.first,
+                                );
+                                _queueSettings();
+                              },
+                              style: const ButtonStyle(
+                                visualDensity: VisualDensity.compact,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 12),
                           Row(
                             children: [
@@ -1950,7 +2732,9 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                                 selected: autoThreshold,
                                 label: const Text('自动 OTSU'),
                                 onSelected: (selected) {
-                                  setSheetState(() => autoThreshold = selected);
+                                  setSheetState(
+                                    () => autoThreshold = selected,
+                                  );
                                   _queueSettings();
                                 },
                               ),
@@ -2059,6 +2843,96 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       tuningOpen = false;
       unawaited(_pollBackend());
     }
+  }
+
+  String? _parseSerialFrame(String hex, bool isTx) {
+    try {
+      final bytes =
+          hex.split(' ').map((s) => int.parse(s, radix: 16)).toList();
+      if (bytes.length < 6) return null;
+      if (bytes[0] != 0xAA || bytes[1] != 0x55) return null;
+      final cmd = bytes[2];
+      final flags = bytes[3];
+      final len = bytes[5];
+      if (bytes.length < 6 + len) return null;
+
+      String flagStr = '';
+      if (flags & 0x01 != 0) flagStr += ' REL';
+      if (flags & 0x10 != 0) flagStr += ' RETRY';
+      if (flags & 0x20 != 0) flagStr += ' ACK';
+
+      if (isTx) {
+        switch (cmd) {
+          case 0x10:
+            if (len >= 28) {
+              final payload = bytes.sublist(6, 6 + len);
+              final taskId = payload[0];
+              final idx = payload[1];
+              final cnt = payload[2];
+              final pieceId = payload[3];
+              final pickX = _i32le(payload, 4);
+              final pickY = _i32le(payload, 8);
+              final pickZ = _i32le(payload, 12);
+              final placeX = _i32le(payload, 16);
+              final placeY = _i32le(payload, 20);
+              final placeZ = _i32le(payload, 24);
+              final rot = _i16le(payload, 28);
+              return '→ 抓取动作 T$taskId #$idx/$cnt 碎片$pieceId'
+                  ' 取($pickX,$pickY,$pickZ) 放($placeX,$placeY,$placeZ) ${rot / 100.0}°$flagStr';
+            }
+            break;
+          case 0x11:
+            if (len >= 1) {
+              return '→ 执行任务 T${bytes[6]}$flagStr';
+            }
+            break;
+          case 0x20:
+            if (len >= 15) {
+              final payload = bytes.sublist(6, 6 + len);
+              final ctrlType = payload[0];
+              final x = _i32le(payload, 1);
+              final y = _i32le(payload, 5);
+              final z = _i32le(payload, 9);
+              final r = _i16le(payload, 13);
+              final typeName = ['', '绝对移动', '相对移动', '归零', '查询位置'][ctrlType.clamp(0, 4)];
+              return '→ $typeName ($x,$y,$z) ${r / 100.0}°$flagStr';
+            }
+            break;
+          default:
+            return '→ CMD 0x${cmd.toRadixString(16).toUpperCase().padLeft(2, '0')} LEN=$len$flagStr';
+        }
+      } else {
+        switch (cmd) {
+          case 0x80:
+            if (len >= 1) {
+              return '← OK seq=${bytes[6]}$flagStr';
+            }
+            break;
+          case 0x81:
+            if (len >= 1) {
+              return '← RETRY seq=${bytes[6]}$flagStr';
+            }
+            break;
+          default:
+            return '← CMD 0x${cmd.toRadixString(16).toUpperCase().padLeft(2, '0')} LEN=$len$flagStr';
+        }
+      }
+    } catch (_) {
+      return null;
+    }
+    return null;
+  }
+
+  static int _i32le(List<int> bytes, int offset) {
+    return (bytes[offset] & 0xFF) |
+        ((bytes[offset + 1] & 0xFF) << 8) |
+        ((bytes[offset + 2] & 0xFF) << 16) |
+        ((bytes[offset + 3] & 0xFF) << 24);
+  }
+
+  static int _i16le(List<int> bytes, int offset) {
+    final v = (bytes[offset] & 0xFF) | ((bytes[offset + 1] & 0xFF) << 8);
+    return v > 0x7FFF ? v - 0x10000 : v;
   }
 }
 
@@ -2473,6 +3347,146 @@ class _CoordinateField extends StatelessWidget {
       ],
     );
   }
+}
+
+class _CalibrationDotPainter extends CustomPainter {
+  _CalibrationDotPainter({
+    this.pointA,
+    this.pointB,
+    this.pointC,
+    this.pointD,
+    this.pointE,
+    this.pointF,
+    this.selected = 'a',
+  });
+
+  final Offset? pointA;
+  final Offset? pointB;
+  final Offset? pointC;
+  final Offset? pointD;
+  final Offset? pointE;
+  final Offset? pointF;
+  final String selected;
+
+  static const Color _colorA = Color(0xFFEF4444); // Red
+  static const Color _colorB = Color(0xFF3B82F6); // Blue
+  static const Color _colorC = Color(0xFF10B981); // Green
+  static const Color _colorD = Color(0xFFF59E0B); // Amber
+  static const Color _colorE = Color(0xFF8B5CF6); // Purple
+  static const Color _colorF = Color(0xFF06B6D4); // Cyan
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    _drawPoint(canvas, size, pointA, 'A', _colorA, selected == 'a');
+    _drawPoint(canvas, size, pointB, 'B', _colorB, selected == 'b');
+    _drawPoint(canvas, size, pointC, 'C', _colorC, selected == 'c');
+    _drawPoint(canvas, size, pointD, 'D', _colorD, selected == 'd');
+    _drawPoint(canvas, size, pointE, 'E', _colorE, selected == 'e');
+    _drawPoint(canvas, size, pointF, 'F', _colorF, selected == 'f');
+  }
+
+  void _drawPoint(Canvas canvas, Size bounds, Offset? point, String label,
+      Color color, bool isSelected) {
+    if (point == null) {
+      return;
+    }
+    final r = isSelected ? 7.0 : 5.0;
+
+    // White outer ring for contrast
+    canvas.drawCircle(
+      point,
+      r + 2,
+      Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.fill,
+    );
+
+    // Colored dot
+    canvas.drawCircle(
+      point,
+      r,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.fill,
+    );
+
+    // Selected highlight ring
+    if (isSelected) {
+      canvas.drawCircle(
+        point,
+        r + 3,
+        Paint()
+          ..color = color.withAlpha(90)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5,
+      );
+    }
+
+    // Label text below the dot
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w900,
+          shadows: const [
+            Shadow(color: Colors.white, blurRadius: 3),
+            Shadow(color: Colors.white, blurRadius: 3),
+          ],
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    final textOffset = Offset(
+      point.dx - textPainter.width / 2,
+      point.dy + r + 3,
+    );
+    // Keep label within bounds
+    final clampedDx =
+        textOffset.dx.clamp(2.0, bounds.width - textPainter.width - 2).toDouble();
+    final clampedDy =
+        textOffset.dy.clamp(2.0, bounds.height - textPainter.height - 2).toDouble();
+    textPainter.paint(canvas, Offset(clampedDx, clampedDy));
+  }
+
+  @override
+  bool shouldRepaint(covariant _CalibrationDotPainter oldDelegate) {
+    return pointA != oldDelegate.pointA ||
+        pointB != oldDelegate.pointB ||
+        pointC != oldDelegate.pointC ||
+        pointD != oldDelegate.pointD ||
+        pointE != oldDelegate.pointE ||
+        pointF != oldDelegate.pointF ||
+        selected != oldDelegate.selected;
+  }
+}
+
+class _SplitLinePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = const Color(0x80F59E0B) // 半透明琥珀色
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+
+    final dashWidth = 10.0;
+    final gapWidth = 6.0;
+    var x = 0.0;
+    final y = 0.0; // drawn at Positioned top
+    while (x < size.width) {
+      canvas.drawLine(
+        Offset(x, y),
+        Offset((x + dashWidth).clamp(0, size.width), y),
+        paint,
+      );
+      x += dashWidth + gapWidth;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SplitLinePainter oldDelegate) => false;
 }
 
 class _ConnectionRow extends StatelessWidget {
