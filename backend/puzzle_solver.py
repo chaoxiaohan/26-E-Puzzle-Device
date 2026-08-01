@@ -72,18 +72,19 @@ def solve_camera_rectangle(
         / max(1.0, metrics["height"])
     )
     if (
-        metrics["coverage"] < 0.86
-        or metrics["overlap"] > 0.015
-        or metrics["corners"] < 0.25
-        or not 0.98 <= aspect_ratio <= 2.45
+        metrics["coverage"] < 0.80
+        or metrics["overlap"] > 0.06
+        or metrics["corners"] < 0.15
+        or not 0.90 <= aspect_ratio <= 2.60
     ):
         return None, score, nodes, None
     if not allow_relaxed and not constraint_report["valid"]:
         return None, score, nodes, None
 
     relaxed = bool(
-        metrics["coverage"] < 0.94
-        or metrics["corners"] < 0.75
+        metrics["coverage"] < 0.90
+        or metrics["corners"] < 0.70
+        or metrics["overlap"] > 0.008
         or not constraint_report["valid"]
     )
 

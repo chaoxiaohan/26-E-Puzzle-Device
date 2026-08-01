@@ -43,8 +43,11 @@ PUZZLE_CAMERA=/dev/video2 ./start.sh
 只检查拼图算法：
 
 ```bash
-python3 self_test.py
+python3 -m tests.self_test
 ```
+
+其他回归测试也统一放在 `tests/`，从项目根目录使用
+`python3 -m tests.文件名` 运行。
 
 ## Flutter 控制台
 
