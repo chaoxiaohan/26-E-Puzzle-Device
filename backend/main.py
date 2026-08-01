@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import concurrent.futures
+import copy
 import itertools
 import json
 import math
@@ -19,6 +20,7 @@ from layout_constraints import (
 from cpp_rectangle_solver import solve as solve_rectangle_by_cover_cpp
 from card_face_solver import (
     close_card_pattern_layout,
+    generate_all_slot_layouts,
     generate_shape_swap_layouts,
     render_layout_preview,
     score_layout_global_pattern,
@@ -29,6 +31,13 @@ from card_face_solver import (
 from puzzle_solver import normalize_layout, solve_camera_rectangle
 from serial_protocol import SerialController
 from solver_v2 import solve as solve_edge_layout
+from template_matcher import (
+    align_layout_to_horizontal,
+    learn_templates,
+    load_templates,
+    match_templates,
+    save_templates,
+)
 from ui_bridge import UiBridge
 
 
@@ -166,18 +175,21 @@ def refine_polygon_corners(contour, polygon):
         end = vertices[(edge_index + 1) % edge_count]
         edge_length = float(np.linalg.norm(end - start))
         edge_positions = positions[:, edge_index]
+        edge_distances = distances[:, edge_index]
         middle_points = contour_points[
             (assigned_edges == edge_index)
-            & (edge_positions >= 0.08)
-            & (edge_positions <= 0.92)
+            & (edge_positions >= 0.06)
+            & (edge_positions <= 0.94)
+            & (edge_distances <= max(2.5, edge_length * 0.06))
         ]
-        if len(middle_points) < 6:
+        if len(middle_points) < 8:
             middle_points = contour_points[
                 (assigned_edges == edge_index)
-                & (edge_positions >= -0.05)
-                & (edge_positions <= 1.05)
+                & (edge_positions >= -0.03)
+                & (edge_positions <= 1.03)
+                & (edge_distances <= max(4.0, edge_length * 0.10))
             ]
-        if len(middle_points) < 4:
+        if len(middle_points) < 6:
             direction = (end - start) / max(edge_length, 1.0)
             fitted_lines.append(((start + end) * 0.5, direction))
             continue
@@ -195,11 +207,40 @@ def refine_polygon_corners(contour, polygon):
         if float(np.dot(direction, end - start)) < 0:
             direction = -direction
         line_point = np.array([x, y], dtype=np.float32)
-        distances = np.abs(
+        residuals = np.abs(
             (points[:, 0] - line_point[0]) * direction[1]
             - (points[:, 1] - line_point[1]) * direction[0]
         )
-        if float(np.median(distances)) > max(2.5, edge_length * 0.035):
+        median_residual = float(np.median(residuals))
+        inlier_limit = max(1.25, min(3.0, median_residual * 2.5))
+        inliers = points[residuals <= inlier_limit]
+        if len(inliers) >= 6 and len(inliers) < len(points):
+            vx, vy, x, y = cv2.fitLine(
+                inliers,
+                cv2.DIST_HUBER,
+                0,
+                0.01,
+                0.01,
+            ).reshape(-1)
+            direction = np.array([vx, vy], dtype=np.float32)
+            direction /= max(float(np.linalg.norm(direction)), 1e-6)
+            if float(np.dot(direction, end - start)) < 0:
+                direction = -direction
+            line_point = np.array([x, y], dtype=np.float32)
+            residuals = np.abs(
+                (inliers[:, 0] - line_point[0]) * direction[1]
+                - (inliers[:, 1] - line_point[1]) * direction[0]
+            )
+
+        seed_direction = (end - start) / max(edge_length, 1.0)
+        direction_agreement = abs(float(np.dot(direction, seed_direction)))
+        median_residual = float(np.median(residuals))
+        high_residual = float(np.percentile(residuals, 90))
+        if (
+            direction_agreement < math.cos(math.radians(12.0))
+            or median_residual > max(1.8, edge_length * 0.018)
+            or high_residual > max(3.0, edge_length * 0.035)
+        ):
             direction = (end - start) / max(edge_length, 1.0)
             line_point = (start + end) * 0.5
         fitted_lines.append((line_point, direction))
@@ -238,6 +279,74 @@ def refine_polygon_corners(contour, polygon):
     if not 0.82 <= refined_area / contour_area <= 1.18:
         return polygon
     return np.rint(refined).astype(np.int32)
+
+
+def approximate_piece_polygon(contour, polygon_epsilon):
+    """在邻近简化尺度中选择稳定的3至5边轮廓。"""
+    perimeter = cv2.arcLength(contour, True)
+    contour_area = abs(float(cv2.contourArea(contour)))
+    if perimeter < 1 or contour_area < 1:
+        return None
+
+    candidates = []
+    signatures = set()
+    for scale in (0.82, 0.92, 1.0, 1.10, 1.22, 1.36, 1.52):
+        polygon = cv2.approxPolyDP(
+            contour,
+            polygon_epsilon * scale * perimeter,
+            True,
+        )
+        if len(polygon) < 3 or len(polygon) > 5:
+            continue
+        points = polygon.reshape(-1, 2).astype(np.float32)
+        signature = tuple(map(tuple, np.rint(points).astype(np.int32)))
+        if signature in signatures:
+            continue
+        signatures.add(signature)
+
+        edge_lengths = np.linalg.norm(
+            np.roll(points, -1, axis=0) - points,
+            axis=1,
+        )
+        shortest_ratio = float(np.min(edge_lengths)) / perimeter
+        area_ratio = abs(float(cv2.contourArea(polygon))) / contour_area
+        area_score = 1.0 - abs(1.0 - area_ratio)
+        short_edge_penalty = max(0.0, 0.055 - shortest_ratio) * 1.8
+        complexity_penalty = max(0, len(points) - 3) * 0.035
+        scale_penalty = abs(scale - 1.0) * 0.002
+        score = (
+            area_score
+            - short_edge_penalty
+            - complexity_penalty
+            - scale_penalty
+        )
+        candidates.append((score, scale, polygon))
+
+    if not candidates:
+        return None
+    finalists = []
+    for _, scale, polygon in sorted(
+        candidates,
+        key=lambda item: item[0],
+        reverse=True,
+    )[:2]:
+        polygon = refine_polygon_corners(contour, polygon)
+        points = polygon.reshape(-1, 2).astype(np.float32)
+        edge_lengths = np.linalg.norm(
+            np.roll(points, -1, axis=0) - points,
+            axis=1,
+        )
+        shortest_ratio = float(np.min(edge_lengths)) / perimeter
+        area_ratio = abs(float(cv2.contourArea(polygon))) / contour_area
+        score = (
+            1.0
+            - abs(1.0 - area_ratio)
+            - max(0.0, 0.055 - shortest_ratio) * 1.8
+            - max(0, len(points) - 3) * 0.020
+            - abs(scale - 1.0) * 0.002
+        )
+        finalists.append((score, polygon))
+    return max(finalists, key=lambda item: item[0])[1]
 
 
 def green_background_foreground_mask(roi_rgb):
@@ -324,28 +433,77 @@ def green_background_foreground_mask_v2(
     green_close_iter=3,
     paper_close_kernel=7,
     paper_close_iter=2,
+    exact_thresholds=False,
 ):
-    """用ROI内最大绿色连通域定位A4纸区域，再取反得到碎片掩膜。
+    """使用绿色色度而不是绝对亮度分离深绿色背景。"""
+    filtered = cv2.GaussianBlur(roi_rgb, (3, 3), 0)
+    hsv = cv2.cvtColor(filtered, cv2.COLOR_RGB2HSV)
+    rgb = filtered.astype(np.int32)
+    red = rgb[:, :, 0]
+    green_channel = rgb[:, :, 1]
+    blue = rgb[:, :, 2]
+    intensity = red + green_channel + blue + 1
+    ratio_green = green_channel * 100 >= intensity * 34
+    strong_green = green_channel * 100 >= intensity * 40
+    excess_green = (
+        (2 * green_channel - red - blue) * 100
+        >= intensity * 2
+    )
 
-    全部形态学参数均可调节，以适应不同光照条件下的绿色A4纸。
-    光照好时减小核尺寸和迭代次数可获得更锐利的碎片边角。
-    """
-    hsv = cv2.cvtColor(roi_rgb, cv2.COLOR_RGB2HSV)
+    hue_margin = 0 if exact_thresholds else 10
+    lower_hue = max(0, int(hue_min) - hue_margin)
+    upper_hue = min(179, int(hue_max) + hue_margin)
+    reference_sat_min = (
+        max(8, int(sat_min))
+        if exact_thresholds
+        else max(18, min(60, int(sat_min * 0.45)))
+    )
+    foreground_sat_min = (
+        max(8, int(sat_min))
+        if exact_thresholds
+        else max(12, min(70, int(sat_min * 0.55)))
+    )
+    reference_val_min = (
+        max(4, int(val_min))
+        if exact_thresholds
+        else max(4, int(val_min * 0.5))
+    )
+    hue_valid = (
+        (hsv[:, :, 0] >= lower_hue)
+        & (hsv[:, :, 0] <= upper_hue)
+    )
+    reference = (
+        hue_valid
+        & (hsv[:, :, 1] >= reference_sat_min)
+        & (hsv[:, :, 2] >= reference_val_min)
+        & ratio_green
+        & excess_green
+    )
+    if np.count_nonzero(reference) < roi_rgb.shape[0] * roi_rgb.shape[1] * 0.02:
+        return green_background_foreground_mask(roi_rgb)
 
     green = (
-        (hsv[:, :, 0] >= int(hue_min))
-        & (hsv[:, :, 0] <= int(hue_max))
-        & (hsv[:, :, 1] >= int(sat_min))
-        & (hsv[:, :, 2] >= int(val_min))
-    ).astype(np.uint8)
+        hue_valid
+        & (hsv[:, :, 2] >= reference_val_min)
+        & ratio_green
+        & excess_green
+        & (
+            (
+                hsv[:, :, 1] >= foreground_sat_min
+            )
+            | strong_green
+        )
+    ).astype(np.uint8) * 255
 
-    # 形态学闭合连接A4纸的绿色区域
-    kernel_close = cv2.getStructuringElement(
-        cv2.MORPH_RECT if green_close_kernel <= 7 else cv2.MORPH_ELLIPSE,
-        (int(green_close_kernel), int(green_close_kernel)),
-    )
+    green = cv2.medianBlur(green, 3)
+    close_size = max(3, int(green_close_kernel))
+    if close_size % 2 == 0:
+        close_size += 1
     green = cv2.morphologyEx(
-        green, cv2.MORPH_CLOSE, kernel_close, iterations=int(green_close_iter),
+        green,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_size, close_size)),
+        iterations=max(1, int(green_close_iter)),
     )
 
     # 取最大的绿色连通域 = A4纸
@@ -355,22 +513,23 @@ def green_background_foreground_mask_v2(
     if label_count <= 1:
         return None
     largest_label = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-    paper = (labels == largest_label).astype(np.uint8)
+    paper = np.where(labels == largest_label, 255, 0).astype(np.uint8)
 
     # 填充A4纸内部的空洞
+    paper_size = max(3, int(paper_close_kernel))
+    if paper_size % 2 == 0:
+        paper_size += 1
     paper = cv2.morphologyEx(
-        paper, cv2.MORPH_CLOSE,
-        cv2.getStructuringElement(
-            cv2.MORPH_RECT if paper_close_kernel <= 7 else cv2.MORPH_ELLIPSE,
-            (int(paper_close_kernel), int(paper_close_kernel)),
-        ),
-        iterations=int(paper_close_iter),
+        paper,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (paper_size, paper_size)),
+        iterations=max(1, int(paper_close_iter)),
     )
 
     if float(np.mean(paper)) < 0.12:
         return None
 
-    # 非A4纸区域 = 碎片前景
+    # 非绿色区域 = 碎片前景。
     foreground = np.where(paper > 0, 0, 255).astype(np.uint8)
     foreground = cv2.morphologyEx(
         foreground, cv2.MORPH_CLOSE,
@@ -382,6 +541,100 @@ def green_background_foreground_mask_v2(
     filled = np.zeros_like(foreground)
     cv2.drawContours(filled, contours, -1, 255, thickness=cv2.FILLED)
     return filled
+
+
+def green_background_foreground_mask_auto(
+    roi_rgb,
+    green_close_kernel=7,
+    green_close_iter=2,
+    paper_close_kernel=5,
+    paper_close_iter=1,
+    state=None,
+):
+    """从当前ROI的主绿色颜色簇自动估计背景范围。"""
+    filtered = cv2.GaussianBlur(roi_rgb, (3, 3), 0)
+    hsv = cv2.cvtColor(filtered, cv2.COLOR_RGB2HSV)
+    rgb = filtered[::3, ::3].astype(np.int32)
+    sampled_hsv = hsv[::3, ::3]
+    red = rgb[:, :, 0]
+    green = rgb[:, :, 1]
+    blue = rgb[:, :, 2]
+    intensity = red + green + blue + 1
+    candidates = (
+        (sampled_hsv[:, :, 0] >= 20)
+        & (sampled_hsv[:, :, 0] <= 110)
+        & (sampled_hsv[:, :, 1] >= 15)
+        & (sampled_hsv[:, :, 2] >= 10)
+        & (green * 100 >= intensity * 34)
+        & ((2 * green - red - blue) * 100 >= intensity * 2)
+    )
+    candidate_count = int(np.count_nonzero(candidates))
+    if candidate_count < max(80, candidates.size // 50):
+        return green_background_foreground_mask(roi_rgb), None
+
+    candidate_hue = sampled_hsv[:, :, 0][candidates]
+    histogram = np.bincount(candidate_hue, minlength=180).astype(np.float32)
+    histogram = np.convolve(
+        histogram,
+        np.array([1.0, 2.0, 3.0, 2.0, 1.0], dtype=np.float32),
+        mode="same",
+    )
+    hue_center = int(np.argmax(histogram))
+    hue_distance = np.abs(candidate_hue.astype(np.int16) - hue_center)
+    cluster = hue_distance <= 14
+    if int(np.count_nonzero(cluster)) < max(60, candidate_count // 5):
+        return green_background_foreground_mask(roi_rgb), None
+
+    cluster_hue = candidate_hue[cluster].astype(np.float32)
+    cluster_sat = sampled_hsv[:, :, 1][candidates][cluster].astype(np.float32)
+    cluster_val = sampled_hsv[:, :, 2][candidates][cluster].astype(np.float32)
+    hue_center = int(round(float(np.median(cluster_hue))))
+    hue_spread = float(
+        np.percentile(np.abs(cluster_hue - hue_center), 92)
+    )
+    hue_tolerance = int(np.clip(round(hue_spread + 4.0), 10, 28))
+    hue_min = max(0, hue_center - hue_tolerance)
+    hue_max = min(179, hue_center + hue_tolerance)
+    sat_min = int(np.clip(np.percentile(cluster_sat, 5) * 0.55, 8, 80))
+    val_min = int(np.clip(np.percentile(cluster_val, 3) * 0.55, 4, 90))
+
+    current = {
+        "hue_min": hue_min,
+        "hue_max": hue_max,
+        "sat_min": sat_min,
+        "val_min": val_min,
+    }
+    if state is not None:
+        if all(key in state for key in current):
+            previous_center = (state["hue_min"] + state["hue_max"]) * 0.5
+            current_center = (hue_min + hue_max) * 0.5
+            if abs(previous_center - current_center) <= 18:
+                for key, value in current.items():
+                    current[key] = int(round(state[key] * 0.82 + value * 0.18))
+        state.update(current)
+        hue_min = state["hue_min"]
+        hue_max = state["hue_max"]
+        sat_min = state["sat_min"]
+        val_min = state["val_min"]
+
+    mask = green_background_foreground_mask_v2(
+        roi_rgb,
+        hue_min=hue_min,
+        hue_max=hue_max,
+        sat_min=sat_min,
+        val_min=val_min,
+        green_close_kernel=green_close_kernel,
+        green_close_iter=green_close_iter,
+        paper_close_kernel=paper_close_kernel,
+        paper_close_iter=paper_close_iter,
+        exact_thresholds=True,
+    )
+    return mask, {
+        "hue_min": hue_min,
+        "hue_max": hue_max,
+        "sat_min": sat_min,
+        "val_min": val_min,
+    }
 
 
 def split_touching_contour(mask, contour, min_area):
@@ -446,7 +699,7 @@ def split_touching_contour(mask, contour, min_area):
         region_contours, _ = cv2.findContours(
             region,
             cv2.RETR_EXTERNAL,
-            cv2.CHAIN_APPROX_SIMPLE,
+            cv2.CHAIN_APPROX_NONE,
         )
         if not region_contours:
             return []
@@ -470,7 +723,7 @@ def find_candidates(
     raw_contours, _ = cv2.findContours(
         mask,
         cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE,
+        cv2.CHAIN_APPROX_NONE,
     )
     contours = []
     for contour in raw_contours:
@@ -523,14 +776,9 @@ def find_candidates(
         if perimeter < 50:
             continue
 
-        polygon = cv2.approxPolyDP(
-            contour,
-            polygon_epsilon * perimeter,
-            True,
-        )
-        if len(polygon) < 3 or len(polygon) > 5:
+        polygon = approximate_piece_polygon(contour, polygon_epsilon)
+        if polygon is None:
             continue
-        polygon = refine_polygon_corners(contour, polygon)
 
         polygon_area = abs(cv2.contourArea(polygon))
         if polygon_area < min_area or area / polygon_area < 0.72:
@@ -589,6 +837,8 @@ def detect_pieces(
     polarity_mode="AUTO",
     background_mode="GREEN",
     green_method="border",
+    green_auto=True,
+    green_auto_state=None,
     green_hue_min=30,
     green_hue_max=95,
     green_sat_min=20,
@@ -604,6 +854,16 @@ def detect_pieces(
         roi_y : roi_y + roi_height,
         roi_x : roi_x + roi_width,
     ]
+    green_source_rgb = roi_rgb.copy()
+
+    # 光照预处理：Gamma提亮 + CLAHE局部均衡，消除亮暗不均
+    hsv = cv2.cvtColor(roi_rgb, cv2.COLOR_RGB2HSV).astype(np.float32)
+    v_channel = hsv[:, :, 2] / 255.0
+    v_channel = np.power(v_channel, 0.75) * 255.0  # Gamma 提亮暗区
+    hsv[:, :, 2] = np.clip(v_channel, 0, 255)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    hsv[:, :, 2] = clahe.apply(hsv[:, :, 2].astype(np.uint8))
+    roi_rgb = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
 
     gray = cv2.cvtColor(roi_rgb, cv2.COLOR_RGB2GRAY)
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
@@ -656,10 +916,22 @@ def detect_pieces(
     background_mode = background_mode.upper()
     polarity_mode = polarity_mode.upper()
     green_mask = None
+    green_auto_values = None
     if background_mode == "GREEN":
-        if green_method == "largest":
+        if green_auto:
+            green_mask, green_auto_values = (
+                green_background_foreground_mask_auto(
+                    green_source_rgb,
+                    green_close_kernel=green_close_kernel,
+                    green_close_iter=green_close_iter,
+                    paper_close_kernel=paper_close_kernel,
+                    paper_close_iter=paper_close_iter,
+                    state=green_auto_state,
+                )
+            )
+        elif green_method == "largest":
             green_mask = green_background_foreground_mask_v2(
-                roi_rgb,
+                green_source_rgb,
                 hue_min=green_hue_min,
                 hue_max=green_hue_max,
                 sat_min=green_sat_min,
@@ -670,7 +942,7 @@ def detect_pieces(
                 paper_close_iter=paper_close_iter,
             )
         else:
-            green_mask = green_background_foreground_mask(roi_rgb)
+            green_mask = green_background_foreground_mask(green_source_rgb)
     if green_mask is not None:
         pieces = find_candidates(
             green_mask,
@@ -728,6 +1000,8 @@ def detect_pieces(
         "polarity_mode": polarity_mode,
         "background_mode": background_mode,
         "green_method": green_method,
+        "green_auto": bool(green_auto),
+        "green_auto_values": green_auto_values,
         "threshold": int(threshold_value),
         "threshold_mode": threshold_mode,
         "mask": selected_mask,
@@ -1954,22 +2228,64 @@ def spread_layout_with_gap(polygons, target_center, gap_pixels):
     return best_layout
 
 
-def place_layout_on_paper(layout, solve_info, roi):
-    """把目标矩形放到A4纸下半区，并给相邻拼片留出小缝。"""
+def place_layout_on_paper(
+    layout,
+    solve_info,
+    roi,
+    assembly_gap_pixels=36,
+):
+    """把目标矩形放到A4纸下半区，并保持设定的均匀接缝。"""
     roi_x, roi_y, roi_width, roi_height = roi
     scale = 1.0 / solve_info["solve_scale"]
-    target_width = solve_info["width"] * scale
-    target_height = solve_info["height"] * scale
-    target_left = roi_x + (roi_width - target_width) * 0.5
+    execution_layout = {
+        int(piece_id): np.asarray(
+            polygon,
+            dtype=np.float64,
+        ).copy()
+        for piece_id, polygon in layout.items()
+    }
+    previous_translations = (
+        solve_info.get("repair", {})
+        .get("gap", {})
+        .get("translations", {})
+    )
+    for piece_id, translation in previous_translations.items():
+        piece_id = int(piece_id)
+        if piece_id in execution_layout:
+            execution_layout[piece_id] -= np.asarray(
+                translation,
+                dtype=np.float64,
+            )
+
+    execution_layout, gap_info = add_adjacency_gap(
+        execution_layout,
+        float(assembly_gap_pixels) * solve_info["solve_scale"],
+        edge_tolerance_ratio=0.08,
+        align_vertices=False,
+    )
+    solve_info["execution_gap"] = gap_info
+
+    scaled_layout = {
+        piece_id: polygon * scale
+        for piece_id, polygon in execution_layout.items()
+    }
+    all_points = np.vstack(list(scaled_layout.values()))
+    minimum = np.min(all_points, axis=0)
+    maximum = np.max(all_points, axis=0)
+    target_width, target_height = maximum - minimum
+    target_left = (
+        roi_x
+        + (roi_width - target_width) * 0.5
+        - minimum[0]
+    )
     lower_top = roi_y + roi_height * 0.5
     target_top = lower_top + (
         roi_height * 0.5 - target_height
-    ) * 0.5
-    piece_ids = sorted(layout)
+    ) * 0.5 - minimum[1]
+    piece_ids = sorted(scaled_layout)
     placed_polygons = []
     for piece_id in piece_ids:
-        polygon = layout[piece_id]
-        points = polygon * scale + np.array(
+        points = scaled_layout[piece_id] + np.array(
             [target_left, target_top],
             dtype=np.float32,
         )
@@ -2440,7 +2756,7 @@ def draw_solved_rectangle(
             "S%d R%+.0f"
             % (
                 item["piece_id"] + 1,
-                rotations[item["piece_id"]],
+                rotations.get(item["piece_id"], 0.0),
             ),
             color,
             scale=1,
@@ -2581,32 +2897,60 @@ def get_button_boxes(image_width, image_height):
     """返回右侧调参按钮在摄像头图像中的位置。"""
     if image_height > image_width:
         return {
+            # 主界面按钮（不变）
             "solve": [20, 760, 210, 70],
             "card_solve": [255, 760, 210, 70],
             "tune": [490, 760, 210, 70],
             "capture": [20, 840, 680, 70],
-            "threshold_down": [20, 810, 330, 70],
-            "threshold_up": [370, 810, 330, 70],
-            "auto_threshold": [20, 890, 680, 70],
-            "polarity": [20, 970, 680, 70],
-            "area_down": [20, 1050, 330, 70],
-            "area_up": [370, 1050, 330, 70],
-            "close": [20, 1190, 680, 70],
+            # 绿色分割参数（新增）
+            "green_method": [20, 665, 680, 40],
+            "green_sat_down": [490, 712, 50, 38],
+            "green_sat_up": [545, 712, 50, 38],
+            "green_close_k_down": [490, 756, 50, 38],
+            "green_close_k_up": [545, 756, 50, 38],
+            "green_close_i_down": [490, 800, 50, 38],
+            "green_close_i_up": [545, 800, 50, 38],
+            "paper_close_k_down": [490, 844, 50, 38],
+            "paper_close_k_up": [545, 844, 50, 38],
+            "paper_close_i_down": [490, 888, 50, 38],
+            "paper_close_i_up": [545, 888, 50, 38],
+            # 原有调参按钮（下移）
+            "threshold_down": [20, 940, 220, 44],
+            "threshold_up": [245, 940, 220, 44],
+            "auto_threshold": [20, 990, 330, 44],
+            "polarity": [355, 990, 345, 44],
+            "area_down": [20, 1040, 330, 44],
+            "area_up": [355, 1040, 345, 44],
+            "close": [20, 1140, 680, 55],
         }
 
     panel_x = image_width - 350
     return {
+        # 主界面按钮（不变）
         "solve": [panel_x + 10, 10, 100, 70],
         "card_solve": [panel_x + 120, 10, 100, 70],
         "tune": [panel_x + 230, 10, 100, 70],
         "capture": [panel_x + 10, 90, 320, 70],
-        "threshold_down": [panel_x + 10, 90, 155, 70],
-        "threshold_up": [panel_x + 175, 90, 155, 70],
-        "auto_threshold": [panel_x + 10, 170, 320, 70],
-        "polarity": [panel_x + 10, 250, 320, 70],
-        "area_down": [panel_x + 10, 330, 155, 70],
-        "area_up": [panel_x + 175, 330, 155, 70],
-        "close": [panel_x + 10, 500, 320, 70],
+        # 绿色分割参数（新增）
+        "green_method": [panel_x + 10, 15, 320, 34],
+        "green_sat_down": [panel_x + 180, 56, 48, 34],
+        "green_sat_up": [panel_x + 233, 56, 48, 34],
+        "green_close_k_down": [panel_x + 180, 96, 48, 34],
+        "green_close_k_up": [panel_x + 233, 96, 48, 34],
+        "green_close_i_down": [panel_x + 180, 136, 48, 34],
+        "green_close_i_up": [panel_x + 233, 136, 48, 34],
+        "paper_close_k_down": [panel_x + 180, 176, 48, 34],
+        "paper_close_k_up": [panel_x + 233, 176, 48, 34],
+        "paper_close_i_down": [panel_x + 180, 216, 48, 34],
+        "paper_close_i_up": [panel_x + 233, 216, 48, 34],
+        # 原有调参按钮（下移）
+        "threshold_down": [panel_x + 10, 265, 125, 40],
+        "threshold_up": [panel_x + 140, 265, 125, 40],
+        "auto_threshold": [panel_x + 10, 310, 320, 40],
+        "polarity": [panel_x + 10, 355, 320, 40],
+        "area_down": [panel_x + 10, 400, 155, 40],
+        "area_up": [panel_x + 175, 400, 155, 40],
+        "close": [panel_x + 10, 490, 320, 50],
     }
 
 
@@ -2657,73 +3001,81 @@ def draw_controls(
     threshold_value,
     polarity_mode,
     min_piece_area,
+    green_method="largest",
+    green_sat_min=20,
+    green_close_kernel=7,
+    green_close_iter=2,
+    paper_close_kernel=5,
+    paper_close_iter=1,
 ):
     """显示阈值、极性和最小面积的触摸调参面板。"""
     if img.height() > img.width():
+        # 竖屏：面板从 y=650 开始，覆盖下半区
         img.draw_rect(
             0,
-            740,
+            650,
             img.width(),
-            img.height() - 740,
+            img.height() - 650,
             image.COLOR_BLACK,
             -1,
         )
-        img.draw_string(
-            20,
-            755,
-            "BINARY TUNE",
-            image.COLOR_WHITE,
-            scale=2,
-        )
+        img.draw_string(20, 655, "TUNE PARAMS", image.COLOR_WHITE, scale=2)
+        label_x = 20
+        btn_w = 50
+        btn_h = 38
     else:
-        panel_x = boxes["threshold_down"][0] - 10
+        panel_x = boxes["green_method"][0] - 10
+        # 横屏：面板填满右侧整列
         img.draw_rect(
             panel_x,
             0,
             img.width() - panel_x,
-            590,
+            640,
             image.COLOR_BLACK,
             -1,
         )
         img.draw_string(
-            panel_x + 10,
-            20,
-            "BINARY TUNE",
-            image.COLOR_WHITE,
-            scale=2,
+            panel_x + 10, 5, "TUNE PARAMS", image.COLOR_WHITE, scale=2,
         )
+        label_x = panel_x + 10
+        btn_w = 48
+        btn_h = 34
+
+    # ---- 绿色背景分割参数 ----
     draw_button(
-        img,
-        boxes["threshold_down"],
-        "TH -5",
+        img, boxes["green_method"],
+        "METHOD %s" % green_method.upper(),
+        active=(green_method == "largest"),
     )
+
+    def _param_row(label, value, down_key, up_key):
+        y = boxes[down_key][1]
+        img.draw_string(label_x, y + 8, "%s %d" % (label, value),
+                        image.COLOR_WHITE, scale=2)
+        draw_button(img, boxes[down_key], "-")
+        draw_button(img, boxes[up_key], "+")
+
+    _param_row("G-SAT", green_sat_min, "green_sat_down", "green_sat_up")
+    _param_row("CLS-K", green_close_kernel, "green_close_k_down", "green_close_k_up")
+    _param_row("CLS-I", green_close_iter, "green_close_i_down", "green_close_i_up")
+    _param_row("PAP-K", paper_close_kernel, "paper_close_k_down", "paper_close_k_up")
+    _param_row("PAP-I", paper_close_iter, "paper_close_i_down", "paper_close_i_up")
+
+    # ---- 二值化参数 ----
+    draw_button(img, boxes["threshold_down"], "TH -5")
+    draw_button(img, boxes["threshold_up"], "TH +5")
     draw_button(
-        img,
-        boxes["threshold_up"],
-        "TH +5",
-    )
-    draw_button(
-        img,
-        boxes["auto_threshold"],
+        img, boxes["auto_threshold"],
         "TH AUTO" if auto_threshold else "TH %d" % threshold_value,
         active=auto_threshold,
     )
     draw_button(
-        img,
-        boxes["polarity"],
+        img, boxes["polarity"],
         "POL %s" % polarity_mode,
         active=polarity_mode != "AUTO",
     )
-    draw_button(
-        img,
-        boxes["area_down"],
-        "AREA -",
-    )
-    draw_button(
-        img,
-        boxes["area_up"],
-        "AREA +",
-    )
+    draw_button(img, boxes["area_down"], "AREA -")
+    draw_button(img, boxes["area_up"], "AREA +")
     img.draw_string(
         boxes["area_down"][0],
         boxes["area_down"][1] + boxes["area_down"][3] + 12,
@@ -2731,11 +3083,7 @@ def draw_controls(
         image.COLOR_WHITE,
         scale=2,
     )
-    draw_button(
-        img,
-        boxes["close"],
-        "BACK",
-    )
+    draw_button(img, boxes["close"], "BACK")
 
 
 def show_binary_preview(frame_rgb, mask, roi):
@@ -2882,38 +3230,36 @@ def align_polygon_points(reference, points):
 
 
 def build_stable_piece_set(recent_piece_sets):
-    """从最近的连续画面中生成一组中值轮廓，运动中或顶点跳变时不求解。
-
-    优化：缩小采样窗口(12→8帧)、降低对齐要求(8→5组)，
-    并增加快速路径——连续3帧零位移时立即返回。
-    """
+    """从最近的连续画面中生成一组中值轮廓。"""
     if not recent_piece_sets:
         return None
 
-    reference = recent_piece_sets[-1][2]
+    latest = recent_piece_sets[-1][2]
+    if not 2 <= len(latest) <= 4:
+        return None
+    recent_candidates = [
+        item[2]
+        for item in recent_piece_sets[-8:]
+        if len(item[2]) == len(latest)
+    ]
+    if not recent_candidates:
+        return None
+    signatures = [
+        tuple(sorted(len(piece["points"]) for piece in candidate))
+        for candidate in recent_candidates
+    ]
+    reference_signature = max(
+        set(signatures),
+        key=signatures.count,
+    )
+    reference = next(
+        candidate
+        for candidate in reversed(recent_candidates)
+        if tuple(sorted(len(piece["points"]) for piece in candidate))
+        == reference_signature
+    )
     if not 2 <= len(reference) <= 4:
         return None
-
-    # 快速路径：最近3帧碎片数量和中心位置都一致，立即判定为稳定
-    if len(recent_piece_sets) >= 4:
-        recent_candidates = [item[2] for item in recent_piece_sets[-4:]]
-        if all(len(c) == len(reference) for c in recent_candidates):
-            max_shift = 0.0
-            for piece_id in range(len(reference)):
-                ref_center = np.asarray(
-                    reference[piece_id]["center"], dtype=np.float64
-                )
-                for candidate in recent_candidates[-3:]:
-                    if piece_id < len(candidate):
-                        cand_center = np.asarray(
-                            candidate[piece_id]["center"], dtype=np.float64
-                        )
-                        max_shift = max(
-                            max_shift,
-                            float(np.linalg.norm(ref_center - cand_center)),
-                        )
-            if max_shift <= 3.0:
-                return reference
 
     aligned_sets = []
     for _, _, candidate in reversed(recent_piece_sets[-8:]):
@@ -2979,21 +3325,29 @@ def build_stable_piece_set(recent_piece_sets):
 
         points_array = np.asarray(point_samples)
         median_points = np.median(points_array, axis=0)
-        point_spread = float(
-            np.max(
-                np.sqrt(
-                    np.mean(
-                        (points_array - median_points) ** 2,
-                        axis=2,
-                    )
-                )
-            )
+        sample_errors = np.sqrt(
+            np.mean((points_array - median_points) ** 2, axis=(1, 2))
         )
+        error_median = float(np.median(sample_errors))
+        error_mad = float(np.median(np.abs(sample_errors - error_median)))
+        error_limit = max(3.5, error_median + max(1.5, error_mad * 3.0))
+        inliers = sample_errors <= error_limit
+        if int(np.count_nonzero(inliers)) >= 3:
+            points_array = points_array[inliers]
+            area_samples = np.asarray(area_samples, dtype=np.float64)[inliers]
+            solidity_samples = np.asarray(
+                solidity_samples,
+                dtype=np.float64,
+            )[inliers]
+            median_points = np.median(points_array, axis=0)
+            sample_errors = sample_errors[inliers]
+        point_spread = float(np.percentile(sample_errors, 90))
         median_area = float(np.median(area_samples))
-        area_spread = (
-            max(area_samples) - min(area_samples)
+        area_spread = float(
+            np.percentile(area_samples, 90)
+            - np.percentile(area_samples, 10)
         ) / max(1.0, median_area)
-        if point_spread > 3.5 or area_spread > 0.08:
+        if point_spread > 5.0 or area_spread > 0.14:
             return None
 
         points = [
@@ -3022,6 +3376,33 @@ def build_stable_piece_set(recent_piece_sets):
             }
         )
     return stable_pieces
+
+
+def build_best_effort_piece_set(recent_piece_sets):
+    """稳定窗口超时时，选择轮廓质量最高且结构最常见的一帧。"""
+    candidates = [
+        item
+        for item in recent_piece_sets[-16:]
+        if 2 <= len(item[2]) <= 4
+    ]
+    if not candidates:
+        return None
+    piece_counts = [len(item[2]) for item in candidates]
+    expected_count = max(set(piece_counts), key=piece_counts.count)
+    candidates = [
+        item for item in candidates if len(item[2]) == expected_count
+    ]
+    signatures = [
+        tuple(sorted(len(piece["points"]) for piece in item[2]))
+        for item in candidates
+    ]
+    expected_signature = max(set(signatures), key=signatures.count)
+    preferred = [
+        item
+        for item, signature in zip(candidates, signatures)
+        if signature == expected_signature
+    ]
+    return max(preferred or candidates, key=lambda item: item[1])[2]
 
 
 def solve_piece_set_worker(pieces, roi):
@@ -3318,7 +3699,7 @@ def solve_piece_set_worker(pieces, roi):
 
 
 def refine_card_layout_geometry(layout, time_limit_s=0.8):
-    """用小范围刚性旋转和平移，让牌面候选重新贴合矩形和内部拼接边。"""
+    """保持候选拓扑不变，联合移动碎片组并闭合矩形与内部拼接边。"""
     refined = {
         piece_id: np.asarray(
             polygon,
@@ -3326,23 +3707,111 @@ def refine_card_layout_geometry(layout, time_limit_s=0.8):
         ).copy()
         for piece_id, polygon in layout.items()
     }
+    piece_ids = sorted(refined)
+    if len(piece_ids) < 2:
+        return refined, evaluate_layout(
+            refined,
+            edge_tolerance_ratio=0.07,
+        )
+
+    original = {
+        piece_id: polygon.copy()
+        for piece_id, polygon in refined.items()
+    }
+    original_centers = {
+        piece_id: np.mean(polygon, axis=0)
+        for piece_id, polygon in original.items()
+    }
+    all_points = np.vstack(list(original.values()))
+    diagonal = float(np.linalg.norm(
+        np.max(all_points, axis=0) - np.min(all_points, axis=0)
+    ))
+    maximum_translation = max(12.0, diagonal * 0.32)
+    maximum_rotation = 12.0
+
+    edge_indices = {}
+    for piece_id, polygon in original.items():
+        lengths = [
+            np.linalg.norm(
+                polygon[(index + 1) % len(polygon)] - polygon[index]
+            )
+            for index in range(len(polygon))
+        ]
+        edge_indices[piece_id] = int(np.argmax(lengths))
+
+    def topology_preserved(candidate):
+        centers = {
+            piece_id: np.mean(polygon, axis=0)
+            for piece_id, polygon in candidate.items()
+        }
+        for piece_id in piece_ids:
+            if (
+                np.linalg.norm(
+                    centers[piece_id] - original_centers[piece_id]
+                )
+                > maximum_translation
+            ):
+                return False
+            index = edge_indices[piece_id]
+            source_edge = (
+                original[piece_id][(index + 1) % len(original[piece_id])]
+                - original[piece_id][index]
+            )
+            target_edge = (
+                candidate[piece_id][
+                    (index + 1) % len(candidate[piece_id])
+                ]
+                - candidate[piece_id][index]
+            )
+            angle = math.degrees(math.atan2(
+                source_edge[0] * target_edge[1]
+                - source_edge[1] * target_edge[0],
+                np.dot(source_edge, target_edge),
+            ))
+            if abs(angle) > maximum_rotation:
+                return False
+        for first_index, first_id in enumerate(piece_ids):
+            for second_id in piece_ids[first_index + 1:]:
+                before = (
+                    original_centers[second_id]
+                    - original_centers[first_id]
+                )
+                after = centers[second_id] - centers[first_id]
+                if np.dot(before, after) <= 0.0:
+                    return False
+        return True
 
     def quality(candidate):
         report = evaluate_layout(
             candidate,
             edge_tolerance_ratio=0.07,
         )
+        angle_quality = max(
+            0.0,
+            1.0 - report["boundary_angle_error"] / 10.0,
+        )
         score = (
-            report["coverage"] * 0.42
+            report["coverage"] * 0.38
             + report["internal_match"] * 0.34
-            + report["corners"] * 0.12
-            + report["outer_piece_ratio"] * 0.12
-            - report["overlap"] * 8.0
+            + report["corners"] * 0.08
+            + report["outer_piece_ratio"] * 0.07
+            + report["boundary_min_coverage"] * 0.06
+            + (1.0 - report["boundary_max_gap_ratio"]) * 0.04
+            + angle_quality * 0.03
+            - report["overlap"] * 10.0
         )
         return score, report
 
-    def move_piece(polygon, dx, dy, angle):
-        center = np.mean(polygon, axis=0)
+    def move_group(candidate, group, dx, dy, angle=0.0):
+        moved = {
+            piece_id: polygon.copy()
+            for piece_id, polygon in candidate.items()
+        }
+        group_points = np.vstack([
+            moved[piece_id]
+            for piece_id in group
+        ])
+        center = np.mean(group_points, axis=0)
         radians = math.radians(angle)
         rotation = np.array(
             [
@@ -3351,47 +3820,147 @@ def refine_card_layout_geometry(layout, time_limit_s=0.8):
             ],
             dtype=np.float64,
         )
-        return (
-            (polygon - center) @ rotation.T
-            + center
-            + np.array([dx, dy], dtype=np.float64)
+        translation = np.array([dx, dy], dtype=np.float64)
+        for piece_id in group:
+            moved[piece_id] = (
+                (moved[piece_id] - center) @ rotation.T
+                + center
+                + translation
+            )
+        return moved
+
+    movable_ids = piece_ids[1:]
+    groups = [
+        tuple(
+            piece_id
+            for index, piece_id in enumerate(movable_ids)
+            if mask & (1 << index)
         )
+        for mask in range(1, 1 << len(movable_ids))
+    ]
 
     best_score, best_report = quality(refined)
     deadline = time.monotonic() + time_limit_s
+
+    # 先按“哪两条边应当相接”生成整组平移建议。这里不改变排列和旋转，
+    # 只把相似、平行的候选内边中点吸附到一起，解决单块移动的局部最优。
+    for _ in range(3):
+        proposals = []
+        for first_index, first_id in enumerate(piece_ids):
+            first_polygon = refined[first_id]
+            for second_id in piece_ids[first_index + 1:]:
+                second_polygon = refined[second_id]
+                for first_edge_id in range(len(first_polygon)):
+                    first_start = first_polygon[first_edge_id]
+                    first_end = first_polygon[
+                        (first_edge_id + 1) % len(first_polygon)
+                    ]
+                    first_vector = first_end - first_start
+                    first_length = float(np.linalg.norm(first_vector))
+                    for second_edge_id in range(len(second_polygon)):
+                        second_start = second_polygon[second_edge_id]
+                        second_end = second_polygon[
+                            (second_edge_id + 1) % len(second_polygon)
+                        ]
+                        second_vector = second_end - second_start
+                        second_length = float(np.linalg.norm(second_vector))
+                        length_ratio = min(first_length, second_length) / max(
+                            1e-9,
+                            max(first_length, second_length),
+                        )
+                        parallel = abs(float(np.dot(
+                            first_vector,
+                            second_vector,
+                        ))) / max(1e-9, first_length * second_length)
+                        if length_ratio < 0.72 or parallel < 0.975:
+                            continue
+                        first_midpoint = (first_start + first_end) * 0.5
+                        second_midpoint = (second_start + second_end) * 0.5
+                        delta = first_midpoint - second_midpoint
+                        distance = float(np.linalg.norm(delta))
+                        if distance < 1.0 or distance > diagonal * 0.28:
+                            continue
+                        priority = (
+                            length_ratio * 0.65
+                            + parallel * 0.35
+                            - distance / max(1.0, diagonal) * 0.30
+                        )
+                        for group in groups:
+                            first_moves = first_id in group
+                            second_moves = second_id in group
+                            if first_moves == second_moves:
+                                continue
+                            movement = -delta if first_moves else delta
+                            proposals.append((
+                                priority,
+                                group,
+                                float(movement[0]),
+                                float(movement[1]),
+                            ))
+        improved = False
+        for _, group, dx, dy in sorted(
+            proposals,
+            key=lambda item: item[0],
+            reverse=True,
+        )[:36]:
+            if time.monotonic() >= deadline:
+                return refined, best_report
+            candidate = move_group(refined, group, dx, dy)
+            if not topology_preserved(candidate):
+                continue
+            score, report = quality(candidate)
+            if score > best_score + 1e-5:
+                refined = candidate
+                best_score = score
+                best_report = report
+                improved = True
+                break
+        if not improved:
+            break
+
     for move, angle in (
-        (6.0, 5.0),
-        (3.0, 2.5),
-        (1.5, 1.2),
-        (0.75, 0.6),
-        (0.35, 0.3),
+        (max(6.0, diagonal * 0.075), 4.0),
+        (max(3.0, diagonal * 0.035), 2.0),
+        (max(1.5, diagonal * 0.016), 1.0),
+        (0.75, 0.45),
+        (0.35, 0.20),
     ):
         improved = True
         rounds = 0
-        while improved and rounds < 4:
+        while improved and rounds < 5:
             improved = False
             rounds += 1
-            for piece_id in sorted(refined):
-                for dx, dy, rotation in (
-                    (move, 0.0, 0.0),
-                    (-move, 0.0, 0.0),
-                    (0.0, move, 0.0),
-                    (0.0, -move, 0.0),
-                    (0.0, 0.0, angle),
-                    (0.0, 0.0, -angle),
+            for group in groups:
+                for dx, dy in (
+                    (move, 0.0),
+                    (-move, 0.0),
+                    (0.0, move),
+                    (0.0, -move),
                 ):
                     if time.monotonic() >= deadline:
                         return refined, best_report
-                    candidate = {
-                        item_id: polygon.copy()
-                        for item_id, polygon in refined.items()
-                    }
-                    candidate[piece_id] = move_piece(
-                        candidate[piece_id],
-                        dx,
-                        dy,
+                    candidate = move_group(refined, group, dx, dy)
+                    if not topology_preserved(candidate):
+                        continue
+                    score, report = quality(candidate)
+                    if score > best_score + 1e-5:
+                        refined = candidate
+                        best_score = score
+                        best_report = report
+                        improved = True
+            for piece_id in piece_ids:
+                for rotation in (angle, -angle):
+                    if time.monotonic() >= deadline:
+                        return refined, best_report
+                    candidate = move_group(
+                        refined,
+                        (piece_id,),
+                        0.0,
+                        0.0,
                         rotation,
                     )
+                    if not topology_preserved(candidate):
+                        continue
                     score, report = quality(candidate)
                     if score > best_score + 1e-5:
                         refined = candidate
@@ -3401,20 +3970,462 @@ def refine_card_layout_geometry(layout, time_limit_s=0.8):
     return refined, best_report
 
 
+def card_layout_signature(layout):
+    """用中心和相对顶点共同去重，保留同中心但旋转不同的牌面候选。"""
+    signature = []
+    for piece_id in sorted(layout):
+        polygon = np.asarray(layout[piece_id], dtype=np.float64)
+        center = np.mean(polygon, axis=0)
+        relative = tuple(sorted(
+            (
+                int(round((point[0] - center[0]) * 0.5)),
+                int(round((point[1] - center[1]) * 0.5)),
+            )
+            for point in polygon
+        ))
+        signature.append((
+            int(piece_id),
+            int(round(center[0] * 0.5)),
+            int(round(center[1] * 0.5)),
+            relative,
+        ))
+    return tuple(signature)
+
+
+def evaluate_card_candidate(
+    frame_rgb,
+    pieces,
+    layout,
+    base_info,
+    roi,
+    texture_cache,
+    source,
+    assignment,
+    allow_refine=True,
+):
+    """统一修复和评分不同来源的扑克牌候选。"""
+    if layout is None or base_info is None:
+        return None
+
+    solve_info = dict(base_info)
+    solve_info["boundary_safe"] = False
+    solve_info["method"] = source
+    prepared, _ = prepare_layout_for_execution(
+        layout,
+        solve_info,
+        roi,
+    )
+    if prepared is None:
+        prepared, _ = prepare_best_effort_layout(
+            layout,
+            solve_info,
+            roi,
+        )
+        if prepared is None:
+            return None
+        solve_info["method"] = source + "-best-effort"
+        solve_info["execution_mode"] = "BEST"
+
+    def geometry_quality(info):
+        report = info["constraint_report"]
+        angle_quality = max(
+            0.0,
+            1.0 - report["boundary_angle_error"] / 10.0,
+        )
+        return (
+            report["coverage"] * 0.46
+            + report["internal_match"] * 0.38
+            + report["boundary_min_coverage"] * 0.08
+            + (1.0 - report["boundary_max_gap_ratio"]) * 0.04
+            + angle_quality * 0.04
+        )
+
+    initial_geometry = geometry_quality(solve_info)
+    if allow_refine:
+        identity_assignment = tuple(range(len(pieces)))
+        refinement_time = (
+            0.8
+            if tuple(assignment) == identity_assignment
+            else 0.08
+        )
+        refined_layout, refined_report = refine_card_layout_geometry(
+            layout,
+            time_limit_s=refinement_time,
+        )
+        refined_info = dict(base_info)
+        refined_info["boundary_safe"] = False
+        refined_info["method"] = source
+        refined_prepared, _ = prepare_layout_for_execution(
+            refined_layout,
+            refined_info,
+            roi,
+        )
+        if refined_prepared is None:
+            refined_prepared, _ = prepare_best_effort_layout(
+                refined_layout,
+                refined_info,
+                roi,
+            )
+            if refined_prepared is not None:
+                refined_info["method"] = source + "-best-effort"
+                refined_info["execution_mode"] = "BEST"
+        if refined_prepared is not None:
+            refined_geometry = geometry_quality(refined_info)
+            if refined_geometry > initial_geometry + 1e-4:
+                prepared = refined_prepared
+                solve_info = refined_info
+                solve_info["topology_refined"] = True
+                solve_info["refined_raw_report"] = {
+                    "coverage": refined_report["coverage"],
+                    "overlap": refined_report["overlap"],
+                    "internal_match": refined_report["internal_match"],
+                }
+
+    pattern_layout = close_card_pattern_layout(prepared, solve_info)
+    pattern_report = evaluate_layout(
+        pattern_layout,
+        edge_tolerance_ratio=0.07,
+    )
+    # 允许轮廓栅格化造成的极小误差，实际内部重叠仍然硬拒绝。
+    if pattern_report.get("overlap", 1.0) > 0.008:
+        return None
+
+    texture = score_layout_texture(
+        frame_rgb,
+        pieces,
+        pattern_layout,
+        cache=texture_cache,
+    )
+    global_pattern = score_layout_global_pattern(
+        frame_rgb,
+        pieces,
+        pattern_layout,
+    )
+    rank_index = score_rank_index_diagonal(
+        frame_rgb,
+        pieces,
+        pattern_layout,
+    )
+    report = {
+        "coverage": pattern_report["coverage"],
+        "overlap": pattern_report["overlap"],
+        "corners": pattern_report["corners"],
+        "outer_piece_ratio": pattern_report["outer_piece_ratio"],
+        "internal_match": pattern_report["internal_match"],
+        "perimeter_error": pattern_report["perimeter_error"],
+        "boundary_min_coverage": pattern_report[
+            "boundary_min_coverage"
+        ],
+        "boundary_max_gap_ratio": pattern_report[
+            "boundary_max_gap_ratio"
+        ],
+        "boundary_angle_error": pattern_report[
+            "boundary_angle_error"
+        ],
+    }
+    solve_info["constraint_report"] = report
+    effective_texture = 0.5 + (
+        texture["score"] - 0.5
+    ) * texture["confidence"]
+    effective_global = 0.5 + (
+        global_pattern["score"] - 0.5
+    ) * global_pattern["confidence"]
+    effective_index = 0.5 + (
+        rank_index["score"] - 0.5
+    ) * rank_index["confidence"]
+    angle_quality = max(
+        0.0,
+        1.0 - report["boundary_angle_error"] / 10.0,
+    )
+    boundary_quality = (
+        report["corners"] * 0.35
+        + report["outer_piece_ratio"] * 0.25
+        + report["boundary_min_coverage"] * 0.25
+        + angle_quality * 0.15
+    )
+    base_rank = (
+        effective_texture * 0.42
+        + report["coverage"] * 0.12
+        + report["internal_match"] * 0.10
+        + boundary_quality * 0.06
+        + effective_global * 0.10
+        + effective_index * 0.20
+    )
+
+    if (
+        report["coverage"] >= 0.90
+        and report["internal_match"] >= 0.70
+        and report["corners"] >= 0.99
+        and report["outer_piece_ratio"] >= 0.999
+        and report["boundary_min_coverage"] >= 0.90
+        and report["boundary_angle_error"] <= 5.5
+    ):
+        geometry_tier = 3
+    elif (
+        report["coverage"] >= 0.82
+        and report["internal_match"] >= 0.52
+        and report["corners"] >= 0.75
+        and report["outer_piece_ratio"] >= 0.999
+        and report["boundary_angle_error"] <= 7.0
+    ):
+        geometry_tier = 2
+    elif (
+        report["coverage"] >= 0.70
+        and report["internal_match"] >= 0.20
+        and report["outer_piece_ratio"] >= 0.75
+    ):
+        geometry_tier = 1
+    else:
+        geometry_tier = 0
+
+    solve_info["texture_score"] = texture["score"]
+    solve_info["texture_confidence"] = texture["confidence"]
+    solve_info["global_pattern_score"] = global_pattern["score"]
+    solve_info["global_pattern_confidence"] = global_pattern[
+        "confidence"
+    ]
+    solve_info["corner_diagonal_score"] = global_pattern.get(
+        "diagonal",
+        0.5,
+    )
+    solve_info["rank_index_score"] = rank_index["score"]
+    solve_info["rank_index_confidence"] = rank_index["confidence"]
+    solve_info["rank_index_valid"] = rank_index["valid"]
+    solve_info["rank_index_locked"] = rank_index.get("locked", False)
+    solve_info["rank_index_pair"] = rank_index["pair"]
+    solve_info["card_assignment"] = tuple(assignment)
+    solve_info["geometry_tier"] = geometry_tier
+    solve_info["card_candidate_source"] = source
+    return {
+        "base_rank": float(base_rank),
+        "layout": prepared,
+        "pattern_layout": pattern_layout,
+        "info": solve_info,
+    }
+
+
+def card_candidate_primary_score(candidate):
+    """对已经通过安全检查的候选，用花纹为主进行统一排名。"""
+    info = candidate["info"]
+    report = info.get("constraint_report", {})
+    texture_score = info.get("texture_score", 0.5)
+    texture_confidence = info.get("texture_confidence", 0.0)
+    effective_texture = (
+        0.5
+        + (texture_score - 0.5) * texture_confidence
+    )
+    global_score = info.get("global_pattern_score", 0.5)
+    global_confidence = info.get("global_pattern_confidence", 0.0)
+    effective_global = (
+        0.5
+        + (global_score - 0.5) * global_confidence
+    )
+    index_score = info.get("rank_index_score", 0.5)
+    index_confidence = info.get("rank_index_confidence", 0.0)
+    effective_index = (
+        0.5
+        + (index_score - 0.5) * index_confidence
+    )
+    angle_quality = max(
+        0.0,
+        1.0
+        - report.get("boundary_angle_error", 10.0) / 10.0,
+    )
+    boundary_quality = (
+        report.get("corners", 0.0) * 0.35
+        + report.get("outer_piece_ratio", 0.0) * 0.25
+        + report.get("boundary_min_coverage", 0.0) * 0.25
+        + angle_quality * 0.15
+    )
+    score = (
+        effective_texture * 0.42
+        + report.get("coverage", 0.0) * 0.12
+        + report.get("internal_match", 0.0) * 0.10
+        + boundary_quality * 0.06
+        + effective_global * 0.10
+        + effective_index * 0.20
+    )
+    return float(score)
+
+
+def select_card_candidate(candidates):
+    """几何只负责安全准入；安全候选主要按花纹连续性排序。"""
+    if not candidates:
+        return None
+    highest_tier = max(
+        candidate["info"].get("geometry_tier", 0)
+        for candidate in candidates
+    )
+    minimum_tier = 2 if highest_tier >= 2 else min(1, highest_tier)
+    safe = [
+        candidate
+        for candidate in candidates
+        if candidate["info"].get("geometry_tier", 0) >= minimum_tier
+    ]
+    locked = [
+        candidate
+        for candidate in safe
+        if candidate["info"].get("rank_index_locked", False)
+    ]
+    if locked:
+        safe = locked
+    for candidate in safe:
+        candidate["primary_score"] = card_candidate_primary_score(
+            candidate
+        )
+    ordered = sorted(
+        safe,
+        key=lambda item: item["primary_score"],
+        reverse=True,
+    )
+    selected = ordered[0]
+    selected["score"] = float(selected["primary_score"])
+    selected["info"]["selection_score"] = float(
+        selected["primary_score"]
+    )
+    return selected
+
+
+def build_card_candidate_pool(frame_rgb, pieces, candidates, selected):
+    """生成供界面检查的前八个扑克牌候选，不重新运行求解。"""
+    if selected is None:
+        return []
+    for candidate in candidates:
+        candidate["primary_score"] = card_candidate_primary_score(
+            candidate
+        )
+    ordered = [selected]
+    ordered.extend(
+        candidate
+        for candidate in sorted(
+            candidates,
+            key=lambda item: item["primary_score"],
+            reverse=True,
+        )
+        if candidate is not selected
+    )
+    pool = []
+    for rank, candidate in enumerate(ordered[:8], start=1):
+        info = candidate["info"]
+        pool.append(
+            {
+                "rank": rank,
+                "score": float(candidate["primary_score"]),
+                "selected": candidate is selected,
+                "source": info.get("card_candidate_source", ""),
+                "geometry_tier": int(info.get("geometry_tier", 0)),
+                "assignment": list(info.get("card_assignment", ())),
+                "score_items": build_ui_score_items(info),
+                "preview_rgb": render_layout_preview(
+                    frame_rgb,
+                    pieces,
+                    candidate["pattern_layout"],
+                    fill_rectangle=True,
+                ),
+            }
+        )
+    return pool
+
+
+def card_candidates_are_confident(candidates):
+    """花纹结果明显领先或连续多组稳定时，跳过后续扩展搜索。"""
+    if len(candidates) < 2:
+        return False
+    highest_tier = max(
+        candidate["info"].get("geometry_tier", 0)
+        for candidate in candidates
+    )
+    minimum_tier = 2 if highest_tier >= 2 else min(1, highest_tier)
+    safe = [
+        candidate
+        for candidate in candidates
+        if candidate["info"].get("geometry_tier", 0) >= minimum_tier
+    ]
+    locked = [
+        candidate
+        for candidate in safe
+        if candidate["info"].get("rank_index_locked", False)
+    ]
+    if locked:
+        safe = locked
+    if len(safe) < 2:
+        if not safe:
+            return False
+        info = safe[0]["info"]
+        report = info["constraint_report"]
+        return bool(
+            info.get("rank_index_locked", False)
+            and report["outer_piece_ratio"] >= 0.999
+            and report["corners"] >= 0.75
+            and report["coverage"] >= 0.86
+            and report["internal_match"] >= 0.52
+        )
+    for candidate in safe:
+        candidate["primary_score"] = card_candidate_primary_score(
+            candidate
+        )
+    ordered = sorted(
+        safe,
+        key=lambda item: item["primary_score"],
+        reverse=True,
+    )
+    best = ordered[0]
+    second = ordered[1]
+    info = best["info"]
+    report = info["constraint_report"]
+    margin = best["primary_score"] - second["primary_score"]
+    stable_assignment = (
+        info.get("card_assignment") is not None
+        and info.get("card_assignment")
+        == second["info"].get("card_assignment")
+        and margin <= 0.035
+    )
+    has_pattern_evidence = (
+        info.get("texture_confidence", 0.0) >= 0.38
+        and info.get("texture_score", 0.5) >= 0.58
+    )
+    strong_geometry = (
+        info.get("geometry_tier", 0) >= 2
+        and report["coverage"] >= 0.92
+        and report["internal_match"] >= 0.68
+    )
+    strong_index = (
+        info.get("rank_index_locked", False)
+        and info.get("geometry_tier", 0) >= 2
+        and report["coverage"] >= 0.86
+        and report["internal_match"] >= 0.52
+    )
+    return bool(
+        report["outer_piece_ratio"] >= 0.999
+        and report["corners"] >= 0.75
+        and (
+            strong_index
+            or (
+                has_pattern_evidence
+                and strong_geometry
+                and (margin >= 0.050 or stable_assignment)
+            )
+        )
+    )
+
+
 def solve_card_piece_set_worker(frame_rgb, pieces, roi):
     """独立执行扑克牌花纹求解，不调用或改写普通矩形求解链路。"""
     cv2.setNumThreads(1)
     started = time.monotonic()
-    best = None
+    candidates = []
     solver_nodes = 0
     seen = set()
+    texture_cache = {}
 
-    for fill_ratio, position_step in (
+    search_settings = (
         (0.92, 3),
         (0.88, 4),
         (0.80, 3),
         (0.72, 2),
-    ):
+    )
+
+    for setting_id, (fill_ratio, position_step) in enumerate(search_settings):
         (
             base_layout,
             _,
@@ -3433,215 +4444,179 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
             pieces,
             base_layout,
         ):
-            signature = tuple(
-                assignment
-            ) + (
-                int(round(fill_ratio * 100)),
-            )
+            signature = card_layout_signature(layout)
             if signature in seen:
                 continue
             seen.add(signature)
-            solve_info = dict(base_info)
-            solve_info["boundary_safe"] = False
-            solve_info["method"] = "card-cpp-rerank"
-            prepared, repair_info = prepare_layout_for_execution(
+            candidate = evaluate_card_candidate(
+                frame_rgb,
+                pieces,
                 layout,
-                solve_info,
+                base_info,
                 roi,
+                texture_cache,
+                "card-cpp-rerank",
+                assignment,
             )
-            strict_candidate = prepared is not None
-            if prepared is None:
-                prepared, repair_info = prepare_best_effort_layout(
-                    layout,
-                    solve_info,
-                    roi,
+            if candidate is None:
+                print(
+                    "CARD_CANDIDATE_REJECT fill=%.2f order=%s"
+                    % (fill_ratio, assignment),
+                    flush=True,
                 )
-                if prepared is None:
-                    print(
-                        "CARD_CANDIDATE_REJECT fill=%.2f order=%s %s"
-                        % (
-                            fill_ratio,
-                            assignment,
-                            repair_info,
-                        ),
-                        flush=True,
-                    )
-                    continue
-                solve_info["method"] = "card-best-effort"
-                solve_info["execution_mode"] = "BEST"
-
-            initial_geometry = (
-                solve_info["constraint_report"]["coverage"] * 0.58
-                + solve_info["constraint_report"]["internal_match"] * 0.42
-            )
-            if strict_candidate:
-                refined_layout, refined_report = (
-                    refine_card_layout_geometry(layout)
-                )
-                refined_info = dict(base_info)
-                refined_info["boundary_safe"] = False
-                refined_info["method"] = "card-cpp-rerank"
-                refined_prepared, _ = prepare_layout_for_execution(
-                    refined_layout,
-                    refined_info,
-                    roi,
-                )
-                if refined_prepared is not None:
-                    refined_geometry = (
-                        refined_info["constraint_report"]["coverage"] * 0.58
-                        + refined_info["constraint_report"]["internal_match"]
-                        * 0.42
-                    )
-                    if refined_geometry > initial_geometry + 1e-4:
-                        prepared = refined_prepared
-                        solve_info = refined_info
-                        solve_info["geometry_refined"] = True
-                        solve_info["refined_raw_report"] = {
-                            "coverage": refined_report["coverage"],
-                            "overlap": refined_report["overlap"],
-                            "internal_match": refined_report[
-                                "internal_match"
-                            ],
-                        }
-
-            pattern_layout = close_card_pattern_layout(
-                prepared,
-                solve_info,
-            )
-            texture = score_layout_texture(
-                frame_rgb,
-                pieces,
-                pattern_layout,
-            )
-            global_pattern = score_layout_global_pattern(
-                frame_rgb,
-                pieces,
-                pattern_layout,
-            )
-            rank_index = score_rank_index_diagonal(
-                frame_rgb,
-                pieces,
-                pattern_layout,
-            )
-            report = solve_info["constraint_report"]
-            base_rank = (
-                report["coverage"] * 0.36
-                + report["internal_match"] * 0.28
-                + texture["score"] * 0.14
-                + global_pattern["score"] * 0.22
-            )
-            rank = (
-                base_rank
-                + (
-                    rank_index["score"] - 0.5
-                )
-                * rank_index["confidence"]
-                * 0.12
-            )
-            if (
-                report["coverage"] >= 0.88
-                and report["internal_match"] >= 0.70
-            ):
-                geometry_tier = 3
-            elif (
-                report["coverage"] >= 0.84
-                and report["internal_match"] >= 0.52
-            ):
-                geometry_tier = 2
-            elif (
-                report["coverage"] >= 0.70
-                and report["internal_match"] >= 0.20
-            ):
-                geometry_tier = 1
-            else:
-                geometry_tier = 0
-            solve_info["texture_score"] = texture["score"]
-            solve_info["texture_confidence"] = texture["confidence"]
-            solve_info["global_pattern_score"] = (
-                global_pattern["score"]
-            )
-            solve_info["corner_diagonal_score"] = (
-                global_pattern.get("diagonal", 0.5)
-            )
-            solve_info["rank_index_score"] = rank_index["score"]
-            solve_info["rank_index_confidence"] = (
-                rank_index["confidence"]
-            )
-            solve_info["rank_index_valid"] = rank_index["valid"]
-            solve_info["rank_index_pair"] = rank_index["pair"]
-            solve_info["card_assignment"] = tuple(assignment)
-            solve_info["geometry_tier"] = geometry_tier
+                continue
+            candidates.append(candidate)
+            candidate["raw_layout"] = layout
+            candidate["base_info"] = base_info
+            report = candidate["info"]["constraint_report"]
             print(
                 "CARD_CANDIDATE fill=%.2f order=%s tier=%d rank=%.3f "
-                "coverage=%.3f internal=%.3f texture=%.3f "
-                "global=%.3f diagonal=%.3f index=%.3f/%.3f/%s"
+                "coverage=%.3f internal=%.3f texture=%.3f/%.3f "
+                "global=%.3f index=%.3f/%.3f/%s"
                 % (
                     fill_ratio,
                     assignment,
-                    geometry_tier,
-                    rank,
+                    candidate["info"]["geometry_tier"],
+                    candidate["base_rank"],
                     report["coverage"],
                     report["internal_match"],
-                    texture["score"],
-                    global_pattern["score"],
-                    global_pattern.get("diagonal", 0.5),
-                    rank_index["score"],
-                    rank_index["confidence"],
-                    rank_index["valid"],
+                    candidate["info"]["texture_score"],
+                    candidate["info"]["texture_confidence"],
+                    candidate["info"]["global_pattern_score"],
+                    candidate["info"]["rank_index_score"],
+                    candidate["info"]["rank_index_confidence"],
+                    candidate["info"]["rank_index_valid"],
                 ),
                 flush=True,
             )
-            if (
-                best is None
-                or geometry_tier
-                > best[2].get("geometry_tier", 0)
-                or (
-                    geometry_tier
-                    == best[2].get("geometry_tier", 0)
-                    and rank > best[0]
-                )
+
+        if (
+            setting_id + 1 >= 3
+            and card_candidates_are_confident(candidates)
+        ):
+            print(
+                "CARD_ADAPTIVE_STOP settings=%d candidates=%d"
+                % (setting_id + 1, len(candidates)),
+                flush=True,
+            )
+            break
+
+    if not card_candidates_are_confident(candidates):
+        relaxed_seeds = sorted(
+            candidates,
+            key=lambda item: (
+                item["info"].get("geometry_tier", 0),
+                item["base_rank"],
+            ),
+            reverse=True,
+        )[:3]
+        for seed in relaxed_seeds:
+            for relaxed_layout, assignment in generate_all_slot_layouts(
+                pieces,
+                seed["raw_layout"],
             ):
-                best = (
-                    rank,
-                    prepared,
-                    solve_info,
-                    pattern_layout,
+                signature = card_layout_signature(relaxed_layout)
+                if signature in seen:
+                    continue
+                seen.add(signature)
+                quick_report = evaluate_layout(
+                    relaxed_layout,
+                    edge_tolerance_ratio=0.07,
                 )
-
-        if best is not None:
-            best_report = best[2]["constraint_report"]
-            strong_geometry = (
-                best[2].get("geometry_tier", 0) == 3
-                and best_report["coverage"] >= 0.92
-                and best_report["internal_match"] >= 0.82
-            )
-            strong_card = (
-                best[2].get("geometry_tier", 0) >= 2
-                and best[0] >= 0.78
-                and best_report["coverage"] >= 0.86
-                and best_report["internal_match"] >= 0.60
-                and best[2].get("global_pattern_score", 0.0) >= 0.68
-                and best[2].get("corner_diagonal_score", 0.0) >= 0.82
-                and (
-                    best[2].get("rank_index_confidence", 0.0) < 0.55
-                    or best[2].get("rank_index_valid") is True
+                if (
+                    quick_report["overlap"] > 0.008
+                    or quick_report["coverage"] < 0.70
+                    or quick_report["corners"] < 0.75
+                    or quick_report["outer_piece_ratio"] < 0.75
+                ):
+                    continue
+                candidate = evaluate_card_candidate(
+                    frame_rgb,
+                    pieces,
+                    relaxed_layout,
+                    seed["base_info"],
+                    roi,
+                    texture_cache,
+                    "card-full-permutation",
+                    assignment,
+                    allow_refine=False,
                 )
-            )
-            if strong_geometry or strong_card:
-                break
+                if candidate is not None:
+                    candidate["raw_layout"] = relaxed_layout
+                    candidate["base_info"] = seed["base_info"]
+                    candidates.append(candidate)
+                    print(
+                        "CARD_PERMUTATION_CANDIDATE order=%s tier=%d "
+                        "rank=%.3f texture=%.3f/%.3f global=%.3f "
+                        "index=%.3f/%.3f/%s"
+                        % (
+                            assignment,
+                            candidate["info"]["geometry_tier"],
+                            candidate["base_rank"],
+                            candidate["info"]["texture_score"],
+                            candidate["info"]["texture_confidence"],
+                            candidate["info"]["global_pattern_score"],
+                            candidate["info"]["rank_index_score"],
+                            candidate["info"]["rank_index_confidence"],
+                            candidate["info"]["rank_index_valid"],
+                        ),
+                        flush=True,
+                    )
 
+    if not card_candidates_are_confident(candidates):
+        texture_result = solve_card_face(
+            frame_rgb,
+            pieces,
+            node_limit=90000,
+            time_limit_s=5.0,
+        )
+        solver_nodes += texture_result["nodes"]
+        texture_layout = texture_result["layout"]
+        if texture_layout is not None:
+            signature = card_layout_signature(texture_layout)
+            if signature not in seen:
+                seen.add(signature)
+                candidate = evaluate_card_candidate(
+                    frame_rgb,
+                    pieces,
+                    texture_layout,
+                    texture_result["info"],
+                    roi,
+                    texture_cache,
+                    "card-face",
+                    tuple(range(len(pieces))),
+                    allow_refine=False,
+                )
+                if candidate is not None:
+                    candidates.append(candidate)
+                    print(
+                        "CARD_TEXTURE_CANDIDATE tier=%d rank=%.3f"
+                        % (
+                            candidate["info"]["geometry_tier"],
+                            candidate["base_rank"],
+                        ),
+                        flush=True,
+                    )
+
+    best = select_card_candidate(candidates)
     if best is not None:
         return {
-            "layout": best[1],
-            "score": best[0],
+            "layout": best["layout"],
+            "score": best["score"],
             "nodes": solver_nodes,
-            "info": best[2],
+            "info": best["info"],
             "pieces": pieces,
             "preview_rgb": render_layout_preview(
                 frame_rgb,
                 pieces,
-                best[3],
+                best["pattern_layout"],
                 fill_rectangle=True,
+            ),
+            "candidate_pool": build_card_candidate_pool(
+                frame_rgb,
+                pieces,
+                candidates,
+                best,
             ),
             "mode": "CARD",
             "elapsed_ms": (
@@ -3649,63 +4624,25 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
             ) * 1000.0,
         }
 
-    result = solve_card_face(
-        frame_rgb,
-        pieces,
-        node_limit=90000,
-        time_limit_s=5.0,
-    )
-    if result["layout"] is not None:
-        prepared, repair_info = prepare_layout_for_execution(
-            result["layout"],
-            result["info"],
-            roi,
+    geometry_result = solve_piece_set_worker(pieces, roi)
+    if geometry_result["layout"] is not None:
+        geometry_result["info"]["method"] = "card-geometry-best"
+        geometry_result["info"]["execution_mode"] = "BEST"
+        pattern_layout = close_card_pattern_layout(
+            geometry_result["layout"],
+            geometry_result["info"],
         )
-        if prepared is None:
-            prepared, repair_info = prepare_best_effort_layout(
-                result["layout"],
-                result["info"],
-                roi,
-            )
-            if prepared is not None:
-                result["info"]["method"] = "card-face-best-effort"
-                result["info"]["execution_mode"] = "BEST"
-        result["layout"] = prepared
-        if prepared is not None:
-            pattern_layout = close_card_pattern_layout(
-                prepared,
-                result["info"],
-            )
-            result["preview_rgb"] = render_layout_preview(
-                frame_rgb,
-                pieces,
-                pattern_layout,
-                fill_rectangle=True,
-            )
-    if result["layout"] is None:
-        geometry_result = solve_piece_set_worker(pieces, roi)
-        if geometry_result["layout"] is not None:
-            geometry_result["info"]["method"] = "card-geometry-best"
-            geometry_result["info"]["execution_mode"] = "BEST"
-            pattern_layout = close_card_pattern_layout(
-                geometry_result["layout"],
-                geometry_result["info"],
-            )
-            geometry_result["preview_rgb"] = render_layout_preview(
-                frame_rgb,
-                pieces,
-                pattern_layout,
-                fill_rectangle=True,
-            )
-            geometry_result["mode"] = "CARD"
-            geometry_result["elapsed_ms"] = (
-                time.monotonic() - started
-            ) * 1000.0
-            return geometry_result
-    result["elapsed_ms"] = (
-        time.monotonic() - started
-    ) * 1000.0
-    return result
+        geometry_result["preview_rgb"] = render_layout_preview(
+            frame_rgb,
+            pieces,
+            pattern_layout,
+            fill_rectangle=True,
+        )
+        geometry_result["mode"] = "CARD"
+        geometry_result["elapsed_ms"] = (
+            time.monotonic() - started
+        ) * 1000.0
+    return geometry_result
 
 
 VISION_SETTINGS_PATH = os.path.join(
@@ -3819,6 +4756,183 @@ def get_assembly_zone(roi):
     }
 
 
+def build_ui_score_items(solve_info):
+    """将当前求解的评分项转换为前端可直接展示的数值。"""
+    if not solve_info:
+        return []
+
+    report = solve_info.get("constraint_report", {})
+    items = []
+
+    def add(label, value, weight=None):
+        if value is None:
+            return
+        item = {
+            "label": label,
+            "value": round(float(value), 4),
+        }
+        if weight is not None:
+            item["weight"] = round(float(weight), 4)
+            item["contribution"] = round(
+                float(value) * float(weight),
+                4,
+            )
+        items.append(item)
+
+    if "texture_score" in solve_info:
+        texture_score = solve_info.get("texture_score", 0.5)
+        texture_confidence = solve_info.get("texture_confidence", 0.0)
+        effective_texture = 0.5 + (
+            texture_score - 0.5
+        ) * texture_confidence
+        angle_quality = max(
+            0.0,
+            1.0 - report.get("boundary_angle_error", 10.0) / 10.0,
+        )
+        boundary_quality = (
+            report.get("corners", 0.0) * 0.35
+            + report.get("outer_piece_ratio", 0.0) * 0.25
+            + report.get("boundary_min_coverage", 0.0) * 0.25
+            + angle_quality * 0.15
+        )
+        global_confidence = solve_info.get(
+            "global_pattern_confidence",
+            0.0,
+        )
+        effective_global = 0.5 + (
+            solve_info.get("global_pattern_score", 0.5) - 0.5
+        ) * global_confidence
+        index_confidence = solve_info.get(
+            "rank_index_confidence",
+            0.0,
+        )
+        effective_index = 0.5 + (
+            solve_info.get("rank_index_score", 0.5) - 0.5
+        ) * index_confidence
+        add("跨缝连续", effective_texture, 0.42)
+        add("矩形覆盖度", report.get("coverage", 0.0), 0.12)
+        add("内部边匹配", report.get("internal_match", 0.0), 0.10)
+        add("外框质量", boundary_quality, 0.06)
+        add("全局牌面", effective_global, 0.10)
+        add("对角角标", effective_index, 0.20)
+        add("纹理证据", texture_confidence)
+        add("角标证据", solve_info.get("rank_index_confidence", 0.0))
+        add("最终候选", solve_info.get("selection_score"))
+        return items
+
+    add("矩形覆盖度", report.get("coverage"))
+    add("内部边匹配", report.get("internal_match"))
+    add("四角直角", report.get("corners"))
+    add("外边界完整", report.get("boundary_min_coverage"))
+    add("外框碎片占比", report.get("outer_piece_ratio"))
+    return items
+
+
+def create_solver_executor():
+    """创建单进程求解器，避免求解占满相机主循环。"""
+    return concurrent.futures.ProcessPoolExecutor(
+        max_workers=1,
+        mp_context=multiprocessing.get_context("spawn"),
+    )
+
+
+def stop_solver_executor(executor, future):
+    """立即停止当前求解进程，并返回一个可继续使用的新执行器。"""
+    if future is not None:
+        future.cancel()
+    processes = list(getattr(executor, "_processes", {}).values())
+    try:
+        executor.shutdown(wait=False, cancel_futures=True)
+    except TypeError:
+        executor.shutdown(wait=False)
+    for process in processes:
+        if process.is_alive():
+            process.terminate()
+    for process in processes:
+        process.join(timeout=0.2)
+    return create_solver_executor()
+
+
+def competition_candidate_safe(
+    solved_display,
+    motion_plan,
+    expected_piece_count,
+):
+    """判断候选是否具备强制执行所需的完整性与无重叠条件。"""
+    if not 2 <= int(expected_piece_count) <= 4:
+        return False
+    if (
+        not solved_display
+        or not motion_plan
+        or len(solved_display) != expected_piece_count
+        or len(motion_plan) != expected_piece_count
+    ):
+        return False
+
+    piece_ids = [int(item["piece_id"]) for item in solved_display]
+    motion_piece_ids = [int(item["piece_id"]) for item in motion_plan]
+    if (
+        len(set(piece_ids)) != expected_piece_count
+        or len(set(motion_piece_ids)) != expected_piece_count
+        or set(piece_ids) != set(motion_piece_ids)
+    ):
+        return False
+    display_layout = {
+        int(item["piece_id"]): np.asarray(
+            item["points"],
+            dtype=np.float32,
+        )
+        for item in solved_display
+    }
+    if layout_has_interior_overlap(display_layout):
+        return False
+    return True
+
+
+def competition_candidate_confidence(solve_info, solved_score):
+    """优先使用候选综合选择分，缺失时退回求解器分数。"""
+    value = (
+        solve_info.get("selection_score")
+        if solve_info is not None
+        else None
+    )
+    try:
+        confidence = float(solved_score if value is None else value)
+    except (TypeError, ValueError):
+        confidence = float(solved_score)
+    return confidence if math.isfinite(confidence) else 0.0
+
+
+def competition_result_ready(
+    solved_display,
+    motion_plan,
+    solve_info,
+    expected_piece_count,
+):
+    """比赛模式有完整、无重叠的输出就立即执行，包括保底结果。"""
+    return competition_candidate_safe(
+        solved_display,
+        motion_plan,
+        expected_piece_count,
+    )
+
+
+def competition_timeout_reached(
+    mode,
+    started_at,
+    best_candidate,
+    now=None,
+):
+    """普通拼图和扑克牌累计运行80秒后启用最佳安全候选。"""
+    now = time.monotonic() if now is None else float(now)
+    return (
+        str(mode).upper() in ("NORMAL", "CARD")
+        and float(started_at) > 0
+        and now - float(started_at) >= 80.0
+        and best_candidate is not None
+    )
+
+
 def main():
     cv2.setLogLevel(2)
     portrait_mode = os.environ.get("PUZZLE_PORTRAIT", "0") == "1"
@@ -3889,6 +5003,7 @@ def main():
     green_method = str(
         saved.get("green_method", "largest")
     ).lower()
+    green_auto = bool(saved.get("green_auto", True))
     auto_threshold = bool(saved.get("auto_threshold", True))
     manual_threshold = min(255, max(0, int(saved.get("manual_threshold", 128))))
     polarity_mode = str(saved.get("polarity_mode", "AUTO")).upper()
@@ -3903,6 +5018,10 @@ def main():
     min_piece_area = min(
         50000, max(100, int(saved.get("min_piece_area", 1500)))
     )
+    assembly_gap_pixels = min(
+        80,
+        max(0, int(saved.get("assembly_gap_pixels", 36))),
+    )
     tuning_open = False
     solve_requested = False
     card_requested = False
@@ -3910,15 +5029,17 @@ def main():
     solved_mode = ""
     solved_score = 0.0
     solved_ratio = 0.0
+    solve_info = None
+    solve_pieces = []
+    current_result_preview = None
     motion_plan = []
+    candidate_pool_items = []
     solver_message = ""
     solver_nodes = 0
     solver_ms = 0.0
     recent_piece_sets = []
-    solver_executor = concurrent.futures.ProcessPoolExecutor(
-        max_workers=1,
-        mp_context=multiprocessing.get_context("spawn"),
-    )
+    green_auto_state = {}
+    solver_executor = create_solver_executor()
     solver_future = None
     solve_started_at = 0.0
     pending_solve_until = 0.0
@@ -3930,8 +5051,18 @@ def main():
     last_capture_name = ""
     last_capture_time = 0.0
     ui_bridge = UiBridge()
+    ui_bridge.clear_result()
+    ui_bridge.clear_candidates()
     serial_controller = SerialController()
+    learned_templates = load_templates()
     ui_mode = "CARD"
+    competition_mode = bool(saved.get("competition_mode", False))
+    competition_active = False
+    competition_retry_count = 0
+    competition_retry_at = 0.0
+    competition_started_at = 0.0
+    competition_best_candidate = None
+    competition_forced_best = False
     camera_was_online = False
     offline_preview_published = False
     reported_camera_error = ""
@@ -3950,6 +5081,18 @@ def main():
         capture_requested = False
         control = ui_bridge.read_control()
         if control is not None:
+            if any(
+                key in control
+                for key in (
+                    "background_mode",
+                    "green_auto",
+                    "roi_x",
+                    "roi_y",
+                    "roi_width",
+                    "roi_height",
+                )
+            ):
+                green_auto_state.clear()
             requested_mode = str(
                 control.get("mode", ui_mode)
             ).upper()
@@ -3960,6 +5103,25 @@ def main():
                     solved_mode = ""
                     motion_plan = []
                     ui_bridge.clear_result()
+                    candidate_pool_items = []
+                    ui_bridge.clear_candidates()
+            if any(
+                key in control
+                for key in (
+                    "background_mode",
+                    "green_auto",
+                    "green_hue_min",
+                    "green_hue_max",
+                    "green_sat_min",
+                    "green_val_min",
+                    "roi_x",
+                    "roi_y",
+                    "roi_width",
+                    "roi_height",
+                )
+            ):
+                candidate_pool_items = []
+                ui_bridge.clear_candidates()
             if "auto_threshold" in control:
                 auto_threshold = bool(control["auto_threshold"])
             if "manual_threshold" in control:
@@ -3985,6 +5147,8 @@ def main():
                 ).lower()
                 if requested_method in ("border", "largest"):
                     green_method = requested_method
+            if "green_auto" in control:
+                green_auto = bool(control["green_auto"])
             if "green_hue_min" in control:
                 green_hue_min = min(255, max(0, int(control["green_hue_min"])))
             if "green_hue_max" in control:
@@ -4006,6 +5170,19 @@ def main():
                     50000,
                     max(100, int(control["min_piece_area"])),
                 )
+            if "assembly_gap_pixels" in control:
+                assembly_gap_pixels = min(
+                    80,
+                    max(0, int(control["assembly_gap_pixels"])),
+                )
+            if "competition_mode" in control:
+                competition_mode = bool(control["competition_mode"])
+                if not competition_mode:
+                    competition_active = False
+                    competition_retry_at = 0.0
+                    competition_started_at = 0.0
+                    competition_best_candidate = None
+                    competition_forced_best = False
             if any(
                 key in control
                 for key in (
@@ -4051,6 +5228,37 @@ def main():
                     card_requested = True
                 else:
                     solve_requested = True
+            elif action == "competition_start":
+                competition_active = competition_mode
+                competition_retry_count = 0
+                competition_retry_at = 0.0
+                competition_started_at = time.monotonic()
+                competition_best_candidate = None
+                competition_forced_best = False
+                if competition_active:
+                    if ui_mode == "CARD":
+                        card_requested = True
+                    else:
+                        solve_requested = True
+            elif action == "stop_solve":
+                competition_active = False
+                competition_retry_at = 0.0
+                competition_started_at = 0.0
+                competition_best_candidate = None
+                competition_forced_best = False
+                pending_solve_until = 0.0
+                pending_solve_mode = ""
+                pending_card_frame = None
+                pending_card_pieces = None
+                if solver_future is not None:
+                    solver_executor = stop_solver_executor(
+                        solver_executor,
+                        solver_future,
+                    )
+                    solver_future = None
+                active_solver_mode = ""
+                active_solve_frame = None
+                solver_message = "STOPPED"
             elif action == "capture":
                 capture_requested = True
             elif action == "shutdown":
@@ -4106,11 +5314,30 @@ def main():
                 serial_controller.record_platform_point(action[-1])
             elif action == "calibration_compute":
                 serial_controller.calculate_calibration()
+            elif action == "learn_template":
+                if 2 <= len(pieces) <= 4:
+                    roi_rgb = frame_rgb[
+                        roi_y:roi_y + roi_height,
+                        roi_x:roi_x + roi_width,
+                    ]
+                    learned = learn_templates(
+                        roi_rgb, pieces,
+                        (roi_x, roi_y, roi_width, roi_height),
+                    )
+                    if learned:
+                        save_templates(learned)
+                        learned_templates = learned
+                        solver_message = "LEARN OK"
+                    else:
+                        solver_message = "LEARN FAIL"
+                else:
+                    solver_message = "LEARN NEED 2-4"
 
             # 参数变更后立即持久化
             save_vision_settings({
                 "background_mode": background_mode,
                 "green_method": green_method,
+                "green_auto": bool(green_auto),
                 "auto_threshold": bool(auto_threshold),
                 "manual_threshold": int(manual_threshold),
                 "polarity_mode": polarity_mode,
@@ -4123,7 +5350,12 @@ def main():
                 "paper_close_kernel": int(paper_close_kernel),
                 "paper_close_iter": int(paper_close_iter),
                 "min_piece_area": int(min_piece_area),
+                "assembly_gap_pixels": int(assembly_gap_pixels),
+                "competition_mode": bool(competition_mode),
             })
+            # 强制下一帧 publish_state 不节流，避免 Web UI 在两个文件之间
+            # 读到旧状态导致滑块回弹。
+            ui_bridge.last_state_time = 0.0
 
         serial_controller.service()
         img = cam.read()
@@ -4138,11 +5370,14 @@ def main():
                 print("CAMERA_DISCONNECTED", flush=True)
             camera_was_online = False
             recent_piece_sets = []
+            green_auto_state.clear()
             pending_solve_until = 0.0
             pending_solve_mode = ""
             pending_card_frame = None
             pending_card_pieces = None
             solver_message = "CAMERA OFFLINE"
+            if competition_active and solver_future is None:
+                competition_retry_at = time.monotonic() + 0.5
 
             if not offline_preview_published:
                 offline_frame = np.zeros(
@@ -4182,6 +5417,11 @@ def main():
                     "polarity_mode": polarity_mode,
                     "background_mode": background_mode,
                     "green_method": green_method,
+                    "green_auto": bool(green_auto),
+                    "green_detected_hue_min": 0,
+                    "green_detected_hue_max": 0,
+                    "green_detected_sat_min": 0,
+                    "green_detected_val_min": 0,
                     "green_hue_min": int(green_hue_min),
                     "green_hue_max": int(green_hue_max),
                     "green_sat_min": int(green_sat_min),
@@ -4192,6 +5432,7 @@ def main():
                     "paper_close_iter": int(paper_close_iter),
                     "detected_polarity": "",
                     "min_piece_area": int(min_piece_area),
+                    "assembly_gap_pixels": int(assembly_gap_pixels),
                     "camera_width": int(camera_width),
                     "camera_height": int(camera_height),
                     "roi_x": int(roi_x),
@@ -4207,8 +5448,16 @@ def main():
                     "solver_nodes": int(solver_nodes),
                     "solved_mode": solved_mode.lower(),
                     "last_capture_name": last_capture_name,
+                    "score_items": build_ui_score_items(solve_info),
                     "motion_plan": motion_plan,
                     "motion_plan_count": len(motion_plan),
+                    "solved_display": solved_display or [],
+                    "candidate_items": candidate_pool_items,
+                    "competition_mode": bool(competition_mode),
+                    "competition_active": bool(competition_active),
+                    "competition_retry_count": int(
+                        competition_retry_count
+                    ),
                     **serial_controller.state(),
                 }
             )
@@ -4343,6 +5592,72 @@ def main():
                 *touch_args,
             ):
                 min_piece_area = min(50000, min_piece_area + 250)
+            elif touch_in_box(
+                touch_status,
+                button_boxes["green_method"],
+                *touch_args,
+            ):
+                green_method = "border" if green_method == "largest" else "largest"
+            elif touch_in_box(
+                touch_status,
+                button_boxes["green_sat_down"],
+                *touch_args,
+            ):
+                green_sat_min = max(0, green_sat_min - 5)
+            elif touch_in_box(
+                touch_status,
+                button_boxes["green_sat_up"],
+                *touch_args,
+            ):
+                green_sat_min = min(255, green_sat_min + 5)
+            elif touch_in_box(
+                touch_status,
+                button_boxes["green_close_k_down"],
+                *touch_args,
+            ):
+                green_close_kernel = max(3, green_close_kernel - 2)
+            elif touch_in_box(
+                touch_status,
+                button_boxes["green_close_k_up"],
+                *touch_args,
+            ):
+                green_close_kernel = min(21, green_close_kernel + 2)
+            elif touch_in_box(
+                touch_status,
+                button_boxes["green_close_i_down"],
+                *touch_args,
+            ):
+                green_close_iter = max(0, green_close_iter - 1)
+            elif touch_in_box(
+                touch_status,
+                button_boxes["green_close_i_up"],
+                *touch_args,
+            ):
+                green_close_iter = min(5, green_close_iter + 1)
+            elif touch_in_box(
+                touch_status,
+                button_boxes["paper_close_k_down"],
+                *touch_args,
+            ):
+                paper_close_kernel = max(3, paper_close_kernel - 2)
+            elif touch_in_box(
+                touch_status,
+                button_boxes["paper_close_k_up"],
+                *touch_args,
+            ):
+                paper_close_kernel = min(15, paper_close_kernel + 2)
+            elif touch_in_box(
+                touch_status,
+                button_boxes["paper_close_i_down"],
+                *touch_args,
+            ):
+                paper_close_iter = max(0, paper_close_iter - 1)
+            elif touch_in_box(
+                touch_status,
+                button_boxes["paper_close_i_up"],
+                *touch_args,
+            ):
+                paper_close_iter = min(5, paper_close_iter + 1)
         touch_was_pressed = touch_status[2]
         if os.path.exists("/tmp/puzzle_solve_once"):
             os.remove("/tmp/puzzle_solve_once")
@@ -4365,6 +5680,8 @@ def main():
             polarity_mode=polarity_mode,
             background_mode=background_mode,
             green_method=green_method,
+            green_auto=green_auto,
+            green_auto_state=green_auto_state,
             green_hue_min=green_hue_min,
             green_hue_max=green_hue_max,
             green_sat_min=green_sat_min,
@@ -4388,6 +5705,7 @@ def main():
                     "polarity_mode": polarity_mode,
                     "background_mode": background_mode,
                     "green_method": green_method,
+                    "green_auto": bool(green_auto),
                     "min_piece_area": int(min_piece_area),
                     "max_piece_area_ratio": float(
                         max_piece_area_ratio
@@ -4415,10 +5733,36 @@ def main():
                 )
             )
 
+        if (
+            competition_active
+            and competition_retry_at > 0
+            and time.monotonic() >= competition_retry_at
+            and solver_future is None
+            and pending_solve_until <= 0
+            and not competition_result_ready(
+                solved_display,
+                motion_plan,
+                solve_info,
+                len(solve_pieces),
+            )
+        ):
+            competition_retry_at = 0.0
+            if ui_mode == "CARD":
+                card_requested = True
+            else:
+                solve_requested = True
+
         if solve_requested:
             if solver_future is not None:
                 solver_message = "SOLVING"
             else:
+                solved_display = None
+                solved_mode = ""
+                solve_info = None
+                solve_pieces = []
+                current_result_preview = None
+                motion_plan = []
+                candidate_pool_items = []
                 pending_solve_until = time.monotonic() + 2.0
                 pending_solve_mode = (
                     "FIRST"
@@ -4430,11 +5774,19 @@ def main():
                 solver_message = "HOLD STILL"
                 solver_ms = 0.0
                 ui_bridge.clear_result()
+                ui_bridge.clear_candidates()
 
         if card_requested:
             if solver_future is not None:
                 solver_message = "CARD BUSY"
             elif 2 <= len(pieces) <= 4:
+                solved_display = None
+                solved_mode = ""
+                solve_info = None
+                solve_pieces = []
+                current_result_preview = None
+                motion_plan = []
+                candidate_pool_items = []
                 pending_solve_until = time.monotonic() + 2.0
                 pending_solve_mode = "CARD"
                 pending_card_frame = None
@@ -4442,6 +5794,7 @@ def main():
                 solver_message = "CARD HOLD"
                 solver_ms = 0.0
                 ui_bridge.clear_result()
+                ui_bridge.clear_candidates()
             else:
                 solver_message = "CARD NEED 2-4"
 
@@ -4452,6 +5805,15 @@ def main():
             stable_pieces = build_stable_piece_set(
                 recent_piece_sets
             )
+            stability_fallback = False
+            if (
+                stable_pieces is None
+                and time.monotonic() >= pending_solve_until
+            ):
+                stable_pieces = build_best_effort_piece_set(
+                    recent_piece_sets
+                )
+                stability_fallback = stable_pieces is not None
             card_ready = (
                 pending_solve_mode == "CARD"
                 and stable_pieces is not None
@@ -4467,7 +5829,11 @@ def main():
                 solved_score = 0.0
                 solved_ratio = 0.0
                 solver_nodes = 0
-                solver_message = "SOLVING"
+                solver_message = (
+                    "SOLVING BEST"
+                    if stability_fallback
+                    else "SOLVING"
+                )
                 solve_started_at = time.monotonic()
                 active_solver_mode = pending_solve_mode
                 active_solve_frame = (
@@ -4480,13 +5846,119 @@ def main():
                     roi_height,
                 )
                 if active_solver_mode == "CARD":
-                    solver_message = "CARD SOLVING"
+                    solver_message = (
+                        "CARD SOLVING BEST"
+                        if stability_fallback
+                        else "CARD SOLVING"
+                    )
                     solver_future = solver_executor.submit(
                         solve_card_piece_set_worker,
                         active_solve_frame,
                         stable_pieces,
                         solve_roi,
                     )
+                elif (
+                    active_solver_mode == "FIRST"
+                    and learned_templates
+                ):
+                    # 第一问模板匹配：直接在主线做，速度快
+                    solver_message = "TEMPLATE MATCH"
+                    roi_rgb = active_solve_frame[
+                        roi_y:roi_y + roi_height,
+                        roi_x:roi_x + roi_width,
+                    ]
+                    matched, assignments = match_templates(
+                        roi_rgb,
+                        stable_pieces,
+                        learned_templates,
+                        solve_roi,
+                    )
+                    if matched is not None:
+                        solved_layout, template_tilt = (
+                            align_layout_to_horizontal(matched)
+                        )
+                        template_points = np.vstack(
+                            list(solved_layout.values())
+                        )
+                        template_width = float(
+                            np.max(template_points[:, 0])
+                            - np.min(template_points[:, 0])
+                        )
+                        template_height = float(
+                            np.max(template_points[:, 1])
+                            - np.min(template_points[:, 1])
+                        )
+                        solved_score = 1.0
+                        solved_mode = "FIRST"
+                        solved_ratio = 1.0
+                        solver_nodes = len(assignments)
+                        solver_ms = 0.0
+                        solve_info = {
+                            "solve_scale": 1.0,
+                            "width": template_width,
+                            "height": template_height,
+                            "ratio": template_width / max(
+                                1.0,
+                                template_height,
+                            ),
+                            "coverage": 1.0,
+                            "overlap": 0.0,
+                            "method": "template-match",
+                            "execution_mode": "RECT",
+                            "forced": False,
+                            "template_tilt": template_tilt,
+                        }
+                        solve_pieces = list(stable_pieces)
+                        # 直接处理结果
+                        is_fallback = False
+                        result_mode = "FIRST"
+                        current_result_preview = render_layout_preview(
+                            active_solve_frame, solve_pieces,
+                            solved_layout, fill_rectangle=True,
+                        )
+                        # 模板已经记录了第一问的准确目标位置，不能再调用
+                        # 普通拼图的50像素外移，否则会破坏学习好的布局。
+                        solved_display = [
+                            {
+                                "piece_id": int(piece_id),
+                                "points": [
+                                    (float(point[0]), float(point[1]))
+                                    for point in polygon
+                                ],
+                            }
+                            for piece_id, polygon in sorted(
+                                solved_layout.items()
+                            )
+                        ]
+                        safe_layout = {
+                            item["piece_id"]: np.array(
+                                item["points"], dtype=np.float32)
+                            for item in solved_display
+                        }
+                        if not layout_has_interior_overlap(safe_layout):
+                            motion_plan = build_motion_plan(
+                                solve_pieces,
+                                solved_display,
+                            )
+                            ui_bridge.publish_result(current_result_preview)
+                            solver_message = "TEMPLATE OK"
+                        else:
+                            solver_message = "TEMPLATE TOUCH"
+                            solved_display = None
+                            motion_plan = []
+                            solver_future = solver_executor.submit(
+                                solve_piece_set_worker,
+                                stable_pieces,
+                                solve_roi,
+                            )
+                    else:
+                        solver_message = "TEMPLATE FAIL"
+                        # 降级到普通求解
+                        solver_future = solver_executor.submit(
+                            solve_piece_set_worker,
+                            stable_pieces,
+                            solve_roi,
+                        )
                 else:
                     solver_future = solver_executor.submit(
                         solve_piece_set_worker,
@@ -4503,6 +5975,32 @@ def main():
                     if pending_solve_mode == "CARD"
                     else "NO STABLE"
                 )
+                pending_solve_mode = ""
+                pending_card_frame = None
+                pending_card_pieces = None
+
+        force_best_due = (
+            competition_active
+            and competition_timeout_reached(
+                ui_mode,
+                competition_started_at,
+                competition_best_candidate,
+            )
+        )
+        if force_best_due:
+            if (
+                solver_future is not None
+                and not solver_future.done()
+            ):
+                solver_executor = stop_solver_executor(
+                    solver_executor,
+                    solver_future,
+                )
+                solver_future = None
+                active_solver_mode = ""
+                active_solve_frame = None
+            if solver_future is None:
+                pending_solve_until = 0.0
                 pending_solve_mode = ""
                 pending_card_frame = None
                 pending_card_pieces = None
@@ -4530,14 +6028,57 @@ def main():
                 solved_mode = ""
                 solved_ratio = 0.0
                 motion_plan = []
+                candidate_pool_items = []
                 ui_bridge.clear_result()
+                ui_bridge.clear_candidates()
                 solver_message = (
                     "CARD ERROR"
                     if result_mode == "CARD"
                     else "SOLVE ERROR"
                 )
+                # 尝试用当前碎片直接做降级搬运
+                if 2 <= len(pieces) <= 4:
+                    fallback_layout, _, fallback_info = (
+                        build_last_resort_layout(
+                            pieces,
+                            (roi_x, roi_y, roi_width, roi_height),
+                        )
+                    )
+                    if fallback_layout is not None:
+                        solve_pieces = pieces
+                        solve_info = fallback_info
+                        solved_display = place_layout_on_paper(
+                            fallback_layout, fallback_info,
+                            (roi_x, roi_y, roi_width, roi_height),
+                            assembly_gap_pixels,
+                        )
+                        safe_layout = {
+                            item["piece_id"]: np.array(
+                                item["points"], dtype=np.float32)
+                            for item in solved_display
+                        }
+                        if not layout_has_interior_overlap(safe_layout):
+                            solved_mode = result_mode
+                            solved_ratio = fallback_info["ratio"]
+                            motion_plan = build_motion_plan(
+                                solve_pieces, solved_display)
+                            solver_message = "FALLBACK"
             else:
                 result_mode = result.get("mode", result_mode)
+                candidate_pool_items = []
+                candidate_previews = []
+                if result_mode == "CARD":
+                    for item in result.get("candidate_pool", []):
+                        metadata = dict(item)
+                        preview = metadata.pop("preview_rgb", None)
+                        if preview is None:
+                            continue
+                        candidate_pool_items.append(metadata)
+                        candidate_previews.append(preview)
+                if candidate_previews:
+                    ui_bridge.publish_candidates(candidate_previews)
+                else:
+                    ui_bridge.clear_candidates()
                 solved_layout = result["layout"]
                 solved_score = result["score"]
                 solver_nodes = result["nodes"]
@@ -4570,15 +6111,15 @@ def main():
                             else "NO RECT"
                         )
                 else:
-                    result_preview = (
+                    current_result_preview = (
                         None if is_fallback
                         else result.get("preview_rgb")
                     )
                     if (
-                        result_preview is None
+                        current_result_preview is None
                         and active_solve_frame is not None
                     ):
-                        result_preview = render_layout_preview(
+                        current_result_preview = render_layout_preview(
                             active_solve_frame,
                             solve_pieces,
                             solved_layout,
@@ -4593,6 +6134,7 @@ def main():
                             roi_width,
                             roi_height,
                         ),
+                        assembly_gap_pixels,
                     )
                     solved_ratio = solve_info["ratio"]
                     safe_layout = {
@@ -4603,15 +6145,37 @@ def main():
                         for item in solved_display
                     }
                     if layout_has_interior_overlap(safe_layout):
-                        solved_display = None
-                        solved_mode = ""
-                        solved_ratio = 0.0
-                        motion_plan = []
-                        ui_bridge.clear_result()
-                        solver_message = "NO SAFE"
-                    else:
+                        # 尝试用更大间隙推开重叠碎片，而非直接拒绝
+                        gap_pixels = (
+                            max(2.5, roi_height / 297.0 * 2.5)
+                            * solve_info.get("solve_scale", 1.0)
+                        )
+                        separated, _ = add_adjacency_gap(
+                            solved_layout, gap_pixels,
+                            edge_tolerance_ratio=0.04,
+                        )
+                        overlap_fixed = False
+                        if separated is not None:
+                            solved_display = place_layout_on_paper(
+                                separated, solve_info,
+                                (roi_x, roi_y, roi_width, roi_height),
+                                assembly_gap_pixels,
+                            )
+                            safe_layout = {
+                                item["piece_id"]: np.array(
+                                    item["points"], dtype=np.float32,
+                                )
+                                for item in solved_display
+                            }
+                            if not layout_has_interior_overlap(safe_layout):
+                                solver_message = "SOLVE GAP2"
+                                overlap_fixed = True
+                        if not overlap_fixed:
+                            # 仍有轻微接触，标记后仍继续执行
+                            solver_message = "SOLVE TOUCH"
+                    if solved_layout is not None:
                         solved_mode = result_mode
-                        ui_bridge.publish_result(result_preview)
+                        ui_bridge.publish_result(current_result_preview)
                         if (
                             result_mode == "CARD"
                             and os.environ.get(
@@ -4665,6 +6229,113 @@ def main():
                 )
             active_solve_frame = None
 
+        if (
+            competition_active
+            and ui_mode in ("NORMAL", "CARD")
+            and solve_info is not None
+            and competition_candidate_safe(
+                solved_display,
+                motion_plan,
+                len(solve_pieces),
+            )
+        ):
+            candidate_score = competition_candidate_confidence(
+                solve_info,
+                solved_score,
+            )
+            if (
+                competition_best_candidate is None
+                or candidate_score
+                > competition_best_candidate["confidence"]
+            ):
+                competition_best_candidate = {
+                    "confidence": candidate_score,
+                    "score": float(solved_score),
+                    "ratio": float(solved_ratio),
+                    "mode": solved_mode,
+                    "solved_display": copy.deepcopy(solved_display),
+                    "motion_plan": copy.deepcopy(motion_plan),
+                    "solve_info": copy.deepcopy(solve_info),
+                    "solve_pieces": copy.deepcopy(solve_pieces),
+                    "preview": (
+                        current_result_preview.copy()
+                        if current_result_preview is not None
+                        else None
+                    ),
+                }
+                print(
+                    "AUTO_BEST confidence=%.3f retry=%d"
+                    % (candidate_score, competition_retry_count),
+                    flush=True,
+                )
+
+        force_best_due = (
+            competition_active
+            and competition_timeout_reached(
+                ui_mode,
+                competition_started_at,
+                competition_best_candidate,
+            )
+        )
+        if force_best_due and not competition_forced_best:
+            solved_display = copy.deepcopy(
+                competition_best_candidate["solved_display"]
+            )
+            motion_plan = copy.deepcopy(
+                competition_best_candidate["motion_plan"]
+            )
+            solve_info = copy.deepcopy(
+                competition_best_candidate["solve_info"]
+            )
+            solve_pieces = copy.deepcopy(
+                competition_best_candidate["solve_pieces"]
+            )
+            solved_score = competition_best_candidate["score"]
+            solved_ratio = competition_best_candidate["ratio"]
+            solved_mode = competition_best_candidate["mode"]
+            current_result_preview = competition_best_candidate["preview"]
+            if current_result_preview is not None:
+                ui_bridge.publish_result(current_result_preview)
+            competition_forced_best = True
+            solver_message = "AUTO BEST 80S"
+            print(
+                "AUTO_FORCE_BEST confidence=%.3f elapsed=%.1fs"
+                % (
+                    competition_best_candidate["confidence"],
+                    time.monotonic() - competition_started_at,
+                ),
+                flush=True,
+            )
+
+        if (
+            competition_active
+            and solver_future is None
+            and pending_solve_until <= 0
+        ):
+            ready_to_execute = competition_result_ready(
+                solved_display,
+                motion_plan,
+                solve_info,
+                len(solve_pieces) if solve_pieces else 0,
+            ) or competition_forced_best
+            if ready_to_execute:
+                if time.monotonic() >= competition_retry_at:
+                    if serial_controller.send_motion_plan(motion_plan):
+                        competition_active = False
+                        competition_retry_at = 0.0
+                        solver_message = (
+                            "AUTO BEST EXECUTING"
+                            if competition_forced_best
+                            else "AUTO EXECUTING"
+                        )
+                    else:
+                        competition_retry_at = time.monotonic() + 1.0
+                        solver_message = "AUTO SEND WAIT"
+            elif competition_retry_at <= 0:
+                competition_retry_count += 1
+                competition_retry_at = time.monotonic() + 0.35
+                solver_message = "AUTO RETRY %d" % competition_retry_count
+
         if tuning_open:
             show_binary_preview(
                 frame_rgb,
@@ -4676,7 +6347,10 @@ def main():
             img,
             (roi_x, roi_y, roi_width, roi_height),
         )
-        for index, piece in enumerate(pieces, 1):
+        display_pieces = build_stable_piece_set(recent_piece_sets)
+        if display_pieces is None:
+            display_pieces = pieces
+        for index, piece in enumerate(display_pieces, 1):
             draw_piece(img, piece, index)
         ui_bridge.publish_live(
             frame_rgb,
@@ -4732,6 +6406,12 @@ def main():
                 manual_threshold,
                 polarity_mode,
                 min_piece_area,
+                green_method=green_method,
+                green_sat_min=green_sat_min,
+                green_close_kernel=green_close_kernel,
+                green_close_iter=green_close_iter,
+                paper_close_kernel=paper_close_kernel,
+                paper_close_iter=paper_close_iter,
             )
         else:
             draw_button(
@@ -4793,6 +6473,27 @@ def main():
                 "polarity_mode": polarity_mode,
                 "background_mode": background_mode,
                 "green_method": green_method,
+                "green_auto": bool(green_auto),
+                "green_detected_hue_min": int(
+                    (threshold_info.get("green_auto_values") or {}).get(
+                        "hue_min", 0
+                    )
+                ),
+                "green_detected_hue_max": int(
+                    (threshold_info.get("green_auto_values") or {}).get(
+                        "hue_max", 0
+                    )
+                ),
+                "green_detected_sat_min": int(
+                    (threshold_info.get("green_auto_values") or {}).get(
+                        "sat_min", 0
+                    )
+                ),
+                "green_detected_val_min": int(
+                    (threshold_info.get("green_auto_values") or {}).get(
+                        "val_min", 0
+                    )
+                ),
                 "green_hue_min": int(green_hue_min),
                 "green_hue_max": int(green_hue_max),
                 "green_sat_min": int(green_sat_min),
@@ -4803,6 +6504,7 @@ def main():
                 "paper_close_iter": int(paper_close_iter),
                 "detected_polarity": threshold_info["polarity"],
                 "min_piece_area": int(min_piece_area),
+                "assembly_gap_pixels": int(assembly_gap_pixels),
                 "camera_width": int(camera_width),
                 "camera_height": int(camera_height),
                 "roi_x": int(roi_x),
@@ -4821,8 +6523,14 @@ def main():
                 "solver_nodes": int(solver_nodes),
                 "solved_mode": solved_mode.lower(),
                 "last_capture_name": last_capture_name,
+                "score_items": build_ui_score_items(solve_info),
                 "motion_plan": motion_plan,
                 "motion_plan_count": len(motion_plan),
+                "solved_display": solved_display or [],
+                "candidate_items": candidate_pool_items,
+                "competition_mode": bool(competition_mode),
+                "competition_active": bool(competition_active),
+                "competition_retry_count": int(competition_retry_count),
                 **serial_controller.state(),
             }
         )

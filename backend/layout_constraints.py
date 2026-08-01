@@ -498,8 +498,16 @@ def evaluate_layout(layout, edge_tolerance_ratio=0.012):
     }
 
 
-def add_adjacency_gap(layout, gap_pixels):
-    report = evaluate_layout(layout)
+def add_adjacency_gap(
+    layout,
+    gap_pixels,
+    edge_tolerance_ratio=0.012,
+    align_vertices=False,
+):
+    report = evaluate_layout(
+        layout,
+        edge_tolerance_ratio=edge_tolerance_ratio,
+    )
     if gap_pixels <= 0:
         return layout, {
             "applied": False,
@@ -530,12 +538,61 @@ def add_adjacency_gap(layout, gap_pixels):
     }
     rows = []
     values = []
+    constraints = []
     for adjacency in report["adjacencies"]:
         first = adjacency["first_piece"]
         second = adjacency["second_piece"]
         normal = np.asarray(adjacency["normal"], dtype=np.float64)
         if np.dot(normal, centers[second] - centers[first]) < 0:
             normal = -normal
+        first_polygon = np.asarray(base_layout[first], dtype=np.float64)
+        second_polygon = np.asarray(base_layout[second], dtype=np.float64)
+        first_edge = adjacency["first_edge"]
+        second_edge = adjacency["second_edge"]
+        first_points = np.asarray(
+            [
+                first_polygon[first_edge],
+                first_polygon[(first_edge + 1) % len(first_polygon)],
+            ],
+            dtype=np.float64,
+        )
+        second_points = np.asarray(
+            [
+                second_polygon[second_edge],
+                second_polygon[(second_edge + 1) % len(second_polygon)],
+            ],
+            dtype=np.float64,
+        )
+        direct_error = np.linalg.norm(second_points - first_points, axis=1).sum()
+        reverse_error = np.linalg.norm(
+            second_points[::-1] - first_points,
+            axis=1,
+        ).sum()
+        if reverse_error < direct_error:
+            second_points = second_points[::-1]
+
+        first_middle = np.mean(first_points, axis=0)
+        second_middle = np.mean(second_points, axis=0)
+        current_separation = float(
+            np.dot(second_middle - first_middle, normal)
+        )
+        if align_vertices:
+            current_vector = np.mean(second_points - first_points, axis=0)
+            required_translation = normal * gap_pixels - current_vector
+        else:
+            required_translation = normal * (
+                gap_pixels - current_separation
+            )
+        constraints.append(
+            (
+                first,
+                second,
+                normal,
+                current_separation,
+                first_points,
+                second_points,
+            )
+        )
         for axis in range(2):
             row = np.zeros(len(movable) * 2, dtype=np.float64)
             if first != anchor:
@@ -543,7 +600,7 @@ def add_adjacency_gap(layout, gap_pixels):
             if second != anchor:
                 row[variable[second] * 2 + axis] = 1.0
             rows.append(row)
-            values.append(normal[axis] * gap_pixels)
+            values.append(required_translation[axis])
 
     if not rows:
         return layout, {
@@ -568,27 +625,43 @@ def add_adjacency_gap(layout, gap_pixels):
         for piece_id in piece_ids
     }
     maximum_error = 0.0
-    for adjacency in report["adjacencies"]:
-        first = adjacency["first_piece"]
-        second = adjacency["second_piece"]
-        normal = np.asarray(adjacency["normal"], dtype=np.float64)
-        if np.dot(normal, centers[second] - centers[first]) < 0:
-            normal = -normal
-        separation = float(
-            np.dot(
-                translations[second] - translations[first],
-                normal,
+    final_gaps = []
+    for (
+        first,
+        second,
+        normal,
+        current_separation,
+        first_points,
+        second_points,
+    ) in constraints:
+        relative_translation = translations[second] - translations[first]
+        if align_vertices:
+            distances = np.linalg.norm(
+                second_points + relative_translation - first_points,
+                axis=1,
             )
-        )
-        maximum_error = max(
-            maximum_error,
-            abs(separation - gap_pixels),
-        )
+            final_gaps.extend(float(distance) for distance in distances)
+            maximum_error = max(
+                maximum_error,
+                max(abs(float(distance) - gap_pixels) for distance in distances),
+            )
+        else:
+            separation = current_separation + float(
+                np.dot(relative_translation, normal)
+            )
+            final_gaps.append(separation)
+            maximum_error = max(
+                maximum_error,
+                abs(separation - gap_pixels),
+            )
     return moved, {
         "applied": True,
         "anchor": anchor,
         "gap_pixels": float(gap_pixels),
+        "metric": "vertex" if align_vertices else "normal",
         "maximum_error": maximum_error,
+        "minimum_gap": min(final_gaps),
+        "maximum_gap": max(final_gaps),
         "translations": {
             piece_id: translations[piece_id].tolist()
             for piece_id in piece_ids

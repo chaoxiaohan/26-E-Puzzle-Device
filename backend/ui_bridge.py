@@ -17,17 +17,30 @@ class UiBridge:
         self.frame_path = "/tmp/puzzle_ui_frame.jpg"
         self.binary_path = "/tmp/puzzle_ui_binary.jpg"
         self.result_path = "/tmp/puzzle_ui_result.jpg"
-        self.last_control_revision = -1
+        self.candidate_prefix = "/tmp/puzzle_ui_candidate_"
+        self.last_control_revision = self._read_control_revision(
+            self.control_path
+        )
         self.last_frame_time = 0.0
         self.last_state_time = 0.0
         self.frame_revision = 0
         self.result_revision = 0
         self.result_available = os.path.exists(self.result_path)
+        self.candidate_revision = 0
+        self.candidate_count = 0
         self.preview_source_x = 0.0
         self.preview_source_y = 0.0
         self.preview_scale = 1.0
         self.preview_offset_x = 0.0
         self.preview_offset_y = 0.0
+
+    @staticmethod
+    def _read_control_revision(path):
+        try:
+            with open(path, "r", encoding="utf-8") as file:
+                return int(json.load(file).get("revision", -1))
+        except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError):
+            return -1
 
     @staticmethod
     def _atomic_write(path, data):
@@ -185,6 +198,30 @@ class UiBridge:
         self.result_revision += 1
         self.result_available = False
 
+    def publish_candidates(self, previews):
+        count = min(8, len(previews))
+        for index, preview in enumerate(previews[:count]):
+            self._atomic_write(
+                "%s%d.jpg" % (self.candidate_prefix, index),
+                self._encode_jpeg(preview, 86),
+            )
+        for index in range(count, 8):
+            try:
+                os.remove("%s%d.jpg" % (self.candidate_prefix, index))
+            except FileNotFoundError:
+                pass
+        self.candidate_count = count
+        self.candidate_revision += 1
+
+    def clear_candidates(self):
+        for index in range(8):
+            try:
+                os.remove("%s%d.jpg" % (self.candidate_prefix, index))
+            except FileNotFoundError:
+                pass
+        self.candidate_count = 0
+        self.candidate_revision += 1
+
     def publish_state(self, state, force=False):
         now = time.monotonic()
         if not force and now - self.last_state_time < 0.08:
@@ -196,6 +233,8 @@ class UiBridge:
         payload["frame_revision"] = self.frame_revision
         payload["result_revision"] = self.result_revision
         payload["result_available"] = self.result_available
+        payload["candidate_revision"] = self.candidate_revision
+        payload["candidate_count"] = self.candidate_count
         encoded = json.dumps(
             payload,
             ensure_ascii=False,

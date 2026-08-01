@@ -63,6 +63,73 @@ if not 0.99 <= right_x - left_x <= 1.01:
     )
 print("one-pixel adjacency gap OK")
 
+re_gapped, re_gap_info = add_adjacency_gap(gapped, 28.0)
+if not re_gap_info["applied"] or re_gap_info["maximum_error"] > 1e-6:
+    raise RuntimeError("absolute gap replacement failed: %s" % re_gap_info)
+left_x = float(np.max(re_gapped[0][:, 0]))
+right_x = float(np.min(re_gapped[1][:, 0]))
+if not 27.99 <= right_x - left_x <= 28.01:
+    raise RuntimeError(
+        "gap accumulated instead of replacing: %.3f"
+        % (right_x - left_x)
+    )
+print("absolute 28-pixel adjacency gap OK")
+
+shifted_pair = {
+    0: valid_cases["two"][0],
+    1: valid_cases["two"][1] + np.array([0.0, 6.0]),
+}
+vertex_gapped, vertex_gap_info = add_adjacency_gap(
+    shifted_pair,
+    37.5,
+    edge_tolerance_ratio=0.08,
+    align_vertices=True,
+)
+if (
+    not vertex_gap_info["applied"]
+    or vertex_gap_info.get("metric") != "vertex"
+    or vertex_gap_info["minimum_gap"] < 30.0
+    or vertex_gap_info["maximum_gap"] > 45.0
+):
+    raise RuntimeError(
+        "vertex gap range failed: %s" % vertex_gap_info
+    )
+if vertex_gap_info["maximum_error"] > 0.1:
+    raise RuntimeError(
+        "vertex alignment remained unstable: %s" % vertex_gap_info
+    )
+print(
+    "30..45-pixel vertex gap OK %.2f..%.2f"
+    % (
+        vertex_gap_info["minimum_gap"],
+        vertex_gap_info["maximum_gap"],
+    )
+)
+
+uniform_grid, uniform_gap_info = add_adjacency_gap(
+    valid_cases["four_grid"],
+    36.0,
+    edge_tolerance_ratio=0.08,
+    align_vertices=False,
+)
+if (
+    not uniform_gap_info["applied"]
+    or uniform_gap_info.get("metric") != "normal"
+    or uniform_gap_info["minimum_gap"] < 35.5
+    or uniform_gap_info["maximum_gap"] > 36.5
+    or uniform_gap_info["maximum_error"] > 0.5
+):
+    raise RuntimeError(
+        "uniform four-piece gap failed: %s" % uniform_gap_info
+    )
+print(
+    "uniform four-piece 36-pixel gap OK %.2f..%.2f"
+    % (
+        uniform_gap_info["minimum_gap"],
+        uniform_gap_info["maximum_gap"],
+    )
+)
+
 angle = math.radians(37.0)
 rotation = np.array(
     [

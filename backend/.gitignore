@@ -6,3 +6,4 @@ run.log
 librectangle_solver.so
 serial_settings.json
 roi_settings.json
+templates.json

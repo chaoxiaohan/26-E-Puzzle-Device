@@ -14,6 +14,27 @@ List<double>? _pointFromJson(Object? value) {
   return [x.toDouble(), y.toDouble()];
 }
 
+class SolvedPieceShape {
+  const SolvedPieceShape({required this.pieceId, required this.points});
+
+  factory SolvedPieceShape.fromJson(Map<String, dynamic> json) {
+    final points = <List<double>>[];
+    for (final value in json['points'] as List<dynamic>? ?? const []) {
+      final point = _pointFromJson(value);
+      if (point != null) {
+        points.add(point);
+      }
+    }
+    return SolvedPieceShape(
+      pieceId: (json['piece_id'] as num?)?.toInt() ?? 0,
+      points: points,
+    );
+  }
+
+  final int pieceId;
+  final List<List<double>> points;
+}
+
 class BackendSnapshot {
   const BackendSnapshot({
     required this.backendAlive,
@@ -27,6 +48,11 @@ class BackendSnapshot {
     required this.polarityMode,
     required this.backgroundMode,
     required this.greenMethod,
+    required this.greenAuto,
+    required this.greenDetectedHueMin,
+    required this.greenDetectedHueMax,
+    required this.greenDetectedSatMin,
+    required this.greenDetectedValMin,
     required this.greenHueMin,
     required this.greenHueMax,
     required this.greenSatMin,
@@ -36,6 +62,7 @@ class BackendSnapshot {
     required this.paperCloseKernel,
     required this.paperCloseIter,
     required this.minPieceArea,
+    required this.assemblyGapPixels,
     required this.cameraWidth,
     required this.cameraHeight,
     required this.roiX,
@@ -45,6 +72,7 @@ class BackendSnapshot {
     required this.solving,
     required this.solverMessage,
     required this.score,
+    required this.scoreItems,
     required this.ratio,
     required this.solverMs,
     required this.resultAvailable,
@@ -52,6 +80,13 @@ class BackendSnapshot {
     required this.resultRevision,
     required this.lastCaptureName,
     required this.motionPlanCount,
+    required this.solvedDisplay,
+    required this.candidateRevision,
+    required this.candidateCount,
+    required this.candidateItems,
+    required this.competitionMode,
+    required this.competitionActive,
+    required this.competitionRetryCount,
     required this.serialConnected,
     required this.serialPort,
     required this.serialActivePort,
@@ -103,6 +138,15 @@ class BackendSnapshot {
       polarityMode: json['polarity_mode']?.toString() ?? 'AUTO',
       backgroundMode: json['background_mode']?.toString() ?? 'GREEN',
       greenMethod: json['green_method']?.toString() ?? 'border',
+      greenAuto: json['green_auto'] != false,
+      greenDetectedHueMin:
+          (json['green_detected_hue_min'] as num?)?.toInt() ?? 0,
+      greenDetectedHueMax:
+          (json['green_detected_hue_max'] as num?)?.toInt() ?? 0,
+      greenDetectedSatMin:
+          (json['green_detected_sat_min'] as num?)?.toInt() ?? 0,
+      greenDetectedValMin:
+          (json['green_detected_val_min'] as num?)?.toInt() ?? 0,
       greenHueMin: (json['green_hue_min'] as num?)?.toInt() ?? 30,
       greenHueMax: (json['green_hue_max'] as num?)?.toInt() ?? 95,
       greenSatMin: (json['green_sat_min'] as num?)?.toInt() ?? 20,
@@ -112,6 +156,7 @@ class BackendSnapshot {
       paperCloseKernel: (json['paper_close_kernel'] as num?)?.toInt() ?? 5,
       paperCloseIter: (json['paper_close_iter'] as num?)?.toInt() ?? 1,
       minPieceArea: (json['min_piece_area'] as num?)?.toInt() ?? 1500,
+      assemblyGapPixels: (json['assembly_gap_pixels'] as num?)?.toInt() ?? 36,
       cameraWidth: (json['camera_width'] as num?)?.toInt() ?? 720,
       cameraHeight: (json['camera_height'] as num?)?.toInt() ?? 1280,
       roiX: (json['roi_x'] as num?)?.toInt() ?? 10,
@@ -121,6 +166,12 @@ class BackendSnapshot {
       solving: json['solving'] == true,
       solverMessage: json['solver_message']?.toString() ?? '',
       score: (json['score'] as num?)?.toDouble() ?? 0,
+      scoreItems:
+          (json['score_items'] as List<dynamic>?)
+              ?.whereType<Map>()
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList() ??
+          [],
       ratio: (json['ratio'] as num?)?.toDouble() ?? 0,
       solverMs: (json['solver_ms'] as num?)?.toDouble() ?? 0,
       resultAvailable: json['result_available'] == true,
@@ -128,6 +179,28 @@ class BackendSnapshot {
       resultRevision: (json['result_revision'] as num?)?.toInt() ?? 0,
       lastCaptureName: json['last_capture_name']?.toString() ?? '',
       motionPlanCount: (json['motion_plan_count'] as num?)?.toInt() ?? 0,
+      solvedDisplay:
+          (json['solved_display'] as List<dynamic>?)
+              ?.whereType<Map>()
+              .map(
+                (item) =>
+                    SolvedPieceShape.fromJson(Map<String, dynamic>.from(item)),
+              )
+              .where((item) => item.points.length >= 3)
+              .toList() ??
+          [],
+      candidateRevision: (json['candidate_revision'] as num?)?.toInt() ?? 0,
+      candidateCount: (json['candidate_count'] as num?)?.toInt() ?? 0,
+      candidateItems:
+          (json['candidate_items'] as List<dynamic>?)
+              ?.whereType<Map>()
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList() ??
+          [],
+      competitionMode: json['competition_mode'] == true,
+      competitionActive: json['competition_active'] == true,
+      competitionRetryCount:
+          (json['competition_retry_count'] as num?)?.toInt() ?? 0,
       serialConnected: json['serial_connected'] == true,
       serialPort: json['serial_port']?.toString() ?? '/dev/ttyUSB0',
       serialActivePort: json['serial_active_port']?.toString() ?? '',
@@ -138,7 +211,8 @@ class BackendSnapshot {
       serialPlaceZ: (json['serial_place_z'] as num?)?.toInt() ?? 0,
       serialLastReply: json['serial_last_reply']?.toString() ?? '',
       serialError: json['serial_error']?.toString() ?? '',
-      serialRawLog: (json['serial_raw_log'] as List<dynamic>?)
+      serialRawLog:
+          (json['serial_raw_log'] as List<dynamic>?)
               ?.map((e) => Map<String, dynamic>.from(e as Map))
               .toList() ??
           [],
@@ -170,8 +244,7 @@ class BackendSnapshot {
           (json['calibration_rms_error'] as num?)?.toDouble() ?? 0,
       calibrationMaxError:
           (json['calibration_max_error'] as num?)?.toDouble() ?? 0,
-      assemblySplitY:
-          (json['assembly_split_y'] as num?)?.toInt() ?? 0,
+      assemblySplitY: (json['assembly_split_y'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -186,6 +259,11 @@ class BackendSnapshot {
   final String polarityMode;
   final String backgroundMode;
   final String greenMethod;
+  final bool greenAuto;
+  final int greenDetectedHueMin;
+  final int greenDetectedHueMax;
+  final int greenDetectedSatMin;
+  final int greenDetectedValMin;
   final int greenHueMin;
   final int greenHueMax;
   final int greenSatMin;
@@ -195,6 +273,7 @@ class BackendSnapshot {
   final int paperCloseKernel;
   final int paperCloseIter;
   final int minPieceArea;
+  final int assemblyGapPixels;
   final int cameraWidth;
   final int cameraHeight;
   final int roiX;
@@ -204,6 +283,7 @@ class BackendSnapshot {
   final bool solving;
   final String solverMessage;
   final double score;
+  final List<Map<String, dynamic>> scoreItems;
   final double ratio;
   final double solverMs;
   final bool resultAvailable;
@@ -211,6 +291,13 @@ class BackendSnapshot {
   final int resultRevision;
   final String lastCaptureName;
   final int motionPlanCount;
+  final List<SolvedPieceShape> solvedDisplay;
+  final int candidateRevision;
+  final int candidateCount;
+  final List<Map<String, dynamic>> candidateItems;
+  final bool competitionMode;
+  final bool competitionActive;
+  final int competitionRetryCount;
   final bool serialConnected;
   final String serialPort;
   final String serialActivePort;
@@ -256,6 +343,8 @@ class BackendUpdate {
     this.binary,
     this.result,
     this.clearResult = false,
+    this.candidates,
+    this.clearCandidates = false,
   });
 
   final BackendSnapshot snapshot;
@@ -263,6 +352,8 @@ class BackendUpdate {
   final Uint8List? binary;
   final Uint8List? result;
   final bool clearResult;
+  final List<Uint8List>? candidates;
+  final bool clearCandidates;
 }
 
 class BackendBridge {
@@ -276,14 +367,18 @@ class BackendBridge {
   final File _frame = File('/tmp/puzzle_ui_frame.jpg');
   final File _binary = File('/tmp/puzzle_ui_binary.jpg');
   final File _result = File('/tmp/puzzle_ui_result.jpg');
+  final String _candidatePrefix = '/tmp/puzzle_ui_candidate_';
   final String backendDir;
   int _frameRevision = -1;
   int _resultRevision = -1;
+  int _candidateRevision = -1;
   Uint8List? _cachedResult;
+  List<Uint8List> _cachedCandidates = [];
   Process? _backendProcess;
   bool _restarting = false;
   int _lastRestartMs = 0;
-  static const int _restartCooldownMs = 8000; // Don't restart more than once every 8s
+  static const int _restartCooldownMs =
+      8000; // Don't restart more than once every 8s
 
   bool get isRestarting => _restarting;
 
@@ -304,12 +399,11 @@ class BackendBridge {
     _restarting = true;
     _lastRestartMs = DateTime.now().millisecondsSinceEpoch;
     try {
-      // Kill all existing backend processes
-      await Process.run('pkill', ['-f', 'python3.*puzzle_card_detector/main.py']);
-      // Brief pause to let the OS clean up
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+      // 杀掉所有 puzzle 相关后端进程（覆盖不同启动路径）
+      await Process.run('pkill', ['-f', 'python3.*main.py']);
+      await Future<void>.delayed(const Duration(milliseconds: 600));
 
-      // Start the backend in headless mode
+      // 启动后端
       _backendProcess = await Process.start(
         'python3',
         ['/home/pi5/puzzle_card_detector/main.py'],
@@ -360,6 +454,8 @@ class BackendBridge {
       Uint8List? binary;
       Uint8List? result;
       var clearResult = false;
+      List<Uint8List>? candidates;
+      var clearCandidates = false;
 
       if (snapshot.frameRevision != _frameRevision) {
         frame = await _frame.readAsBytes();
@@ -378,12 +474,29 @@ class BackendBridge {
       } else if (snapshot.resultAvailable) {
         result = _cachedResult;
       }
+      if (snapshot.candidateRevision != _candidateRevision) {
+        final loaded = <Uint8List>[];
+        for (var index = 0; index < snapshot.candidateCount; index++) {
+          final file = File('$_candidatePrefix$index.jpg');
+          if (await file.exists()) {
+            loaded.add(await file.readAsBytes());
+          }
+        }
+        _cachedCandidates = loaded;
+        candidates = loaded;
+        clearCandidates = loaded.isEmpty;
+        _candidateRevision = snapshot.candidateRevision;
+      } else if (snapshot.candidateCount > 0) {
+        candidates = _cachedCandidates;
+      }
       return BackendUpdate(
         snapshot: snapshot,
         frame: frame,
         binary: binary,
         result: result,
         clearResult: clearResult,
+        candidates: candidates,
+        clearCandidates: clearCandidates,
       );
     } on FileSystemException {
       return null;
@@ -400,6 +513,7 @@ class BackendBridge {
     String? polarityMode,
     String? backgroundMode,
     String? greenMethod,
+    bool? greenAuto,
     int? greenHueMin,
     int? greenHueMax,
     int? greenSatMin,
@@ -409,6 +523,8 @@ class BackendBridge {
     int? paperCloseKernel,
     int? paperCloseIter,
     int? minPieceArea,
+    int? assemblyGapPixels,
+    bool? competitionMode,
     int? roiX,
     int? roiY,
     int? roiWidth,
@@ -448,6 +564,9 @@ class BackendBridge {
     if (greenMethod != null) {
       payload['green_method'] = greenMethod;
     }
+    if (greenAuto != null) {
+      payload['green_auto'] = greenAuto;
+    }
     if (greenHueMin != null) {
       payload['green_hue_min'] = greenHueMin;
     }
@@ -474,6 +593,12 @@ class BackendBridge {
     }
     if (minPieceArea != null) {
       payload['min_piece_area'] = minPieceArea;
+    }
+    if (assemblyGapPixels != null) {
+      payload['assembly_gap_pixels'] = assemblyGapPixels;
+    }
+    if (competitionMode != null) {
+      payload['competition_mode'] = competitionMode;
     }
     if (roiX != null) {
       payload['roi_x'] = roiX;
