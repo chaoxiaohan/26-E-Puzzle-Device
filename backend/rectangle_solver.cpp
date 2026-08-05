@@ -319,22 +319,60 @@ static std::vector<Point> align_edge(
     return transformed;
 }
 
+static std::vector<Point> rotate_polygon(
+    const std::vector<Point>& polygon,
+    const Point& center,
+    double angle_degrees
+) {
+    double radians = angle_degrees * 3.14159265358979323846 / 180.0;
+    double cosine = std::cos(radians);
+    double sine = std::sin(radians);
+    std::vector<Point> rotated;
+    rotated.reserve(polygon.size());
+    for (const Point& point : polygon) {
+        double x = point.x - center.x;
+        double y = point.y - center.y;
+        rotated.push_back({
+            x * cosine - y * sine + center.x,
+            x * sine + y * cosine + center.y,
+        });
+    }
+    return rotated;
+}
+
 static std::vector<Candidate> generate_candidates(
     const std::vector<Point>& polygon,
     int width,
     int height,
-    int position_step
+    int position_step,
+    bool short_edge_protection
 ) {
     std::vector<Candidate> candidates;
     std::unordered_set<std::string> generated;
-    for (int edge_id = 0; edge_id < int(polygon.size()); ++edge_id) {
-        double edge_size = distance(
-            polygon[edge_id],
-            polygon[(edge_id + 1) % polygon.size()]
+    double perimeter = 0.0;
+    std::vector<double> edge_lengths;
+    edge_lengths.reserve(polygon.size());
+    for (std::size_t index = 0; index < polygon.size(); ++index) {
+        double length = distance(
+            polygon[index],
+            polygon[(index + 1) % polygon.size()]
         );
+        edge_lengths.push_back(length);
+        perimeter += length;
+    }
+    std::vector<double> sorted_lengths = edge_lengths;
+    std::sort(sorted_lengths.begin(), sorted_lengths.end());
+    double median_length = sorted_lengths[sorted_lengths.size() / 2];
+    for (int edge_id = 0; edge_id < int(polygon.size()); ++edge_id) {
+        double edge_size = edge_lengths[edge_id];
         if (edge_size < 8.0) {
             continue;
         }
+        bool protect_short_edge = (
+            short_edge_protection
+            && edge_size <= perimeter * 0.07
+            && edge_size <= median_length * 0.30
+        );
         for (int side = 0; side < 4; ++side) {
             double side_size = side < 2 ? width : height;
             if (edge_size > side_size + 2.5) {
@@ -387,14 +425,14 @@ static std::vector<Candidate> generate_candidates(
                 }
 
                 for (int reverse = 0; reverse < 2; ++reverse) {
-                    std::vector<Point> transformed = align_edge(
+                    std::vector<Point> aligned = align_edge(
                         polygon,
                         edge_id,
                         reverse == 0 ? first : second,
                         reverse == 0 ? second : first
                     );
                     bool inside = true;
-                    for (Point& point : transformed) {
+                    for (Point& point : aligned) {
                         if (
                             point.x < -2.5
                             || point.y < -2.5
@@ -418,28 +456,72 @@ static std::vector<Candidate> generate_candidates(
                     if (!inside) {
                         continue;
                     }
-                    Point center{0.0, 0.0};
-                    for (const Point& point : transformed) {
-                        center.x += point.x;
-                        center.y += point.y;
+                    std::vector<double> angle_offsets{0.0};
+                    if (protect_short_edge) {
+                        angle_offsets = {
+                            0.0,
+                            -8.0,
+                            8.0,
+                            -12.0,
+                            12.0,
+                            -16.0,
+                            16.0,
+                        };
                     }
-                    center.x /= transformed.size();
-                    center.y /= transformed.size();
-                    std::string key = (
-                        std::to_string(int(std::lround(center.x / 2.0)))
-                        + ":"
-                        + std::to_string(int(std::lround(center.y / 2.0)))
-                        + ":"
-                        + std::to_string(edge_id)
-                        + ":"
-                        + std::to_string(side)
-                    );
-                    if (!generated.insert(key).second) {
-                        continue;
+                    Point edge_middle{
+                        (first.x + second.x) * 0.5,
+                        (first.y + second.y) * 0.5,
+                    };
+                    for (double angle_offset : angle_offsets) {
+                        std::vector<Point> transformed = (
+                            angle_offset == 0.0
+                            ? aligned
+                            : rotate_polygon(
+                                aligned,
+                                edge_middle,
+                                angle_offset
+                            )
+                        );
+                        bool rotated_inside = true;
+                        for (const Point& point : transformed) {
+                            if (
+                                point.x < -2.5
+                                || point.y < -2.5
+                                || point.x > width - 1 + 2.5
+                                || point.y > height - 1 + 2.5
+                            ) {
+                                rotated_inside = false;
+                                break;
+                            }
+                        }
+                        if (!rotated_inside) {
+                            continue;
+                        }
+                        Point center{0.0, 0.0};
+                        for (const Point& point : transformed) {
+                            center.x += point.x;
+                            center.y += point.y;
+                        }
+                        center.x /= transformed.size();
+                        center.y /= transformed.size();
+                        std::string key = (
+                            std::to_string(int(std::lround(center.x / 2.0)))
+                            + ":"
+                            + std::to_string(int(std::lround(center.y / 2.0)))
+                            + ":"
+                            + std::to_string(edge_id)
+                            + ":"
+                            + std::to_string(side)
+                            + ":"
+                            + std::to_string(int(std::lround(angle_offset)))
+                        );
+                        if (!generated.insert(key).second) {
+                            continue;
+                        }
+                        candidates.push_back(
+                            rasterize(transformed, width, height)
+                        );
                     }
-                    candidates.push_back(
-                        rasterize(transformed, width, height)
-                    );
                 }
             }
         }
@@ -895,7 +977,8 @@ struct SearchResult {
 static SearchResult search_ratio(
     const std::vector<std::vector<Point>>& polygons,
     double ratio,
-    int position_step
+    int position_step,
+    bool short_edge_protection
 ) {
     SearchResult result;
     int width = int(std::lround(std::sqrt(6000.0 * ratio)));
@@ -909,7 +992,8 @@ static SearchResult search_ratio(
                 polygon,
                 width,
                 height,
-                position_step
+                position_step,
+                short_edge_protection
             )
         );
         if (candidate_sets.back().empty()) {
@@ -1205,6 +1289,7 @@ extern "C" int solve_rectangle_cpp(
     int piece_count,
     double fill_ratio,
     int position_step,
+    int short_edge_protection,
     double* output_points,
     double* output_info
 ) {
@@ -1283,7 +1368,8 @@ extern "C" int solve_rectangle_cpp(
             results[ratio_id] = search_ratio(
                 polygons,
                 ratios[ratio_id],
-                position_step
+                position_step,
+                short_edge_protection != 0
             );
         }
     };

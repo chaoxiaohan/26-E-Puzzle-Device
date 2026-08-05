@@ -1,52 +1,85 @@
-# 26电赛E题：拼图装置
+# 26 电赛 E 题：拼图装置
 
-本仓库包含树莓派5上的拼图视觉后端、Flutter横屏控制界面，以及平台串口通信协议。
+树莓派 5 上运行的拼图装置工程，包含视觉后端、Flutter 控制台、平台串口通信与坐标标定。
 
-## 项目状态
+## 功能
 
-完赛版本。
-
-当前视觉识别、普通拼图、扑克牌拼图、六点平台标定、动作规划和串口控制流程已经贯通。后续仍可继续提高：
-
-- 拼接边距和末块落点精度。
-- 扑克牌花纹对齐与卡牌拼图稳定性。
+- 第一问模板学习与普通几何拼图；
+- 白底扑克牌碎片拼图；
+- USB 摄像头实时识别、ROI 与阈值调参；
+- 碎片抓取、旋转、放置动作规划；
+- 串口平台控制与六点仿射标定；
+- Flutter 横屏控制界面。
 
 ## 目录
 
-- `backend/`：碎片识别、矩形求解、扑克牌纹理求解、动作规划、串口通信。
-- `flutter_ui/`：横屏控制台、视觉调参、平台点动、串口设置和平台标定界面。
-- `docs/`：平台串口通信协议。
+- `backend/`：OpenCV 视觉、拼图求解、动作规划、串口协议；
+- `flutter_ui/`：Flutter Linux 控制台；
+- `docs/`：串口通信协议；
+- `deploy_pi5.sh`：树莓派 5 一键部署与启动脚本。
 
-## 硬件环境
+## 硬件与系统环境
 
-- 树莓派5
-- USB摄像头
-- 1024×600或更高分辨率横屏
-- 串口连接的XYZ旋转平台
+- Raspberry Pi 5，64 位 Raspberry Pi OS / Debian；
+- USB 摄像头，默认 `/dev/video0`，MJPG、1280×720；
+- 1024×600 或更高分辨率横屏；
+- 可选：CH340 USB 串口平台控制器；
+- Python 3、OpenCV、NumPy、pyserial；
+- ARM64 Flutter SDK。默认位置为 `/home/pi5/flutter`。
 
-## 构建界面
+## 一键部署
 
-```bash
-cd flutter_ui
-/home/pi5/flutter/bin/flutter analyze
-/home/pi5/flutter/bin/flutter test
-/home/pi5/flutter/bin/flutter build linux --release
-```
-
-## 启动
-
-部署时保持两个目录位于同一父目录，并按实际路径调整启动脚本中的目录：
+在树莓派桌面终端执行：
 
 ```bash
-cd flutter_ui
-./start_all.sh
+git clone https://github.com/chaoxiaohan/26-E-Puzzle-Device.git
+cd 26-E-Puzzle-Device
+chmod +x deploy_pi5.sh
+./deploy_pi5.sh
 ```
 
-`start_ui.sh` 会在视觉后端未运行时启动 `backend/main.py`。摄像头暂时离线时，
-后端会等待设备恢复，串口设置和平台控制仍可使用。
+脚本会安装系统依赖，部署后端至 `~/puzzle_card_detector`、部署 Flutter 前端至
+`~/puzzle_flutter_ui`，编译 C++ 求解器和 Flutter Linux 程序，并启动控制台。
 
-## 注意
+若 Flutter 不在默认位置：
 
-- `backend/serial_settings.json`、拍照数据、运行日志和编译产物不会提交。
-- 平台坐标单位由执行端定义，但串口收发必须始终使用同一种单位。
-- 自动执行前需要先完成视觉坐标到平台坐标的标定。
+```bash
+FLUTTER_BIN=/opt/flutter/bin/flutter ./deploy_pi5.sh
+```
+
+首次部署前需要先准备 ARM64 Flutter SDK。项目已经验证过的默认路径是
+`/home/pi5/flutter/bin/flutter`。
+
+## 日常启动
+
+已部署后，直接执行：
+
+```bash
+~/puzzle_flutter_ui/start_all.sh
+```
+
+前端会在视觉后端未运行时自动启动后端。只启动后端调试：
+
+```bash
+cd ~/puzzle_card_detector
+./start.sh
+```
+
+无显示器测试：
+
+```bash
+cd ~/puzzle_card_detector
+PUZZLE_HEADLESS=1 python3 main.py
+```
+
+## 运行时文件
+
+以下文件是现场设备相关配置，不建议覆盖或提交：
+
+- `vision_settings.json`：ROI、阈值和背景设置；
+- `serial_settings.json`：串口设备与波特率；
+- `roi_settings.json`、`templates.json`：标定与第一问模板；
+- `captures/`：拍照记录；
+- `librectangle_solver.so`、`flutter_ui/build/`：编译产物。
+
+`deploy_pi5.sh` 更新代码时会保留这些文件。

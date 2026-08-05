@@ -12,7 +12,7 @@ enum PuzzleMode { firstQuestion, normalPuzzle, cardPuzzle }
 
 enum AppPage { puzzle, arm, settings }
 
-enum SettingsPage { vision, serial, calibration, logs, system }
+enum SettingsPage { vision, serial, calibration, computation, logs, system }
 
 class PuzzleStudioApp extends StatelessWidget {
   const PuzzleStudioApp({super.key});
@@ -31,6 +31,24 @@ class PuzzleStudioApp extends StatelessWidget {
         fontFamily: 'PuzzleLatin',
         fontFamilyFallback: const ['PuzzleChinese'],
         scaffoldBackgroundColor: const Color(0xFFF5F7FA),
+        scrollbarTheme: ScrollbarThemeData(
+          thumbVisibility: WidgetStateProperty.all(true),
+          trackVisibility: WidgetStateProperty.all(true),
+          interactive: true,
+          thickness: WidgetStateProperty.all(14),
+          radius: const Radius.circular(7),
+          thumbColor: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.dragged)) {
+              return const Color(0xFF2563EB);
+            }
+            if (states.contains(WidgetState.hovered)) {
+              return const Color(0xFF3B82F6);
+            }
+            return const Color(0xFF94A3B8);
+          }),
+          trackColor: WidgetStateProperty.all(const Color(0xFFE2E8F0)),
+          trackBorderColor: WidgetStateProperty.all(const Color(0xFFCBD5E1)),
+        ),
         useMaterial3: true,
       ),
       home: const PuzzleDashboard(),
@@ -67,6 +85,9 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   PuzzleMode mode = PuzzleMode.cardPuzzle;
   bool solving = false;
   bool hasResult = false;
+  bool competitionMode = false;
+  bool competitionActive = false;
+  int competitionRetryCount = 0;
   bool connected = false;
   int _offlineCount = 0;
   static const int _offlineRestartThreshold = 25; // ~2s at 80ms polling
@@ -82,9 +103,15 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   int threshold = 128;
   bool _showBinaryPreview = true; // toggle: binary vs normal camera preview
   int minPieceArea = 1500;
+  int assemblyGapPixels = 36;
   String polarityMode = 'AUTO';
   String backgroundMode = 'GREEN';
   String _greenMethod = 'border';
+  bool _greenAuto = true;
+  int _greenDetectedHueMin = 0;
+  int _greenDetectedHueMax = 0;
+  int _greenDetectedSatMin = 0;
+  int _greenDetectedValMin = 0;
   int _greenHueMin = 30;
   int _greenHueMax = 95;
   int _greenSatMin = 20;
@@ -93,6 +120,19 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   int _greenCloseIter = 2;
   int _paperCloseKernel = 5;
   int _paperCloseIter = 1;
+  // Card scoring params
+  double _cardWeightTexture = 0.42;
+  double _cardWeightCoverage = 0.12;
+  double _cardWeightInternalMatch = 0.10;
+  double _cardWeightBoundary = 0.06;
+  double _cardWeightGlobal = 0.10;
+  double _cardWeightIndex = 0.20;
+  double _cardTier1Penalty = 0.12;
+  double _cardTier0Penalty = 0.25;
+  bool _cardLockedFilterEnabled = true;
+  bool _cardScoringInitialized = false;
+  bool _cardScoringDirty = false;
+  bool _cardScoringFlushRunning = false;
   int cameraWidth = 720;
   int cameraHeight = 1280;
   int roiX = 10;
@@ -103,6 +143,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   int pieceCount = 0;
   double fps = 0;
   double score = 0;
+  List<Map<String, dynamic>> scoreItems = [];
   double solverMs = 0;
   String solverMessage = '';
   String lastCaptureName = '';
@@ -114,6 +155,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   int serialPickZ = 0;
   int serialPlaceZ = 0;
   int motionPlanCount = 0;
+  List<SolvedPieceShape> solvedDisplay = [];
   String serialLastReply = '';
   String serialError = '';
   List<Map<String, dynamic>> _serialRawLog = [];
@@ -154,6 +196,8 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
   DateTime lastLogRead = DateTime.fromMillisecondsSinceEpoch(0);
   Uint8List? cameraFrame;
   Uint8List? resultFrame;
+  List<Map<String, dynamic>> candidateItems = [];
+  List<Uint8List> candidateFrames = [];
   Timer? pollTimer;
 
   String get resultTitle {
@@ -172,8 +216,22 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       'NO STABLE' || 'CARD NO STABLE' => '请保持碎片静止后重试',
       'CARD NEED 2-4' => '需要识别到2至4块碎片',
       'NO RECT' || 'CARD NO RECT' => '未找到可用矩形',
+      'TEMPLATE FAIL' => '模板匹配失败，请重新学习',
+      'TEMPLATE TOUCH' => '模板匹配存在轻微接触',
+      'TEMPLATE MATCH' => '模板匹配中…',
+      'LEARN OK' => '模板学习完成',
+      'LEARN FAIL' => '模板学习失败',
+      'LEARN NEED 2-4' => '学习需要2至4块碎片',
+      'SOLVE GAP2' => '碎片已自动分离',
+      'SOLVE TOUCH' => '碎片存在轻微接触',
       'NO SAFE' => '结果存在重叠，已拒绝',
       'SOLVE ERROR' || 'CARD ERROR' => '求解异常，请重试',
+      'FALLBACK' => '已降级搬运方案',
+      'STOPPED' => '已停止解算',
+      'AUTO SEND WAIT' => '解算完成，等待平台连接后自动发送',
+      'AUTO EXECUTING' => '已发送动作，平台开始执行',
+      'AUTO BEST 80S' => '已到80秒，采用最高置信度方案',
+      'AUTO BEST EXECUTING' => '已采用最高置信度方案并开始执行',
       _ => '等待生成拼接实图',
     };
   }
@@ -257,6 +315,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       pieceCount = snapshot.pieceCount;
       fps = snapshot.fps;
       score = snapshot.score;
+      scoreItems = snapshot.scoreItems;
       solverMs = snapshot.solverMs;
       solverMessage = snapshot.solverMessage;
       serialConnected = snapshot.serialConnected;
@@ -268,6 +327,10 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       serialPickZ = snapshot.serialPickZ;
       serialPlaceZ = snapshot.serialPlaceZ;
       motionPlanCount = snapshot.motionPlanCount;
+      solvedDisplay = snapshot.solvedDisplay;
+      competitionMode = snapshot.competitionMode;
+      competitionActive = snapshot.competitionActive;
+      competitionRetryCount = snapshot.competitionRetryCount;
       serialLastReply = snapshot.serialLastReply;
       serialError = snapshot.serialError;
       _serialRawLog = snapshot.serialRawLog;
@@ -292,11 +355,14 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       calibrationValid = snapshot.calibrationValid;
       calibrationScaleX = snapshot.calibrationScaleX;
       calibrationScaleY = snapshot.calibrationScaleY;
-      calibrationAffineDeterminant =
-          snapshot.calibrationAffineDeterminant;
+      calibrationAffineDeterminant = snapshot.calibrationAffineDeterminant;
       calibrationRmsError = snapshot.calibrationRmsError;
       calibrationMaxError = snapshot.calibrationMaxError;
       _assemblySplitY = snapshot.assemblySplitY;
+      _greenDetectedHueMin = snapshot.greenDetectedHueMin;
+      _greenDetectedHueMax = snapshot.greenDetectedHueMax;
+      _greenDetectedSatMin = snapshot.greenDetectedSatMin;
+      _greenDetectedValMin = snapshot.greenDetectedValMin;
       if (!tuningOpen && !settingsSyncPending) {
         autoThreshold = snapshot.autoThreshold;
         threshold = snapshot.autoThreshold
@@ -307,6 +373,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
         if (snapshot.greenMethod.isNotEmpty) {
           _greenMethod = snapshot.greenMethod;
         }
+        _greenAuto = snapshot.greenAuto;
         _greenHueMin = snapshot.greenHueMin;
         _greenHueMax = snapshot.greenHueMax;
         _greenSatMin = snapshot.greenSatMin;
@@ -316,6 +383,28 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
         _paperCloseKernel = snapshot.paperCloseKernel;
         _paperCloseIter = snapshot.paperCloseIter;
         minPieceArea = snapshot.minPieceArea;
+        assemblyGapPixels = snapshot.assemblyGapPixels;
+        if (!_cardScoringInitialized && snapshot.cardScoring.isNotEmpty) {
+          _cardWeightTexture =
+              (snapshot.cardScoring['card_weight_texture'] as num?)?.toDouble() ?? 0.42;
+          _cardWeightCoverage =
+              (snapshot.cardScoring['card_weight_coverage'] as num?)?.toDouble() ?? 0.12;
+          _cardWeightInternalMatch =
+              (snapshot.cardScoring['card_weight_internal_match'] as num?)?.toDouble() ?? 0.10;
+          _cardWeightBoundary =
+              (snapshot.cardScoring['card_weight_boundary'] as num?)?.toDouble() ?? 0.06;
+          _cardWeightGlobal =
+              (snapshot.cardScoring['card_weight_global'] as num?)?.toDouble() ?? 0.10;
+          _cardWeightIndex =
+              (snapshot.cardScoring['card_weight_index'] as num?)?.toDouble() ?? 0.20;
+          _cardTier1Penalty =
+              (snapshot.cardScoring['card_tier1_penalty'] as num?)?.toDouble() ?? 0.12;
+          _cardTier0Penalty =
+              (snapshot.cardScoring['card_tier0_penalty'] as num?)?.toDouble() ?? 0.25;
+          _cardLockedFilterEnabled =
+              snapshot.cardScoring['card_locked_filter_enabled'] != false;
+          _cardScoringInitialized = true;
+        }
         cameraWidth = snapshot.cameraWidth;
         cameraHeight = snapshot.cameraHeight;
         roiX = snapshot.roiX;
@@ -339,6 +428,12 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
         resultFrame = update.result;
       } else if (update.clearResult) {
         resultFrame = null;
+      }
+      candidateItems = snapshot.candidateItems;
+      if (update.candidates != null) {
+        candidateFrames = update.candidates!;
+      } else if (update.clearCandidates) {
+        candidateFrames = [];
       }
     });
     if (update.binary != null) {
@@ -374,10 +469,28 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     }
     setState(() {
       solving = true;
+      competitionActive = competitionMode;
       hasResult = false;
       resultFrame = null;
+      solvedDisplay = [];
+      candidateItems = [];
+      candidateFrames = [];
     });
-    await backend.sendControl(mode: backendMode, action: 'solve');
+    await backend.sendControl(
+      mode: backendMode,
+      action: competitionMode ? 'competition_start' : 'solve',
+    );
+  }
+
+  Future<void> _stopSolving() async {
+    if (!connected) {
+      return;
+    }
+    setState(() {
+      solving = false;
+      competitionActive = false;
+    });
+    await backend.sendControl(action: 'stop_solve');
   }
 
   @override
@@ -413,7 +526,13 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
       children: [
         SizedBox(
           width: (constraints.maxWidth * 0.31).clamp(285.0, 390.0),
-          child: _buildCameraPanel(),
+          child: Column(
+            children: [
+              Expanded(child: _buildCameraPanel()),
+              const SizedBox(height: 10),
+              SizedBox(height: 124, child: _buildSolvedOutlinePanel()),
+            ],
+          ),
         ),
         const SizedBox(width: 12),
         Expanded(child: _buildControlPanel()),
@@ -501,8 +620,8 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
           Text(
             !connected
                 ? backend.isRestarting
-                    ? '后端重连中…'
-                    : '后端离线'
+                      ? '后端重连中…'
+                      : '后端离线'
                 : cameraOnline
                 ? '相机正常'
                 : '相机离线',
@@ -565,14 +684,61 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                       left: 0,
                       right: 0,
                       top: lineY,
-                      child: CustomPaint(
-                        painter: _SplitLinePainter(),
-                      ),
+                      child: CustomPaint(painter: _SplitLinePainter()),
                     ),
                 ],
               ),
             );
           },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSolvedOutlinePanel() {
+    return _Panel(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(
+                  Icons.grid_view_rounded,
+                  size: 16,
+                  color: Color(0xFF2563EB),
+                ),
+                SizedBox(width: 7),
+                Text(
+                  '最终拼装框',
+                  style: TextStyle(
+                    color: Color(0xFF334155),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 5),
+            Expanded(
+              child: solvedDisplay.isEmpty
+                  ? const Center(
+                      child: Text(
+                        '等待解算',
+                        style: TextStyle(
+                          color: Color(0xFF94A3B8),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    )
+                  : CustomPaint(
+                      painter: _SolvedOutlinePainter(solvedDisplay),
+                      child: const SizedBox.expand(),
+                    ),
+            ),
+          ],
         ),
       ),
     );
@@ -589,19 +755,19 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                 _ModeButton(
                   label: '第一问',
                   selected: mode == PuzzleMode.firstQuestion,
-                  onTap: () => _changeMode(PuzzleMode.firstQuestion),
+                  onTap: () => unawaited(_changeMode(PuzzleMode.firstQuestion)),
                 ),
                 const SizedBox(width: 8),
                 _ModeButton(
                   label: '普通拼图',
                   selected: mode == PuzzleMode.normalPuzzle,
-                  onTap: () => _changeMode(PuzzleMode.normalPuzzle),
+                  onTap: () => unawaited(_changeMode(PuzzleMode.normalPuzzle)),
                 ),
                 const SizedBox(width: 8),
                 _ModeButton(
                   label: '扑克牌',
                   selected: mode == PuzzleMode.cardPuzzle,
-                  onTap: () => _changeMode(PuzzleMode.cardPuzzle),
+                  onTap: () => unawaited(_changeMode(PuzzleMode.cardPuzzle)),
                 ),
               ],
             ),
@@ -615,16 +781,26 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     );
   }
 
-  void _changeMode(PuzzleMode value) {
-    if (value == mode || solving) {
+  Future<void> _changeMode(PuzzleMode value) async {
+    if (solving || competitionActive) {
+      return;
+    }
+    if (value == mode && !competitionMode) {
       return;
     }
     setState(() {
       mode = value;
+      competitionActive = competitionMode;
       hasResult = false;
       resultFrame = null;
+      solvedDisplay = [];
+      candidateItems = [];
+      candidateFrames = [];
     });
-    unawaited(backend.sendControl(mode: backendMode));
+    await backend.sendControl(
+      mode: backendMode,
+      action: competitionMode ? 'competition_start' : null,
+    );
   }
 
   Widget _buildResultPanel() {
@@ -645,6 +821,11 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
               ),
             ),
           ),
+          if (scoreItems.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              child: _ScoreBreakdown(items: scoreItems),
+            ),
         ],
       ),
     );
@@ -667,8 +848,19 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
               label: '用时',
               value: '${(solverMs / 1000).toStringAsFixed(2)}s',
             ),
+            if (competitionActive) ...[
+              const SizedBox(width: 15),
+              _Metric(label: '重试', value: competitionRetryCount.toString()),
+            ],
             const Spacer(),
             _ActionButton(label: '拍照', onPressed: _capture),
+            if (mode == PuzzleMode.firstQuestion) ...[
+              const SizedBox(width: 8),
+              _ActionButton(
+                label: solverMessage == 'LEARN OK' ? '已学习' : '学习',
+                onPressed: _learnTemplate,
+              ),
+            ],
             const SizedBox(width: 8),
             _ActionButton(
               label: '设置',
@@ -681,23 +873,35 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
               const SizedBox(width: 8),
               _ActionButton(label: '发送执行', onPressed: _sendMotionPlan),
             ],
+            if (mode == PuzzleMode.cardPuzzle &&
+                candidateFrames.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              _ActionButton(
+                label: '候选池 ${candidateFrames.length}',
+                onPressed: _showCandidatePool,
+              ),
+            ],
             const SizedBox(width: 9),
             SizedBox(
               height: 50,
               width: 166,
               child: FilledButton(
-                onPressed: solving || !connected || !cameraOnline
+                onPressed: solving || competitionActive
+                    ? _stopSolving
+                    : !connected || !cameraOnline
                     ? null
                     : solve,
                 style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF2563EB),
+                  backgroundColor: solving || competitionActive
+                      ? const Color(0xFFDC2626)
+                      : const Color(0xFF2563EB),
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(13),
                   ),
                 ),
                 child: Text(
-                  solving ? '求解中' : '开始求解',
+                  solving || competitionActive ? '停止解算' : '开始求解',
                   style: const TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w800,
@@ -718,12 +922,222 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     await backend.sendControl(mode: backendMode, action: 'capture');
   }
 
+  Future<void> _showCandidatePool() async {
+    final count = candidateItems.length < candidateFrames.length
+        ? candidateItems.length
+        : candidateFrames.length;
+    if (count == 0) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return Dialog(
+          insetPadding: const EdgeInsets.all(24),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: SizedBox(
+            width: 1080,
+            height: 650,
+            child: Padding(
+              padding: const EdgeInsets.all(22),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.grid_view_rounded,
+                        color: Color(0xFF2563EB),
+                      ),
+                      const SizedBox(width: 10),
+                      const Text(
+                        '扑克牌候选池',
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        '共 $count 个 · 点击候选查看评分详情',
+                        style: const TextStyle(color: Color(0xFF64748B)),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: () => Navigator.of(dialogContext).pop(),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: GridView.builder(
+                      itemCount: count,
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 4,
+                            crossAxisSpacing: 14,
+                            mainAxisSpacing: 14,
+                            childAspectRatio: 1.15,
+                          ),
+                      itemBuilder: (context, index) {
+                        final item = candidateItems[index];
+                        final selected = item['selected'] == true;
+                        final rank =
+                            (item['rank'] as num?)?.toInt() ?? index + 1;
+                        final score = (item['score'] as num?)?.toDouble() ?? 0;
+                        return InkWell(
+                          borderRadius: BorderRadius.circular(15),
+                          onTap: () => _showCandidateDetail(index),
+                          child: Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: selected
+                                  ? const Color(0xFFEFF6FF)
+                                  : const Color(0xFFF8FAFC),
+                              borderRadius: BorderRadius.circular(15),
+                              border: Border.all(
+                                color: selected
+                                    ? const Color(0xFF2563EB)
+                                    : const Color(0xFFE2E8F0),
+                                width: selected ? 2 : 1,
+                              ),
+                            ),
+                            child: Column(
+                              children: [
+                                Row(
+                                  children: [
+                                    Text(
+                                      '候选 $rank',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    if (selected)
+                                      const Text(
+                                        '最终选择',
+                                        style: TextStyle(
+                                          color: Color(0xFF2563EB),
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Expanded(
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(9),
+                                    child: Image.memory(
+                                      candidateFrames[index],
+                                      width: double.infinity,
+                                      fit: BoxFit.contain,
+                                      gaplessPlayback: true,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 7),
+                                Row(
+                                  children: [
+                                    Text(
+                                      '总分 ${(score * 100).toStringAsFixed(1)}%',
+                                      style: const TextStyle(
+                                        color: Color(0xFF334155),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    Text(
+                                      '几何 T${item['geometry_tier'] ?? 0}',
+                                      style: const TextStyle(
+                                        color: Color(0xFF64748B),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showCandidateDetail(int index) async {
+    if (index >= candidateItems.length || index >= candidateFrames.length) {
+      return;
+    }
+    final item = candidateItems[index];
+    final scoreItems =
+        (item['score_items'] as List<dynamic>?)
+            ?.whereType<Map>()
+            .map((value) => Map<String, dynamic>.from(value))
+            .toList() ??
+        [];
+    final rank = (item['rank'] as num?)?.toInt() ?? index + 1;
+    final score = (item['score'] as num?)?.toDouble() ?? 0;
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('候选 $rank · 总分 ${(score * 100).toStringAsFixed(1)}%'),
+          content: SizedBox(
+            width: 760,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  height: 360,
+                  child: Image.memory(
+                    candidateFrames[index],
+                    fit: BoxFit.contain,
+                    gaplessPlayback: true,
+                  ),
+                ),
+                if (scoreItems.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  _ScoreBreakdown(items: scoreItems),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('关闭'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Future<void> _sendMotionPlan() async {
     if (!connected || motionPlanCount < 1) {
       return;
     }
     await backend.sendControl(action: 'arm_send_plan');
     await Future<void>.delayed(const Duration(milliseconds: 160));
+    await _pollBackend();
+  }
+
+  Future<void> _learnTemplate() async {
+    if (!connected || !cameraOnline) {
+      return;
+    }
+    await backend.sendControl(action: 'learn_template');
+    await Future<void>.delayed(const Duration(milliseconds: 300));
     await _pollBackend();
   }
 
@@ -827,9 +1241,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     if (!connected || !serialConnected) {
       return;
     }
-    await backend.sendControl(
-      action: 'calibration_platform_$point',
-    );
+    await backend.sendControl(action: 'calibration_platform_$point');
     await Future<void>.delayed(const Duration(milliseconds: 240));
     await _pollBackend();
   }
@@ -1250,6 +1662,13 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                 ),
                 const SizedBox(width: 8),
                 _SettingsTabButton(
+                  label: '计算参数',
+                  selected: settingsPage == SettingsPage.computation,
+                  onTap: () =>
+                      setState(() => settingsPage = SettingsPage.computation),
+                ),
+                const SizedBox(width: 8),
+                _SettingsTabButton(
                   label: '后端日志',
                   selected: settingsPage == SettingsPage.logs,
                   onTap: () async {
@@ -1276,6 +1695,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
             SettingsPage.vision => _buildVisionSettings(),
             SettingsPage.serial => _buildSerialSettings(),
             SettingsPage.calibration => _buildCalibrationSettings(),
+            SettingsPage.computation => _buildComputationSettings(),
             SettingsPage.logs => _buildLogSettings(),
             SettingsPage.system => _buildSystemSettings(),
           },
@@ -1299,7 +1719,10 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                     children: [
                       const Text(
                         '实时预览',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
                       const Spacer(),
                       SegmentedButton<bool>(
@@ -1328,8 +1751,9 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                         child: ValueListenableBuilder<Uint8List?>(
                           valueListenable: binaryPreview,
                           builder: (context, bytes, child) {
-                            final imageBytes =
-                                _showBinaryPreview ? bytes : cameraFrame;
+                            final imageBytes = _showBinaryPreview
+                                ? bytes
+                                : cameraFrame;
                             if (imageBytes == null || !cameraOnline) {
                               return const Center(
                                 child: Text(
@@ -1356,369 +1780,393 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
               flex: 6,
               child: SingleChildScrollView(
                 child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '检测参数',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    const Text(
+                      '背景颜色',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 8),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(value: 'BLACK', label: Text('黑色')),
+                        ButtonSegment(value: 'GREEN', label: Text('绿色')),
+                      ],
+                      selected: {backgroundMode},
+                      showSelectedIcon: false,
+                      onSelectionChanged: (values) {
+                        setState(() => backgroundMode = values.first);
+                        _queueSettings();
+                      },
+                    ),
+                    if (backgroundMode == 'GREEN') ...[
+                      const SizedBox(height: 18),
+                      const Text(
+                        '绿膜提取方法',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 8),
+                      SegmentedButton<String>(
+                        segments: const [
+                          ButtonSegment(value: 'border', label: Text('边框采样')),
+                          ButtonSegment(value: 'largest', label: Text('最大连通域')),
+                        ],
+                        selected: {_greenMethod},
+                        showSelectedIcon: false,
+                        onSelectionChanged: (values) {
+                          setState(() => _greenMethod = values.first);
+                          _queueSettings();
+                        },
+                        style: const ButtonStyle(
+                          visualDensity: VisualDensity.compact,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      FilterChip(
+                        selected: _greenAuto,
+                        label: const Text('自动取样绿色背景'),
+                        onSelected: (selected) {
+                          setState(() => _greenAuto = selected);
+                          _queueSettings();
+                        },
+                      ),
+                    ],
+                    const SizedBox(height: 18),
+                    Row(
                       children: [
                         const Text(
-                          '检测参数',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 18),
-                        const Text(
-                          '背景颜色',
+                          '二值化阈值',
                           style: TextStyle(fontWeight: FontWeight.w700),
                         ),
-                        const SizedBox(height: 8),
-                        SegmentedButton<String>(
-                          segments: const [
-                            ButtonSegment(value: 'BLACK', label: Text('黑色')),
-                            ButtonSegment(value: 'GREEN', label: Text('绿色')),
-                          ],
-                          selected: {backgroundMode},
-                          showSelectedIcon: false,
-                          onSelectionChanged: (values) {
-                            setState(() => backgroundMode = values.first);
+                        const Spacer(),
+                        FilterChip(
+                          selected: autoThreshold,
+                          label: const Text('自动 OTSU'),
+                          onSelected: (selected) {
+                            setState(() => autoThreshold = selected);
                             _queueSettings();
                           },
-                        ),
-                        if (backgroundMode == 'GREEN') ...[
-                          const SizedBox(height: 18),
-                          const Text(
-                            '绿膜提取方法',
-                            style: TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                          const SizedBox(height: 8),
-                          SegmentedButton<String>(
-                            segments: const [
-                              ButtonSegment(
-                                value: 'border',
-                                label: Text('边框采样'),
-                              ),
-                              ButtonSegment(
-                                value: 'largest',
-                                label: Text('最大连通域'),
-                              ),
-                            ],
-                            selected: {_greenMethod},
-                            showSelectedIcon: false,
-                            onSelectionChanged: (values) {
-                              setState(() => _greenMethod = values.first);
-                              _queueSettings();
-                            },
-                            style: const ButtonStyle(
-                              visualDensity: VisualDensity.compact,
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                          ),
-                        ],
-                        const SizedBox(height: 18),
-                        Row(
-                          children: [
-                            const Text(
-                              '二值化阈值',
-                              style: TextStyle(fontWeight: FontWeight.w700),
-                            ),
-                            const Spacer(),
-                            FilterChip(
-                              selected: autoThreshold,
-                              label: const Text('自动 OTSU'),
-                              onSelected: (selected) {
-                                setState(() => autoThreshold = selected);
-                                _queueSettings();
-                              },
-                            ),
-                          ],
-                        ),
-                        Slider(
-                          value: threshold.toDouble(),
-                          min: 0,
-                          max: 255,
-                          label: threshold.toString(),
-                          onChanged: (value) {
-                            setState(() {
-                              threshold = value.round();
-                              autoThreshold = false;
-                            });
-                            _queueSettings();
-                          },
-                        ),
-                        Center(
-                          child: Text(
-                            '当前阈值：$threshold',
-                            style: const TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                        ),
-                        const SizedBox(height: 18),
-                        const Text(
-                          '目标极性',
-                          style: TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        const SizedBox(height: 8),
-                        SegmentedButton<String>(
-                          segments: const [
-                            ButtonSegment(value: 'AUTO', label: Text('自动')),
-                            ButtonSegment(value: 'LIGHT', label: Text('亮色')),
-                            ButtonSegment(value: 'DARK', label: Text('暗色')),
-                          ],
-                          selected: {polarityMode},
-                          showSelectedIcon: false,
-                          onSelectionChanged: (values) {
-                            setState(() => polarityMode = values.first);
-                            _queueSettings();
-                          },
-                        ),
-                        const SizedBox(height: 20),
-                        Row(
-                          children: [
-                            const Text(
-                              '最小碎片面积',
-                              style: TextStyle(fontWeight: FontWeight.w700),
-                            ),
-                            const Spacer(),
-                            Text(
-                              minPieceArea.toString(),
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ],
-                        ),
-                        Slider(
-                          value: minPieceArea.toDouble(),
-                          min: 100,
-                          max: 10000,
-                          divisions: 99,
-                          onChanged: (value) {
-                            setState(() => minPieceArea = value.round());
-                            _queueSettings();
-                          },
-                        ),
-                        const Divider(height: 34),
-                        // 绿膜参数（仅GREEN+最大连通域时显示）
-                        if (backgroundMode == 'GREEN' &&
-                            _greenMethod == 'largest') ...[
-                          const Text(
-                            '绿膜形态学参数',
-                            style: TextStyle(
-                                fontWeight: FontWeight.w800, fontSize: 15),
-                          ),
-                          const SizedBox(height: 4),
-                          const Text(
-                            '光照差时增大、光照好时减小，越小边角越锐利',
-                            style: TextStyle(
-                                color: Color(0xFF94A3B8), fontSize: 12),
-                          ),
-                          const SizedBox(height: 10),
-                          _buildGreenParamSlider(
-                            '绿色闭运算核大小',
-                            _greenCloseKernel,
-                            1, 21,
-                            (v) {
-                              setState(() =>
-                                  _greenCloseKernel = v.round());
-                              _queueSettings();
-                            },
-                          ),
-                          _buildGreenParamSlider(
-                            '绿色闭运算迭代次数',
-                            _greenCloseIter,
-                            0, 5,
-                            (v) {
-                              setState(() =>
-                                  _greenCloseIter = v.round());
-                              _queueSettings();
-                            },
-                          ),
-                          _buildGreenParamSlider(
-                            'A4纸闭运算核大小',
-                            _paperCloseKernel,
-                            1, 15,
-                            (v) {
-                              setState(() =>
-                                  _paperCloseKernel = v.round());
-                              _queueSettings();
-                            },
-                          ),
-                          _buildGreenParamSlider(
-                            'A4纸闭运算迭代次数',
-                            _paperCloseIter,
-                            0, 5,
-                            (v) {
-                              setState(() =>
-                                  _paperCloseIter = v.round());
-                              _queueSettings();
-                            },
-                          ),
-                          const SizedBox(height: 6),
-                          Row(
-                            children: [
-                              const Text('HSV色相',
-                                  style: TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 12)),
-                              const Spacer(),
-                              SizedBox(
-                                width: 60,
-                                child: Text(
-                                  '$_greenHueMin–$_greenHueMax',
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 12,
-                                      color: Color(0xFF2563EB)),
-                                ),
-                              ),
-                            ],
-                          ),
-                          RangeSlider(
-                            values: RangeValues(
-                              _greenHueMin.toDouble(),
-                              _greenHueMax.toDouble(),
-                            ),
-                            min: 0, max: 120,
-                            divisions: 24,
-                            onChanged: (values) {
-                              setState(() {
-                                _greenHueMin = values.start.round();
-                                _greenHueMax = values.end.round();
-                              });
-                            },
-                            onChangeEnd: (_) => _queueSettings(),
-                          ),
-                          const SizedBox(height: 6),
-                          _buildGreenParamSlider(
-                            '饱和度下限', _greenSatMin, 0, 100, (v) {
-                            setState(() => _greenSatMin = v.round());
-                            _queueSettings();
-                          }),
-                          _buildGreenParamSlider(
-                            '亮度下限', _greenValMin, 0, 80, (v) {
-                            setState(() => _greenValMin = v.round());
-                            _queueSettings();
-                          }),
-                          const Divider(height: 28),
-                        ],
-                        Row(
-                          children: [
-                            const Text(
-                              '检测区域 ROI',
-                              style: TextStyle(fontWeight: FontWeight.w800),
-                            ),
-                            const Spacer(),
-                            Text(
-                              '完整画面 $cameraWidth×$cameraHeight',
-                              style: const TextStyle(
-                                color: Color(0xFF64748B),
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '当前 ROI：X $roiX，Y $roiY，宽 $roiWidth，高 $roiHeight',
-                          style: const TextStyle(
-                            color: Color(0xFF2563EB),
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        _buildRoiSlider(
-                          label: 'X',
-                          value: roiX,
-                          minimum: 0,
-                          maximum: cameraWidth > 80
-                              ? cameraWidth - 80
-                              : 1,
-                          onChanged: (value) {
-                            setState(() {
-                              roiX = value;
-                              roiWidth = roiWidth.clamp(
-                                80,
-                                cameraWidth - roiX,
-                              ).toInt();
-                            });
-                            _queueSettings();
-                          },
-                        ),
-                        _buildRoiSlider(
-                          label: 'Y',
-                          value: roiY,
-                          minimum: 0,
-                          maximum: cameraHeight > 80
-                              ? cameraHeight - 80
-                              : 1,
-                          onChanged: (value) {
-                            setState(() {
-                              roiY = value;
-                              roiHeight = roiHeight.clamp(
-                                80,
-                                cameraHeight - roiY,
-                              ).toInt();
-                            });
-                            _queueSettings();
-                          },
-                        ),
-                        _buildRoiSlider(
-                          label: '宽',
-                          value: roiWidth,
-                          minimum: 80,
-                          maximum: cameraWidth - roiX,
-                          onChanged: (value) {
-                            setState(() => roiWidth = value);
-                            _queueSettings();
-                          },
-                        ),
-                        _buildRoiSlider(
-                          label: '高',
-                          value: roiHeight,
-                          minimum: 80,
-                          maximum: cameraHeight - roiY,
-                          onChanged: (value) {
-                            setState(() => roiHeight = value);
-                            _queueSettings();
-                          },
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            OutlinedButton(
-                              onPressed: () {
-                                setState(() {
-                                  roiX = 0;
-                                  roiY = 0;
-                                  roiWidth = cameraWidth;
-                                  roiHeight = cameraHeight;
-                                });
-                                _queueSettings();
-                              },
-                              child: const Text('ROI 铺满画面'),
-                            ),
-                            const SizedBox(width: 10),
-                            OutlinedButton(
-                              onPressed: () {
-                                setState(() {
-                                  roiWidth = cameraWidth < 700
-                                      ? cameraWidth
-                                      : 700;
-                                  roiHeight = cameraHeight < 900
-                                      ? cameraHeight
-                                      : 900;
-                                  roiX = (cameraWidth - roiWidth) ~/ 2;
-                                  roiY = cameraHeight >= 1000 ? 100 : 0;
-                                });
-                                _queueSettings();
-                              },
-                              child: const Text('恢复默认 ROI'),
-                            ),
-                          ],
                         ),
                       ],
                     ),
-                  ),
+                    Slider(
+                      value: threshold.toDouble(),
+                      min: 0,
+                      max: 255,
+                      label: threshold.toString(),
+                      onChanged: (value) {
+                        setState(() {
+                          threshold = value.round();
+                          autoThreshold = false;
+                        });
+                        _queueSettings();
+                      },
+                    ),
+                    Center(
+                      child: Text(
+                        '当前阈值：$threshold',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    const Text(
+                      '目标极性',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 8),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(value: 'AUTO', label: Text('自动')),
+                        ButtonSegment(value: 'LIGHT', label: Text('亮色')),
+                        ButtonSegment(value: 'DARK', label: Text('暗色')),
+                      ],
+                      selected: {polarityMode},
+                      showSelectedIcon: false,
+                      onSelectionChanged: (values) {
+                        setState(() => polarityMode = values.first);
+                        _queueSettings();
+                      },
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        const Text(
+                          '最小碎片面积',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const Spacer(),
+                        Text(
+                          minPieceArea.toString(),
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Slider(
+                      value: minPieceArea.toDouble(),
+                      min: 100,
+                      max: 10000,
+                      divisions: 99,
+                      onChanged: (value) {
+                        setState(() => minPieceArea = value.round());
+                        _queueSettings();
+                      },
+                    ),
+                    const Divider(height: 34),
+                    // 绿膜参数（仅GREEN+最大连通域时显示）
+                    if (backgroundMode == 'GREEN' &&
+                        _greenMethod == 'largest') ...[
+                      const Text(
+                        '绿膜形态学参数',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 15,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        '光照差时增大、光照好时减小，越小边角越锐利',
+                        style: TextStyle(
+                          color: Color(0xFF94A3B8),
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      _buildGreenParamSlider(
+                        '绿色闭运算核大小',
+                        _greenCloseKernel,
+                        1,
+                        21,
+                        (v) {
+                          setState(() => _greenCloseKernel = v.round());
+                          _queueSettings();
+                        },
+                      ),
+                      _buildGreenParamSlider(
+                        '绿色闭运算迭代次数',
+                        _greenCloseIter,
+                        0,
+                        5,
+                        (v) {
+                          setState(() => _greenCloseIter = v.round());
+                          _queueSettings();
+                        },
+                      ),
+                      _buildGreenParamSlider(
+                        'A4纸闭运算核大小',
+                        _paperCloseKernel,
+                        1,
+                        15,
+                        (v) {
+                          setState(() => _paperCloseKernel = v.round());
+                          _queueSettings();
+                        },
+                      ),
+                      _buildGreenParamSlider(
+                        'A4纸闭运算迭代次数',
+                        _paperCloseIter,
+                        0,
+                        5,
+                        (v) {
+                          setState(() => _paperCloseIter = v.round());
+                          _queueSettings();
+                        },
+                      ),
+                      const SizedBox(height: 6),
+                      if (_greenAuto)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEFF6FF),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            _greenDetectedHueMax > 0
+                                ? '当前自动范围  H $_greenDetectedHueMin–$_greenDetectedHueMax  '
+                                      'S≥$_greenDetectedSatMin  V≥$_greenDetectedValMin'
+                                : '正在从画面中取样绿色背景…',
+                            style: const TextStyle(
+                              color: Color(0xFF2563EB),
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12,
+                            ),
+                          ),
+                        )
+                      else ...[
+                        Row(
+                          children: [
+                            const Text(
+                              'HSV色相',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 12,
+                              ),
+                            ),
+                            const Spacer(),
+                            Text(
+                              '$_greenHueMin–$_greenHueMax',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 12,
+                                color: Color(0xFF2563EB),
+                              ),
+                            ),
+                          ],
+                        ),
+                        RangeSlider(
+                          values: RangeValues(
+                            _greenHueMin.toDouble(),
+                            _greenHueMax.toDouble(),
+                          ),
+                          min: 0,
+                          max: 180,
+                          divisions: 36,
+                          onChanged: (values) {
+                            setState(() {
+                              _greenHueMin = values.start.round();
+                              _greenHueMax = values.end.round();
+                            });
+                            _queueSettings();
+                          },
+                        ),
+                        _buildGreenParamSlider('饱和度下限', _greenSatMin, 0, 255, (
+                          v,
+                        ) {
+                          setState(() => _greenSatMin = v.round());
+                          _queueSettings();
+                        }),
+                        _buildGreenParamSlider('亮度下限', _greenValMin, 0, 255, (
+                          v,
+                        ) {
+                          setState(() => _greenValMin = v.round());
+                          _queueSettings();
+                        }),
+                      ],
+                      const Divider(height: 28),
+                    ],
+                    Row(
+                      children: [
+                        const Text(
+                          '检测区域 ROI',
+                          style: TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        const Spacer(),
+                        Text(
+                          '完整画面 $cameraWidth×$cameraHeight',
+                          style: const TextStyle(
+                            color: Color(0xFF64748B),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '当前 ROI：X $roiX，Y $roiY，宽 $roiWidth，高 $roiHeight',
+                      style: const TextStyle(
+                        color: Color(0xFF2563EB),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _buildRoiSlider(
+                      label: 'X',
+                      value: roiX,
+                      minimum: 0,
+                      maximum: cameraWidth > 80 ? cameraWidth - 80 : 1,
+                      onChanged: (value) {
+                        setState(() {
+                          roiX = value;
+                          roiWidth = roiWidth
+                              .clamp(80, cameraWidth - roiX)
+                              .toInt();
+                        });
+                        _queueSettings();
+                      },
+                    ),
+                    _buildRoiSlider(
+                      label: 'Y',
+                      value: roiY,
+                      minimum: 0,
+                      maximum: cameraHeight > 80 ? cameraHeight - 80 : 1,
+                      onChanged: (value) {
+                        setState(() {
+                          roiY = value;
+                          roiHeight = roiHeight
+                              .clamp(80, cameraHeight - roiY)
+                              .toInt();
+                        });
+                        _queueSettings();
+                      },
+                    ),
+                    _buildRoiSlider(
+                      label: '宽',
+                      value: roiWidth,
+                      minimum: 80,
+                      maximum: cameraWidth - roiX,
+                      onChanged: (value) {
+                        setState(() => roiWidth = value);
+                        _queueSettings();
+                      },
+                    ),
+                    _buildRoiSlider(
+                      label: '高',
+                      value: roiHeight,
+                      minimum: 80,
+                      maximum: cameraHeight - roiY,
+                      onChanged: (value) {
+                        setState(() => roiHeight = value);
+                        _queueSettings();
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        OutlinedButton(
+                          onPressed: () {
+                            setState(() {
+                              roiX = 0;
+                              roiY = 0;
+                              roiWidth = cameraWidth;
+                              roiHeight = cameraHeight;
+                            });
+                            _queueSettings();
+                          },
+                          child: const Text('ROI 铺满画面'),
+                        ),
+                        const SizedBox(width: 10),
+                        OutlinedButton(
+                          onPressed: () {
+                            setState(() {
+                              roiWidth = cameraWidth < 700 ? cameraWidth : 700;
+                              roiHeight = cameraHeight < 900
+                                  ? cameraHeight
+                                  : 900;
+                              roiX = (cameraWidth - roiWidth) ~/ 2;
+                              roiY = cameraHeight >= 1000 ? 100 : 0;
+                            });
+                            _queueSettings();
+                          },
+                          child: const Text('恢复默认 ROI'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
+            ),
           ],
         ),
       ),
@@ -1738,9 +2186,10 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
         children: [
           SizedBox(
             width: 120,
-            child: Text(label,
-                style: const TextStyle(
-                    fontWeight: FontWeight.w700, fontSize: 12)),
+            child: Text(
+              label,
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+            ),
           ),
           Expanded(
             child: Slider(
@@ -1757,9 +2206,10 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
             child: Text(
               value.toString(),
               style: const TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 12,
-                  color: Color(0xFF2563EB)),
+                fontWeight: FontWeight.w800,
+                fontSize: 12,
+                color: Color(0xFF2563EB),
+              ),
             ),
           ),
         ],
@@ -1952,9 +2402,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                 child: Text(
                   '实际设备：'
                   '${serialActivePort.isEmpty ? "等待设备上线" : serialActivePort}\n'
-                  '${serialError.isEmpty
-                      ? (serialLastReply.isEmpty ? "等待串口操作" : serialLastReply)
-                      : "$serialLastReply\n$serialError"}',
+                  '${serialError.isEmpty ? (serialLastReply.isEmpty ? "等待串口操作" : serialLastReply) : "$serialLastReply\n$serialError"}',
                   style: TextStyle(
                     color: serialError.isEmpty
                         ? const Color(0xFF0F766E)
@@ -1969,14 +2417,15 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                 children: [
                   const Text(
                     '原始收发日志',
-                    style: TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w800),
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
                   ),
                   const Spacer(),
                   Text(
                     '${_serialRawLog.length} 条',
                     style: const TextStyle(
-                        color: Color(0xFF94A3B8), fontSize: 12),
+                      color: Color(0xFF94A3B8),
+                      fontSize: 12,
+                    ),
                   ),
                 ],
               ),
@@ -2102,7 +2551,8 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                                     children: [
                                       ColoredBox(
                                         color: const Color(0xFF111827),
-                                        child: cameraFrame == null || !cameraOnline
+                                        child:
+                                            cameraFrame == null || !cameraOnline
                                             ? const Center(
                                                 child: Text(
                                                   '摄像头离线\n上线后可选择视觉点',
@@ -2117,7 +2567,8 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                                                 cameraFrame!,
                                                 fit: BoxFit.contain,
                                                 gaplessPlayback: true,
-                                                filterQuality: FilterQuality.low,
+                                                filterQuality:
+                                                    FilterQuality.low,
                                               ),
                                       ),
                                       // Calibration dot overlay.
@@ -2125,13 +2576,13 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                                         CustomPaint(
                                           size: Size.infinite,
                                           painter: _CalibrationDotPainter(
-                                             pointA: _previewPointA,
-                                             pointB: _previewPointB,
-                                             pointC: _previewPointC,
-                                             pointD: _previewPointD,
-                                             pointE: _previewPointE,
-                                             pointF: _previewPointF,
-                                             selected: calibrationTarget,
+                                            pointA: _previewPointA,
+                                            pointB: _previewPointB,
+                                            pointC: _previewPointC,
+                                            pointD: _previewPointD,
+                                            pointE: _previewPointE,
+                                            pointF: _previewPointF,
+                                            selected: calibrationTarget,
                                           ),
                                         ),
                                     ],
@@ -2382,6 +2833,171 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
     );
   }
 
+  void _queueCardScoringSettings() {
+    _cardScoringDirty = true;
+    if (!_cardScoringFlushRunning) {
+      unawaited(_flushCardScoringSettings());
+    }
+  }
+
+  Future<void> _flushCardScoringSettings() async {
+    _cardScoringFlushRunning = true;
+    try {
+      while (mounted && _cardScoringDirty) {
+        _cardScoringDirty = false;
+        await backend.sendControl(
+          cardWeightTexture: _cardWeightTexture,
+          cardWeightCoverage: _cardWeightCoverage,
+          cardWeightInternalMatch: _cardWeightInternalMatch,
+          cardWeightBoundary: _cardWeightBoundary,
+          cardWeightGlobal: _cardWeightGlobal,
+          cardWeightIndex: _cardWeightIndex,
+          cardTier1Penalty: _cardTier1Penalty,
+          cardTier0Penalty: _cardTier0Penalty,
+          cardLockedFilterEnabled: _cardLockedFilterEnabled,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+      }
+    } finally {
+      _cardScoringFlushRunning = false;
+      if (mounted && _cardScoringDirty) {
+        _queueCardScoringSettings();
+      }
+    }
+  }
+
+  Widget _buildComputationSettings() {
+    Widget slider(String label, double value, double min, double max,
+        ValueChanged<double> onChanged) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 95,
+              child: Text(
+                label,
+                style:
+                    const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+              ),
+            ),
+            Expanded(
+              child: Slider(
+                value: value,
+                min: min,
+                max: max,
+                onChanged: onChanged,
+                onChangeEnd: (_) => _queueCardScoringSettings(),
+              ),
+            ),
+            SizedBox(
+              width: 38,
+              child: Text(
+                value.toStringAsFixed(3),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                  color: Color(0xFF2563EB),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _Panel(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Text('主评分权重',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w800)),
+                      const Spacer(),
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          setState(() {
+                            _cardWeightTexture = 0.42;
+                            _cardWeightCoverage = 0.12;
+                            _cardWeightInternalMatch = 0.10;
+                            _cardWeightBoundary = 0.06;
+                            _cardWeightGlobal = 0.10;
+                            _cardWeightIndex = 0.20;
+                            _cardTier1Penalty = 0.12;
+                            _cardTier0Penalty = 0.25;
+                            _cardLockedFilterEnabled = true;
+                            _queueCardScoringSettings();
+                          });
+                        },
+                        icon: const Icon(Icons.refresh, size: 16),
+                        label: const Text('恢复默认', style: TextStyle(fontSize: 12)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  slider('跨缝连续', _cardWeightTexture, 0, 1,
+                      (v) => setState(() => _cardWeightTexture = v)),
+                  slider('矩形覆盖度', _cardWeightCoverage, 0, 1,
+                      (v) => setState(() => _cardWeightCoverage = v)),
+                  slider('内部边匹配', _cardWeightInternalMatch, 0, 1,
+                      (v) => setState(() => _cardWeightInternalMatch = v)),
+                  slider('外框质量', _cardWeightBoundary, 0, 1,
+                      (v) => setState(() => _cardWeightBoundary = v)),
+                  slider('全局牌面', _cardWeightGlobal, 0, 1,
+                      (v) => setState(() => _cardWeightGlobal = v)),
+                  slider('对角角标', _cardWeightIndex, 0, 1,
+                      (v) => setState(() => _cardWeightIndex = v)),
+                  const SizedBox(height: 12),
+                  const Text('层级惩罚',
+                      style: TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 4),
+                  slider('T1 几何惩罚', _cardTier1Penalty, 0, 0.5,
+                      (v) => setState(() => _cardTier1Penalty = v)),
+                  slider('T0 几何惩罚', _cardTier0Penalty, 0, 0.5,
+                      (v) => setState(() => _cardTier0Penalty = v)),
+                  const SizedBox(height: 12),
+                  const Text('角标锁定',
+                      style: TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      const Text('启用角标锁定过滤',
+                          style: TextStyle(fontSize: 12)),
+                      const Spacer(),
+                      Switch(
+                        value: _cardLockedFilterEnabled,
+                        onChanged: (v) {
+                          setState(() => _cardLockedFilterEnabled = v);
+                          _queueCardScoringSettings();
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    '关闭后，角标锁定的候选不再排除未锁定的候选',
+                    style: TextStyle(
+                        fontSize: 10, color: Color(0xFF6B7280)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildLogSettings() {
     return _Panel(
       child: Padding(
@@ -2450,10 +3066,147 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
             ),
             const SizedBox(height: 8),
             const Text(
-              '重启后端进程，前端自动重连。',
+              '比赛运行方式与后端进程控制。',
               style: TextStyle(color: Color(0xFF64748B), height: 1.5),
             ),
             const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.space_bar_rounded,
+                        color: Color(0xFF2563EB),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '拼接物体间距',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            SizedBox(height: 3),
+                            Text(
+                              '控制相邻碎片边到边的目标距离，0 表示贴合。',
+                              style: TextStyle(
+                                color: Color(0xFF64748B),
+                                height: 1.35,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Text(
+                        '$assemblyGapPixels px',
+                        style: const TextStyle(
+                          color: Color(0xFF2563EB),
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      const Text('0'),
+                      Expanded(
+                        child: Slider(
+                          value: assemblyGapPixels.toDouble(),
+                          min: 0,
+                          max: 80,
+                          divisions: 80,
+                          label: '$assemblyGapPixels px',
+                          onChanged: (value) {
+                            setState(() => assemblyGapPixels = value.round());
+                            settingsSyncPending = true;
+                          },
+                          onChangeEnd: (_) => _queueSettings(),
+                        ),
+                      ),
+                      const Text('80'),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 10, 10, 10),
+              decoration: BoxDecoration(
+                color: competitionMode
+                    ? const Color(0xFFEFF6FF)
+                    : const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: competitionMode
+                      ? const Color(0xFF93C5FD)
+                      : const Color(0xFFE2E8F0),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.sports_score_rounded,
+                    color: competitionMode
+                        ? const Color(0xFF2563EB)
+                        : const Color(0xFF64748B),
+                  ),
+                  const SizedBox(width: 14),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '比赛模式',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          '点击第一问、普通拼图或扑克牌后立即解算；结果不合格自动重试，合格后自动发送执行。',
+                          style: TextStyle(
+                            color: Color(0xFF64748B),
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Switch(
+                    value: competitionMode,
+                    onChanged: (value) async {
+                      setState(() {
+                        competitionMode = value;
+                        if (!value) {
+                          competitionActive = false;
+                          solving = false;
+                        }
+                      });
+                      await backend.sendControl(
+                        competitionMode: value,
+                        action: value ? null : 'stop_solve',
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
             SizedBox(
               height: 50,
               child: OutlinedButton.icon(
@@ -2516,6 +3269,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
           polarityMode: polarityMode,
           backgroundMode: backgroundMode,
           greenMethod: _greenMethod,
+          greenAuto: _greenAuto,
           greenHueMin: _greenHueMin,
           greenHueMax: _greenHueMax,
           greenSatMin: _greenSatMin,
@@ -2525,6 +3279,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
           paperCloseKernel: _paperCloseKernel,
           paperCloseIter: _paperCloseIter,
           minPieceArea: minPieceArea,
+          assemblyGapPixels: assemblyGapPixels,
           roiX: roiX,
           roiY: roiY,
           roiWidth: roiWidth,
@@ -2591,8 +3346,14 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                               const Spacer(),
                               SegmentedButton<bool>(
                                 segments: const [
-                                  ButtonSegment(value: true, label: Text('二值化')),
-                                  ButtonSegment(value: false, label: Text('原图')),
+                                  ButtonSegment(
+                                    value: true,
+                                    label: Text('二值化'),
+                                  ),
+                                  ButtonSegment(
+                                    value: false,
+                                    label: Text('原图'),
+                                  ),
                                 ],
                                 selected: {_showBinaryPreview},
                                 showSelectedIcon: false,
@@ -2603,7 +3364,8 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                                 },
                                 style: const ButtonStyle(
                                   visualDensity: VisualDensity.compact,
-                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
                                 ),
                               ),
                             ],
@@ -2617,8 +3379,9 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                                 child: ValueListenableBuilder<Uint8List?>(
                                   valueListenable: binaryPreview,
                                   builder: (context, bytes, child) {
-                                    final imageBytes =
-                                        _showBinaryPreview ? bytes : cameraFrame;
+                                    final imageBytes = _showBinaryPreview
+                                        ? bytes
+                                        : cameraFrame;
                                     if (imageBytes == null) {
                                       return const SizedBox.expand();
                                     }
@@ -2732,9 +3495,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
                                 selected: autoThreshold,
                                 label: const Text('自动 OTSU'),
                                 onSelected: (selected) {
-                                  setSheetState(
-                                    () => autoThreshold = selected,
-                                  );
+                                  setSheetState(() => autoThreshold = selected);
                                   _queueSettings();
                                 },
                               ),
@@ -2847,8 +3608,7 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
 
   String? _parseSerialFrame(String hex, bool isTx) {
     try {
-      final bytes =
-          hex.split(' ').map((s) => int.parse(s, radix: 16)).toList();
+      final bytes = hex.split(' ').map((s) => int.parse(s, radix: 16)).toList();
       if (bytes.length < 6) return null;
       if (bytes[0] != 0xAA || bytes[1] != 0x55) return null;
       final cmd = bytes[2];
@@ -2894,7 +3654,13 @@ class _PuzzleDashboardState extends State<PuzzleDashboard> {
               final y = _i32le(payload, 5);
               final z = _i32le(payload, 9);
               final r = _i16le(payload, 13);
-              final typeName = ['', '绝对移动', '相对移动', '归零', '查询位置'][ctrlType.clamp(0, 4)];
+              final typeName = [
+                '',
+                '绝对移动',
+                '相对移动',
+                '归零',
+                '查询位置',
+              ][ctrlType.clamp(0, 4)];
               return '→ $typeName ($x,$y,$z) ${r / 100.0}°$flagStr';
             }
             break;
@@ -3385,8 +4151,14 @@ class _CalibrationDotPainter extends CustomPainter {
     _drawPoint(canvas, size, pointF, 'F', _colorF, selected == 'f');
   }
 
-  void _drawPoint(Canvas canvas, Size bounds, Offset? point, String label,
-      Color color, bool isSelected) {
+  void _drawPoint(
+    Canvas canvas,
+    Size bounds,
+    Offset? point,
+    String label,
+    Color color,
+    bool isSelected,
+  ) {
     if (point == null) {
       return;
     }
@@ -3444,10 +4216,12 @@ class _CalibrationDotPainter extends CustomPainter {
       point.dy + r + 3,
     );
     // Keep label within bounds
-    final clampedDx =
-        textOffset.dx.clamp(2.0, bounds.width - textPainter.width - 2).toDouble();
-    final clampedDy =
-        textOffset.dy.clamp(2.0, bounds.height - textPainter.height - 2).toDouble();
+    final clampedDx = textOffset.dx
+        .clamp(2.0, bounds.width - textPainter.width - 2)
+        .toDouble();
+    final clampedDy = textOffset.dy
+        .clamp(2.0, bounds.height - textPainter.height - 2)
+        .toDouble();
     textPainter.paint(canvas, Offset(clampedDx, clampedDy));
   }
 
@@ -3467,7 +4241,8 @@ class _SplitLinePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = const Color(0x80F59E0B) // 半透明琥珀色
+      ..color =
+          const Color(0x80F59E0B) // 半透明琥珀色
       ..strokeWidth = 1.5
       ..style = PaintingStyle.stroke;
 
@@ -3487,6 +4262,108 @@ class _SplitLinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _SplitLinePainter oldDelegate) => false;
+}
+
+class _SolvedOutlinePainter extends CustomPainter {
+  const _SolvedOutlinePainter(this.shapes);
+
+  final List<SolvedPieceShape> shapes;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final validShapes = shapes.where((shape) => shape.points.length >= 3);
+    final allPoints = [
+      for (final shape in validShapes)
+        for (final point in shape.points) point,
+    ];
+    if (allPoints.isEmpty) {
+      return;
+    }
+
+    var minX = allPoints.first[0];
+    var maxX = minX;
+    var minY = allPoints.first[1];
+    var maxY = minY;
+    for (final point in allPoints.skip(1)) {
+      if (point[0] < minX) minX = point[0];
+      if (point[0] > maxX) maxX = point[0];
+      if (point[1] < minY) minY = point[1];
+      if (point[1] > maxY) maxY = point[1];
+    }
+
+    final sourceWidth = (maxX - minX).clamp(1.0, double.infinity).toDouble();
+    final sourceHeight = (maxY - minY).clamp(1.0, double.infinity).toDouble();
+    final scaleX = (size.width - 18) / sourceWidth;
+    final scaleY = (size.height - 10) / sourceHeight;
+    final scale = scaleX < scaleY ? scaleX : scaleY;
+    final left = (size.width - sourceWidth * scale) * 0.5;
+    final top = (size.height - sourceHeight * scale) * 0.5;
+    Offset mapPoint(List<double> point) => Offset(
+      left + (point[0] - minX) * scale,
+      top + (point[1] - minY) * scale,
+    );
+
+    final colors = [
+      const Color(0xFF2563EB),
+      const Color(0xFF16A34A),
+      const Color(0xFFEA580C),
+      const Color(0xFF9333EA),
+    ];
+    for (final shape in validShapes) {
+      final path = Path()
+        ..moveTo(
+          mapPoint(shape.points.first).dx,
+          mapPoint(shape.points.first).dy,
+        );
+      for (final point in shape.points.skip(1)) {
+        final mapped = mapPoint(point);
+        path.lineTo(mapped.dx, mapped.dy);
+      }
+      path.close();
+      final color = colors[shape.pieceId % colors.length];
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = color.withAlpha(30)
+          ..style = PaintingStyle.fill,
+      );
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = color
+          ..strokeWidth = 2
+          ..strokeJoin = StrokeJoin.round
+          ..style = PaintingStyle.stroke,
+      );
+
+      final center =
+          shape.points.fold(
+            const Offset(0, 0),
+            (sum, point) => sum + mapPoint(point),
+          ) /
+          shape.points.length.toDouble();
+      final label = TextPainter(
+        text: TextSpan(
+          text: 'P${shape.pieceId + 1}',
+          style: TextStyle(
+            color: color,
+            fontSize: 10,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      label.paint(
+        canvas,
+        center - Offset(label.width * 0.5, label.height * 0.5),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SolvedOutlinePainter oldDelegate) {
+    return oldDelegate.shapes != shapes;
+  }
 }
 
 class _ConnectionRow extends StatelessWidget {
@@ -3749,6 +4626,45 @@ class _Metric extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ScoreBreakdown extends StatelessWidget {
+  const _ScoreBreakdown({required this.items});
+
+  final List<Map<String, dynamic>> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Wrap(
+        spacing: 14,
+        runSpacing: 7,
+        children: items.map((item) {
+          final value = (item['value'] as num?)?.toDouble() ?? 0;
+          final weight = (item['weight'] as num?)?.toDouble();
+          final label = item['label']?.toString() ?? '评分项';
+          final suffix = weight == null
+              ? '${(value * 100).toStringAsFixed(1)}%'
+              : '${(value * 100).toStringAsFixed(1)}% × ${(weight * 100).toStringAsFixed(0)}%';
+          return Text(
+            '$label $suffix',
+            style: const TextStyle(
+              color: Color(0xFF475569),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          );
+        }).toList(),
+      ),
     );
   }
 }

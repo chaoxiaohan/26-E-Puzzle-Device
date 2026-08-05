@@ -24,6 +24,16 @@ def write_control(path, revision, action):
 
 
 with tempfile.TemporaryDirectory() as directory:
+    stale_control_path = os.path.join(directory, "stale-control.json")
+    write_control(stale_control_path, 77, "competition_start")
+    assert UiBridge._read_control_revision(stale_control_path) == 77
+    stale_bridge = UiBridge()
+    stale_bridge.control_path = stale_control_path
+    stale_bridge.last_control_revision = UiBridge._read_control_revision(
+        stale_control_path
+    )
+    assert stale_bridge.read_control() is None
+
     bridge = UiBridge()
     bridge.control_path = os.path.join(directory, "control.json")
 

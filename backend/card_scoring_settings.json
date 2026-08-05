@@ -1,0 +1,11 @@
+{
+  "card_weight_texture": 0.47972042624521055,
+  "card_weight_coverage": 0.2361659881864623,
+  "card_weight_internal_match": 0.2099896232439336,
+  "card_weight_boundary": 0.06,
+  "card_weight_global": 0.1,
+  "card_weight_index": 0.24765525223499363,
+  "card_tier1_penalty": 0.12,
+  "card_tier0_penalty": 0.25,
+  "card_locked_filter_enabled": true
+}

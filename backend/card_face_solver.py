@@ -53,6 +53,7 @@ def _sample_edge_strip(
     offset,
     shared_length,
     reverse=False,
+    polygon_mask=None,
 ):
     start = polygon[edge_id]
     end = polygon[(edge_id + 1) % len(polygon)]
@@ -63,8 +64,8 @@ def _sample_edge_strip(
         return None
 
     unit = vector / full_length
-    # 提高采样密度：比赛碎片边长≥2cm，需要足够样本区分花纹
-    sample_count = max(36, min(80, int(shared_length * 0.92)))
+    # 固定长度方向采样，使不同候选的同一条接缝可以直接比较。
+    sample_count = 96
     margin = min(2.5, shared_length * 0.05)
     along = np.linspace(
         offset + margin,
@@ -75,12 +76,13 @@ def _sample_edge_strip(
     if reverse:
         along = along[::-1].copy()
 
-    # 增加深度层数以获得更丰富的纹理剖面
-    depths = np.array([1.8, 4.0, 7.0, 11.0], dtype=np.float32)
+    # 六层宽带兼顾紧邻切口的连续性和更深处的花纹上下文。
+    depths = np.array(
+        [1.5, 3.0, 5.5, 8.5, 12.0, 16.0],
+        dtype=np.float32,
+    )
     map_x = np.empty((len(depths), sample_count), dtype=np.float32)
     map_y = np.empty_like(map_x)
-    valid = np.ones((len(depths), sample_count), dtype=bool)
-    contour = polygon.astype(np.float32)
 
     for depth_id, depth in enumerate(depths):
         points = (
@@ -90,15 +92,6 @@ def _sample_edge_strip(
         )
         map_x[depth_id] = points[:, 0]
         map_y[depth_id] = points[:, 1]
-        for sample_id, point in enumerate(points):
-            valid[depth_id, sample_id] = (
-                cv2.pointPolygonTest(
-                    contour,
-                    (float(point[0]), float(point[1])),
-                    False,
-                )
-                >= 0
-            )
 
     sampled = cv2.remap(
         frame_rgb,
@@ -107,6 +100,17 @@ def _sample_edge_strip(
         cv2.INTER_LINEAR,
         borderMode=cv2.BORDER_REPLICATE,
     ).astype(np.float32)
+    if polygon_mask is None:
+        valid = np.ones((len(depths), sample_count), dtype=bool)
+    else:
+        valid = cv2.remap(
+            polygon_mask,
+            map_x,
+            map_y,
+            cv2.INTER_NEAREST,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0,
+        ) > 0
     return sampled, valid
 
 
@@ -125,8 +129,17 @@ def _profile_features(samples):
         0.0,
         rgb[:, :, 0] - np.maximum(rgb[:, :, 1], rgb[:, :, 2]),
     )
+    blackness = darkness * np.maximum(0.0, 1.0 - saturation * 1.5)
+    along_gradient = np.abs(np.gradient(gray, axis=1))
     return np.stack(
-        (gray, darkness, saturation, redness),
+        (
+            gray,
+            darkness,
+            saturation,
+            redness,
+            blackness,
+            along_gradient,
+        ),
         axis=2,
     )
 
@@ -140,8 +153,15 @@ def _compare_edge_strips(first, second):
     first_valid = first[1]
     second_valid = second[1]
     best_error = 1.0
+    # 只使用最靠近接缝的三层。深处图案相似不能证明两块在切口处连续。
+    feature_weight = np.array(
+        [0.22, 0.24, 0.13, 0.18, 0.11, 0.12],
+        dtype=np.float32,
+    )
+    depth_weight = np.array([1.0, 0.58, 0.24], dtype=np.float32)[:, None]
+    best_evidence = 0.0
 
-    for shift in range(-2, 3):
+    for shift in range(-3, 4):
         if shift < 0:
             first_slice = slice(-shift, None)
             second_slice = slice(None, shift)
@@ -158,58 +178,113 @@ def _compare_edge_strips(first, second):
         )
         if np.count_nonzero(valid) < 18:
             continue
-        difference = np.abs(
-            first_features[:, first_slice]
-            - second_features[:, second_slice]
+        first_near = first_features[:3, first_slice]
+        second_near = second_features[:3, second_slice]
+        valid_near = valid[:3]
+        # 绿色垫板或绿色检测边缘不是扑克牌花纹，与白底一样不参与评分。
+        first_rgb = first[0][:3, first_slice] / 255.0
+        second_rgb = second[0][:3, second_slice] / 255.0
+        first_green = (
+            (first_rgb[:, :, 1] > 0.28)
+            & (first_rgb[:, :, 1] > first_rgb[:, :, 0] * 1.15)
+            & (first_rgb[:, :, 1] > first_rgb[:, :, 2] * 1.08)
         )
-        feature_error = (
-            difference[:, :, 0] * 0.28
-            + difference[:, :, 1] * 0.34
-            + difference[:, :, 2] * 0.16
-            + difference[:, :, 3] * 0.22
+        second_green = (
+            (second_rgb[:, :, 1] > 0.28)
+            & (second_rgb[:, :, 1] > second_rgb[:, :, 0] * 1.15)
+            & (second_rgb[:, :, 1] > second_rgb[:, :, 2] * 1.08)
         )
-        first_ink = np.maximum(
-            first_features[:, first_slice, 1],
-            first_features[:, first_slice, 2] * 0.75,
-        )
-        second_ink = np.maximum(
-            second_features[:, second_slice, 1],
-            second_features[:, second_slice, 2] * 0.75,
-        )
-        pattern_weight = 0.12 + np.maximum(
-            first_ink,
-            second_ink,
-        )
-        best_error = min(
-            best_error,
-            float(
-                np.sum(feature_error[valid] * pattern_weight[valid])
-                / np.sum(pattern_weight[valid])
-            ),
+        valid_near = valid_near & ~first_green & ~second_green
+        if np.count_nonzero(valid_near) < 18:
+            continue
+        difference = np.abs(first_near - second_near)
+        boundary_error = np.sum(
+            difference * feature_weight[None, None, :],
+            axis=2,
         )
 
-    combined = np.maximum(
-        first_features[:, :, 1],
-        second_features[:, :, 1],
-    )
-    color = np.maximum(
-        first_features[:, :, 2],
-        second_features[:, :, 2],
-    )
-    evidence = min(
-        1.0,
-        float(np.mean(combined) * 2.8 + np.mean(color) * 1.6),
-    )
-    quality = math.exp(-best_error * 7.0)
+        # 对连续图案而言，接缝两侧的变化趋势应能接上；这里不再比较两侧
+        # 深处是否相像，而是比较切口附近的法向延拓是否突变。
+        first_slope = first_near[0] - first_near[1]
+        second_slope = second_near[1] - second_near[0]
+        slope_error = np.sum(
+            np.abs(first_slope - second_slope)
+            * feature_weight[None, :],
+            axis=1,
+        )
+        local_change = np.sum(
+            (
+                np.abs(first_near[0] - first_near[1])
+                + np.abs(second_near[0] - second_near[1])
+            )
+            * feature_weight[None, :],
+            axis=1,
+        )
+        discontinuity = np.maximum(
+            0.0,
+            boundary_error[0] - local_change * 1.15,
+        )
+        first_detail = np.maximum(
+            first_near[:, :, 5],
+            np.abs(first_near[0] - first_near[1]).mean(axis=1),
+        )
+        second_detail = np.maximum(
+            second_near[:, :, 5],
+            np.abs(second_near[0] - second_near[1]).mean(axis=1),
+        )
+        detail = np.maximum(first_detail, second_detail)
+        first_ink = np.maximum.reduce((
+            first_near[:, :, 3] * 1.15,
+            first_near[:, :, 4],
+            first_near[:, :, 2] * 0.45,
+        ))
+        second_ink = np.maximum.reduce((
+            second_near[:, :, 3] * 1.15,
+            second_near[:, :, 4],
+            second_near[:, :, 2] * 0.45,
+        ))
+        both_ink = np.minimum(first_ink, second_ink)
+        ink_mismatch = np.abs(first_ink - second_ink)
+
+        # 白底对白底没有区分力：不给奖励也不参与平均；白底与花纹相对时
+        # 则作为明确的接缝断裂证据参与扣分。
+        matched_detail = detail * (0.20 + both_ink) + both_ink * 0.08
+        mismatch_detail = ink_mismatch * 0.90
+        pattern_weight = matched_detail + mismatch_detail
+        pattern_weight *= depth_weight
+        error = (
+            boundary_error * 0.58
+            + slope_error[None, :] * 0.22
+            + discontinuity[None, :] * 0.20
+            + ink_mismatch * 0.55
+        )
+        if np.sum(pattern_weight[valid_near]) < 1e-5:
+            continue
+        error = float(
+            np.sum(error[valid_near] * pattern_weight[valid_near])
+            / max(1e-6, np.sum(pattern_weight[valid_near]))
+        )
+        if error < best_error:
+            best_error = error
+            best_evidence = float(
+                np.mean(
+                    (matched_detail + mismatch_detail)[valid_near]
+                )
+            )
+
+    if best_evidence <= 0.0:
+        return 0.5, 0.0
+    evidence = min(1.0, best_evidence * 8.0)
+    quality = math.exp(-best_error * 6.5)
     return quality, evidence
 
 
 def _texture_summary(seams):
     if not seams:
         return 0.5, 0.0
-    total_weight = sum(max(0.05, item[1]) for item in seams)
+    total_weight = sum(max(0.01, item[1]) for item in seams)
     raw_score = sum(
-        item[0] * max(0.05, item[1])
+        item[0] * max(0.01, item[1])
         for item in seams
     ) / total_weight
     confidence = min(
@@ -219,7 +294,7 @@ def _texture_summary(seams):
     return 0.5 + (raw_score - 0.5) * confidence, confidence
 
 
-def score_layout_texture(frame_rgb, pieces, layout):
+def score_layout_texture(frame_rgb, pieces, layout, cache=None):
     """对一个已闭合矩形的所有真实内部接缝进行扑克牌花纹评分。"""
     source_polygons = [
         np.asarray(piece["points"], dtype=np.float64)
@@ -230,6 +305,21 @@ def score_layout_texture(frame_rgb, pieces, layout):
         for piece_id, polygon in layout.items()
     }
     seams = []
+    if cache is None:
+        cache = {}
+    strip_cache = cache.setdefault("strips", {})
+    masks = cache.get("masks")
+    if masks is None:
+        masks = []
+        for polygon in source_polygons:
+            mask = np.zeros(frame_rgb.shape[:2], dtype=np.uint8)
+            cv2.fillPoly(
+                mask,
+                [np.rint(polygon).astype(np.int32)],
+                255,
+            )
+            masks.append(mask)
+        cache["masks"] = masks
     piece_ids = sorted(target_polygons)
 
     for first_index, first_id in enumerate(piece_ids):
@@ -363,21 +453,43 @@ def score_layout_texture(frame_rgb, pieces, layout):
                     second_source_offset = (
                         second_target_offset / second_scale
                     )
-                    first_strip = _sample_edge_strip(
-                        frame_rgb,
-                        first_source,
+                    first_key = (
+                        first_id,
                         first_edge,
-                        first_source_offset,
-                        shared_source,
+                        int(round(first_source_offset * 2.0)),
+                        int(round(shared_source * 2.0)),
+                        False,
                     )
-                    second_strip = _sample_edge_strip(
-                        frame_rgb,
-                        second_source,
+                    second_key = (
+                        second_id,
                         second_edge,
-                        second_source_offset,
-                        shared_source,
-                        reverse=True,
+                        int(round(second_source_offset * 2.0)),
+                        int(round(shared_source * 2.0)),
+                        True,
                     )
+                    first_strip = strip_cache.get(first_key)
+                    if first_strip is None:
+                        first_strip = _sample_edge_strip(
+                            frame_rgb,
+                            first_source,
+                            first_edge,
+                            first_source_offset,
+                            shared_source,
+                            polygon_mask=masks[first_id],
+                        )
+                        strip_cache[first_key] = first_strip
+                    second_strip = strip_cache.get(second_key)
+                    if second_strip is None:
+                        second_strip = _sample_edge_strip(
+                            frame_rgb,
+                            second_source,
+                            second_edge,
+                            second_source_offset,
+                            shared_source,
+                            reverse=True,
+                            polygon_mask=masks[second_id],
+                        )
+                        strip_cache[second_key] = second_strip
                     quality, evidence = _compare_edge_strips(
                         first_strip,
                         second_strip,
@@ -417,6 +529,65 @@ def _similarity_pose(source, target):
         / max(1e-9, np.sum(source_centered * source_centered))
     )
     return target_center, source_center, rotation, scale
+
+
+def _resample_polygon_boundary(polygon, sample_count=48):
+    polygon = np.asarray(polygon, dtype=np.float64)
+    vectors = np.roll(polygon, -1, axis=0) - polygon
+    lengths = np.linalg.norm(vectors, axis=1)
+    perimeter = float(np.sum(lengths))
+    if perimeter < 1e-9:
+        return np.repeat(polygon[:1], sample_count, axis=0)
+    cumulative = np.concatenate(([0.0], np.cumsum(lengths)))
+    distances = np.arange(sample_count, dtype=np.float64) * (
+        perimeter / sample_count
+    )
+    edge_ids = np.searchsorted(cumulative[1:], distances, side="right")
+    edge_ids = np.minimum(edge_ids, len(polygon) - 1)
+    offsets = distances - cumulative[edge_ids]
+    ratios = offsets / np.maximum(lengths[edge_ids], 1e-9)
+    return polygon[edge_ids] + vectors[edge_ids] * ratios[:, None]
+
+
+def _best_similarity_pose(source, target):
+    """枚举顶点循环对应关系，避免相似多边形因起点不同而转错方向。"""
+    source = np.asarray(source, dtype=np.float64)
+    target = np.asarray(target, dtype=np.float64)
+    if len(source) < 3 or len(target) < 3:
+        return np.mean(target, axis=0), np.mean(source, axis=0), np.eye(2), 1.0, 1.0
+
+    if len(source) != len(target):
+        source = _resample_polygon_boundary(source)
+        target = _resample_polygon_boundary(target)
+
+    best = None
+    target_radius = math.sqrt(
+        float(
+            np.mean(
+                np.sum(
+                    (target - np.mean(target, axis=0)) ** 2,
+                    axis=1,
+                )
+            )
+        )
+    )
+    for reversed_order in (False, True):
+        ordered = target[::-1] if reversed_order else target
+        for shift in range(len(ordered)):
+            candidate = np.roll(ordered, shift, axis=0)
+            pose = _similarity_pose(source, candidate)
+            target_center, source_center, rotation, scale = pose
+            transformed = (
+                (source - source_center) @ rotation.T * scale
+                + target_center
+            )
+            error = float(
+                np.mean(np.linalg.norm(transformed - candidate, axis=1))
+                / max(1e-9, target_radius)
+            )
+            if best is None or error < best[-1]:
+                best = (*pose, error)
+    return best
 
 
 def close_card_pattern_layout(layout, solve_info):
@@ -503,19 +674,6 @@ def render_layout_preview(
         destination = (
             (target - minimum) * render_scale + margin
         )
-        (
-            target_center,
-            source_center,
-            rotation,
-            scale,
-        ) = _similarity_pose(source, destination)
-        matrix = np.zeros((2, 3), dtype=np.float64)
-        matrix[:, :2] = rotation * scale
-        matrix[:, 2] = (
-            target_center
-            - rotation @ source_center * scale
-        )
-
         source_mask = np.zeros(
             frame_rgb.shape[:2],
             dtype=np.uint8,
@@ -525,20 +683,46 @@ def render_layout_preview(
             [np.rint(source).astype(np.int32)],
             255,
         )
-        warped = cv2.warpAffine(
-            frame_rgb,
-            matrix,
-            (preview.shape[1], preview.shape[0]),
-            flags=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_CONSTANT,
-            borderValue=(48, 48, 48),
-        )
-        warped_mask = cv2.warpAffine(
-            source_mask,
-            matrix,
-            (preview.shape[1], preview.shape[0]),
-            flags=cv2.INTER_NEAREST,
-        )
+        if len(source) == 4 and len(destination) == 4:
+            matrix = cv2.getPerspectiveTransform(
+                source.astype(np.float32),
+                destination.astype(np.float32),
+            )
+            warped = cv2.warpPerspective(
+                frame_rgb,
+                matrix,
+                (preview.shape[1], preview.shape[0]),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=(48, 48, 48),
+            )
+            warped_mask = cv2.warpPerspective(
+                source_mask,
+                matrix,
+                (preview.shape[1], preview.shape[0]),
+                flags=cv2.INTER_NEAREST,
+            )
+        else:
+            target_center, source_center, rotation, scale = (
+                _similarity_pose(source, destination)
+            )
+            matrix = np.zeros((2, 3), dtype=np.float64)
+            matrix[:, :2] = rotation * scale
+            matrix[:, 2] = target_center - rotation @ source_center * scale
+            warped = cv2.warpAffine(
+                frame_rgb,
+                matrix,
+                (preview.shape[1], preview.shape[0]),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=(48, 48, 48),
+            )
+            warped_mask = cv2.warpAffine(
+                source_mask,
+                matrix,
+                (preview.shape[1], preview.shape[0]),
+                flags=cv2.INTER_NEAREST,
+            )
         preview[warped_mask > 0] = warped[warped_mask > 0]
 
     return preview
@@ -579,38 +763,52 @@ def score_layout_global_pattern(frame_rgb, pieces, layout):
         destination = (
             (target - minimum) * render_scale + 8.0
         )
-        (
-            target_center,
-            source_center,
-            rotation,
-            scale,
-        ) = _similarity_pose(source, destination)
-        matrix = np.zeros((2, 3), dtype=np.float64)
-        matrix[:, :2] = rotation * scale
-        matrix[:, 2] = (
-            target_center
-            - rotation @ source_center * scale
-        )
         source_mask = np.zeros(frame_rgb.shape[:2], dtype=np.uint8)
         cv2.fillPoly(
             source_mask,
             [np.rint(source).astype(np.int32)],
             255,
         )
-        warped = cv2.warpAffine(
-            frame_rgb,
-            matrix,
-            (canvas.shape[1], canvas.shape[0]),
-            flags=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_CONSTANT,
-            borderValue=(245, 245, 245),
-        )
-        warped_mask = cv2.warpAffine(
-            source_mask,
-            matrix,
-            (canvas.shape[1], canvas.shape[0]),
-            flags=cv2.INTER_NEAREST,
-        )
+        if len(source) == 4 and len(destination) == 4:
+            matrix = cv2.getPerspectiveTransform(
+                source.astype(np.float32),
+                destination.astype(np.float32),
+            )
+            warped = cv2.warpPerspective(
+                frame_rgb,
+                matrix,
+                (canvas.shape[1], canvas.shape[0]),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=(245, 245, 245),
+            )
+            warped_mask = cv2.warpPerspective(
+                source_mask,
+                matrix,
+                (canvas.shape[1], canvas.shape[0]),
+                flags=cv2.INTER_NEAREST,
+            )
+        else:
+            target_center, source_center, rotation, scale = (
+                _similarity_pose(source, destination)
+            )
+            matrix = np.zeros((2, 3), dtype=np.float64)
+            matrix[:, :2] = rotation * scale
+            matrix[:, 2] = target_center - rotation @ source_center * scale
+            warped = cv2.warpAffine(
+                frame_rgb,
+                matrix,
+                (canvas.shape[1], canvas.shape[0]),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=(245, 245, 245),
+            )
+            warped_mask = cv2.warpAffine(
+                source_mask,
+                matrix,
+                (canvas.shape[1], canvas.shape[0]),
+                flags=cv2.INTER_NEAREST,
+            )
         canvas[warped_mask > 0] = warped[warped_mask > 0]
         cv2.bitwise_or(
             valid_mask,
@@ -853,7 +1051,7 @@ def score_layout_global_pattern(frame_rgb, pieces, layout):
     }
 
 
-def score_rank_index_diagonal(frame_rgb, pieces, layout):
+def _score_rank_index_diagonal_legacy(frame_rgb, pieces, layout):
     """
     检查扑克牌的数字或字母角标是否出现在一对对角角区。
 
@@ -866,150 +1064,141 @@ def score_rank_index_diagonal(frame_rgb, pieces, layout):
         frame_rgb,
         pieces,
         layout,
-        long_side=420,
+        long_side=480,
         fill_rectangle=True,
     )
-    if preview is None or min(preview.shape[:2]) <= 52:
-        return {
-            "score": 0.5,
-            "confidence": 0.0,
-            "valid": None,
-            "corners": (0.0, 0.0, 0.0, 0.0),
-            "pair": (),
-        }
+    neutral = {
+        "score": 0.5,
+        "confidence": 0.0,
+        "valid": None,
+        "locked": False,
+        "corners": (0.0, 0.0, 0.0, 0.0),
+        "pair": (),
+        "component_count": 0,
+        "pair_similarity": 0.5,
+    }
+    if preview is None or min(preview.shape[:2]) <= 64:
+        return neutral
 
     card = preview[24:-24, 24:-24]
     height, width = card.shape[:2]
-    card_area = height * width
-    if min(height, width) < 40:
-        return {
-            "score": 0.5,
-            "confidence": 0.0,
-            "valid": None,
-            "corners": (0.0, 0.0, 0.0, 0.0),
-            "pair": (),
-        }
+    if min(height, width) < 52:
+        return neutral
 
     hsv = cv2.cvtColor(card, cv2.COLOR_RGB2HSV)
     gray = cv2.cvtColor(card, cv2.COLOR_RGB2GRAY)
     ink = (
-        ((hsv[:, :, 1] > 38) & (hsv[:, :, 2] < 252))
-        | (gray < 105)
-    ).astype(np.uint8)
+        ((hsv[:, :, 1] > 34) & (hsv[:, :, 2] < 250))
+        | (gray < 118)
+    ).astype(np.uint8) * 255
     ink[:3, :] = 0
     ink[-3:, :] = 0
     ink[:, :3] = 0
     ink[:, -3:] = 0
 
-    count, _, statistics, centers = (
-        cv2.connectedComponentsWithStats(ink, 8)
+    corner_width = max(24, int(width * 0.24))
+    corner_height = max(28, int(height * 0.29))
+    corner_masks = (
+        ink[:corner_height, :corner_width],
+        ink[:corner_height, -corner_width:],
+        ink[-corner_height:, :corner_width],
+        ink[-corner_height:, -corner_width:],
     )
-    components = []
-    minimum_area = max(12, int(card_area * 0.00012))
-    maximum_area = max(minimum_area + 1, int(card_area * 0.009))
-    for component_id in range(1, count):
-        x, y, item_width, item_height, area = (
-            int(value)
-            for value in statistics[component_id]
-        )
-        center_x, center_y = centers[component_id]
-        if area < minimum_area or area > maximum_area:
-            continue
-        if item_width > width * 0.18 or item_height > height * 0.19:
-            continue
-        if min(item_width, item_height) < 3:
-            continue
-        fill_ratio = area / float(item_width * item_height)
-        if fill_ratio < 0.10:
-            continue
-        side_distance = min(
-            center_x / width,
-            1.0 - center_x / width,
-        )
-        if side_distance > 0.31:
-            continue
 
-        corner_id = (
-            (0 if center_y < height * 0.5 else 2)
-            + (0 if center_x < width * 0.5 else 1)
+    def corner_presence(mask, corner_id):
+        count, _, statistics, centers = cv2.connectedComponentsWithStats(mask, 8)
+        minimum_area = max(5, int(mask.size * 0.00045))
+        maximum_area = max(minimum_area + 1, int(mask.size * 0.22))
+        components = [
+            (
+                int(statistics[component_id, cv2.CC_STAT_AREA]),
+                float(centers[component_id][0]),
+                float(centers[component_id][1]),
+            )
+            for component_id in range(1, count)
+            if minimum_area
+            <= int(statistics[component_id, cv2.CC_STAT_AREA])
+            <= maximum_area
+        ]
+        ink_ratio = float(np.count_nonzero(mask)) / max(1, mask.size)
+        density = min(1.0, ink_ratio / 0.045)
+        component_score = min(1.0, len(components) / 2.0)
+        target_x = 0.0 if corner_id in (0, 2) else mask.shape[1] - 1.0
+        target_y = 0.0 if corner_id in (0, 1) else mask.shape[0] - 1.0
+        total_area = sum(item[0] for item in components)
+        anchored_area = sum(
+            area * math.exp(
+                -(
+                    ((center_x - target_x) / max(1.0, mask.shape[1] * 0.90)) ** 2
+                    + ((center_y - target_y) / max(1.0, mask.shape[0] * 0.90)) ** 2
+                ) * 0.7
+            )
+            for area, center_x, center_y in components
         )
-        size_score = min(
-            1.0,
-            area / max(1.0, card_area * 0.0015),
-        ) * min(
-            1.0,
-            card_area * 0.007 / max(1.0, area),
+        anchor_score = anchored_area / max(1.0, total_area)
+        score = (
+            density * 0.30
+            + component_score * 0.25
+            + anchor_score * 0.45
         )
-        quality = (
-            (1.0 - side_distance / 0.31) * 0.45
-            + min(1.0, fill_ratio / 0.35) * 0.25
-            + size_score * 0.30
+        return score, len(components), anchor_score
+
+    def opposite_similarity(first, second):
+        second = cv2.rotate(second, cv2.ROTATE_180)
+        if np.count_nonzero(first) < 4 or np.count_nonzero(second) < 4:
+            return 0.0
+        # 7x7 的结果正好对应 ±3px 平移，OpenCV 内部完成相关计算。
+        padded_second = cv2.copyMakeBorder(
+            second,
+            3,
+            3,
+            3,
+            3,
+            cv2.BORDER_CONSTANT,
+            value=0,
         )
-        components.append(
-            {
-                "area": area,
-                "center": (float(center_x), float(center_y)),
-                "corner": corner_id,
-                "quality": quality,
-            }
+        correlation = cv2.matchTemplate(
+            padded_second.astype(np.float32),
+            first.astype(np.float32),
+            cv2.TM_CCORR_NORMED,
         )
+        return float(np.max(correlation))
 
     corner_scores = []
-    corner_pairs = []
-    for corner_id in range(4):
-        items = [
-            item
-            for item in components
-            if item["corner"] == corner_id
-        ]
-        best_score = 0.0
-        best_pair = ()
-        for first_id in range(len(items)):
-            for second_id in range(first_id + 1, len(items)):
-                first = items[first_id]
-                second = items[second_id]
-                distance = math.hypot(
-                    (
-                        first["center"][0]
-                        - second["center"][0]
-                    ) / max(1.0, width * 0.24),
-                    (
-                        first["center"][1]
-                        - second["center"][1]
-                    ) / max(1.0, height * 0.24),
-                )
-                if distance > 1.25:
-                    continue
-                area_ratio = max(
-                    first["area"],
-                    second["area"],
-                ) / max(
-                    1.0,
-                    min(first["area"], second["area"]),
-                )
-                balance = math.exp(
-                    -abs(math.log(area_ratio)) * 0.35
-                )
-                pair_score = (
-                    (
-                        first["quality"]
-                        + second["quality"]
-                    )
-                    * 0.5
-                    * (0.65 + balance * 0.35)
-                    * math.exp(
-                        -max(0.0, distance - 0.25) * 0.22
-                    )
-                )
-                if pair_score > best_score:
-                    best_score = pair_score
-                    best_pair = (
-                        first["center"],
-                        second["center"],
-                    )
-        corner_scores.append(float(best_score))
-        corner_pairs.append(best_pair)
+    corner_anchors = []
+    component_count = 0
+    for corner_id, mask in enumerate(corner_masks):
+        score, count, anchor = corner_presence(mask, corner_id)
+        corner_scores.append(float(score))
+        corner_anchors.append(float(anchor))
+        component_count += count
 
+    pair_results = []
+    for first_id, second_id in ((0, 3), (1, 2)):
+        similarity = opposite_similarity(
+            corner_masks[first_id],
+            corner_masks[second_id],
+        )
+        presence = min(
+            corner_scores[first_id],
+            corner_scores[second_id],
+        )
+        evidence = min(1.0, presence / 0.58) * min(
+            1.0,
+            (
+                np.count_nonzero(corner_masks[first_id])
+                + np.count_nonzero(corner_masks[second_id])
+            ) / max(1.0, corner_masks[first_id].size * 0.045),
+        ) * min(corner_anchors[first_id], corner_anchors[second_id])
+        pair_results.append(
+            (similarity, evidence, (first_id, second_id))
+        )
+
+    similarity, evidence, pair = max(
+        pair_results,
+        key=lambda item: item[0] * item[1],
+    )
+    confidence = float(evidence * min(1.0, similarity / 0.62))
     ordered = sorted(
         range(4),
         key=lambda corner_id: corner_scores[corner_id],
@@ -1018,38 +1207,309 @@ def score_rank_index_diagonal(frame_rgb, pieces, layout):
     strongest = corner_scores[ordered[0]]
     second = corner_scores[ordered[1]]
     third = corner_scores[ordered[2]]
-    strength = max(
-        0.0,
-        min(1.0, (second - 0.45) / 0.25),
+    component_confidence = (
+        max(0.0, min(1.0, (second - 0.55) / 0.25)) * 0.65
+        + max(0.0, min(1.0, (second - third) / 0.25)) * 0.35
     )
-    separation = max(
-        0.0,
-        min(1.0, (second - third) / 0.25),
-    )
-    confidence = float(
-        strength * 0.65 + separation * 0.35
-    )
-    if strongest < 0.52 or second < 0.52:
-        confidence = 0.0
-
-    pair = tuple(sorted(ordered[:2]))
+    dominant_pair = tuple(sorted(ordered[:2]))
+    if strongest < 0.58 or second < 0.58:
+        component_confidence = 0.0
     valid = None
     score = 0.5
-    if confidence >= 0.55:
-        valid = pair in ((0, 3), (1, 2))
+    if confidence >= 0.52:
+        valid = similarity >= 0.54
         direction = 1.0 if valid else -1.0
         score = float(
-            0.5 + direction * confidence * 0.48
+            0.5 + direction * confidence * 0.46
         )
+    elif (
+        component_confidence >= 0.55
+        and dominant_pair not in ((0, 3), (1, 2))
+    ):
+        # 两组明显角标却落在相邻角，属于强反证；不依赖文字模板。
+        confidence = float(component_confidence)
+        valid = False
+        score = float(0.5 - confidence * 0.46)
+        pair = dominant_pair
 
     return {
         "score": score,
         "confidence": confidence,
         "valid": valid,
+        "locked": bool(valid is True and confidence >= 0.80),
         "corners": tuple(corner_scores),
+        "corner_anchors": tuple(corner_anchors),
         "pair": pair,
-        "component_count": len(components),
-        "corner_pairs": tuple(corner_pairs),
+        "component_count": component_count,
+        "pair_similarity": similarity,
+        "_preview": preview,
+    }
+
+
+def score_rank_index_diagonal(
+    frame_rgb,
+    pieces,
+    layout,
+    use_legacy=False,
+):
+    """只认可外框严格四角的角标；内部数字不作为正证据。"""
+    if use_legacy:
+        result = _score_rank_index_diagonal_legacy(
+            frame_rgb,
+            pieces,
+            layout,
+        )
+        result.pop("_preview", None)
+        return result
+
+    neutral = {
+        "score": 0.5,
+        "confidence": 0.0,
+        "valid": None,
+        "locked": False,
+        "corners": (0.0, 0.0, 0.0, 0.0),
+        "pair": (),
+        "component_count": 0,
+        "pair_similarity": 0.5,
+        "outer_diagonal_margin": 0.0,
+        "outer_diagonal_strength": 0.0,
+        "outer_adjacent_strength": 0.0,
+        "outer_corner_confidence": 0.0,
+    }
+    preview = render_layout_preview(
+        frame_rgb,
+        pieces,
+        layout,
+        long_side=480,
+        fill_rectangle=True,
+    )
+    if preview is None or min(preview.shape[:2]) <= 64:
+        return neutral
+
+    card = preview[24:-24, 24:-24]
+    if min(card.shape[:2]) < 52:
+        return neutral
+    hsv = cv2.cvtColor(card, cv2.COLOR_RGB2HSV)
+    gray = cv2.cvtColor(card, cv2.COLOR_RGB2GRAY)
+    ink = (
+        ((hsv[:, :, 1] > 38) & (hsv[:, :, 2] < 250))
+        | (gray < 135)
+    ).astype(np.uint8) * 255
+    ink[:3, :] = 0
+    ink[-3:, :] = 0
+    ink[:, :3] = 0
+    ink[:, -3:] = 0
+
+    # 把四个角分别旋转到左上角，统一检查靠外框的角标组件。
+    canonical_cards = (
+        ink,
+        cv2.rotate(ink, cv2.ROTATE_90_COUNTERCLOCKWISE),
+        cv2.rotate(ink, cv2.ROTATE_90_CLOCKWISE),
+        cv2.rotate(ink, cv2.ROTATE_180),
+    )
+    corner_results = []
+    for canonical in canonical_cards:
+        height, width = canonical.shape
+        patch = canonical[
+            :max(20, int(height * 0.28)),
+            :max(18, int(width * 0.21)),
+        ]
+        patch = cv2.resize(
+            patch,
+            (72, 96),
+            interpolation=cv2.INTER_NEAREST,
+        )
+        count, labels, statistics, centers = (
+            cv2.connectedComponentsWithStats(patch, 8)
+        )
+        filtered = np.zeros_like(patch)
+        components = []
+        minimum_area = max(4, int(patch.size * 0.0008))
+        maximum_area = max(
+            minimum_area + 1,
+            int(patch.size * 0.15),
+        )
+        for component_id in range(1, count):
+            x, y, component_width, component_height, area = (
+                statistics[component_id]
+            )
+            area = int(area)
+            if not minimum_area <= area <= maximum_area:
+                continue
+            # 中央大花色通常从角区的内侧边界伸入；真正角标应完整落在角区内。
+            if (
+                x + component_width >= patch.shape[1] - 1
+                or y + component_height >= patch.shape[0] - 1
+            ):
+                continue
+            center_x, center_y = centers[component_id]
+            anchor = math.exp(
+                -(
+                    (center_x / patch.shape[1] / 0.62) ** 2
+                    + (center_y / patch.shape[0] / 0.72) ** 2
+                )
+                * 1.2
+            )
+            if anchor < 0.12:
+                continue
+            filtered[labels == component_id] = 255
+            components.append((area, anchor, x, y))
+
+        component_area = sum(item[0] for item in components)
+        if component_area <= 0:
+            corner_results.append((0.0, filtered, 0))
+            continue
+        density = min(
+            1.0,
+            component_area / max(1.0, patch.size * 0.055),
+        )
+        component_quality = math.exp(
+            -abs(len(components) - 2.5) * 0.32
+        )
+        anchor_quality = sum(
+            area * anchor
+            for area, anchor, _, _ in components
+        ) / component_area
+        minimum_x = min(item[2] for item in components)
+        minimum_y = min(item[3] for item in components)
+        outer_anchor = min(
+            max(
+                0.0,
+                1.0 - minimum_x / (patch.shape[1] * 0.32),
+            ),
+            max(
+                0.0,
+                1.0 - minimum_y / (patch.shape[0] * 0.30),
+            ),
+        )
+        presence = (
+            density * 0.40
+            + component_quality * 0.25
+            + anchor_quality * 0.25
+            + outer_anchor * 0.10
+        )
+        corner_results.append(
+            (float(presence), filtered, len(components))
+        )
+
+    def pair_similarity(first_id, second_id):
+        first = cv2.dilate(
+            corner_results[first_id][1],
+            np.ones((3, 3), dtype=np.uint8),
+        )
+        second = cv2.dilate(
+            corner_results[second_id][1],
+            np.ones((3, 3), dtype=np.uint8),
+        )
+        first_count = int(np.count_nonzero(first))
+        second_count = int(np.count_nonzero(second))
+        if min(first_count, second_count) < 4:
+            return 0.0
+        padded = cv2.copyMakeBorder(
+            second,
+            5,
+            5,
+            5,
+            5,
+            cv2.BORDER_CONSTANT,
+            value=0,
+        )
+        correlation = cv2.matchTemplate(
+            padded.astype(np.float32),
+            first.astype(np.float32),
+            cv2.TM_CCORR_NORMED,
+        )
+        best = float(np.nanmax(correlation))
+        balance = min(first_count, second_count) / max(
+            first_count,
+            second_count,
+        )
+        return best * 0.75 + balance * 0.25
+
+    def pair_strength(first_id, second_id):
+        similarity = pair_similarity(first_id, second_id)
+        presence = min(
+            corner_results[first_id][0],
+            corner_results[second_id][0],
+        )
+        return presence * (0.35 + similarity * 0.65), similarity
+
+    diagonal_pairs = ((0, 3), (1, 2))
+    adjacent_pairs = ((0, 1), (0, 2), (1, 3), (2, 3))
+    diagonal = max(
+        (
+            (*pair_strength(*pair), pair)
+            for pair in diagonal_pairs
+        ),
+        key=lambda item: item[0],
+    )
+    adjacent = max(
+        (
+            (*pair_strength(*pair), pair)
+            for pair in adjacent_pairs
+        ),
+        key=lambda item: item[0],
+    )
+    margin = float(diagonal[0] - adjacent[0])
+    evidence = max(diagonal[0], adjacent[0])
+    evidence_confidence = max(
+        0.0,
+        min(1.0, (evidence - 0.10) / 0.20),
+    )
+    contrast_confidence = max(
+        0.0,
+        min(1.0, (abs(margin) - 0.05) / 0.16),
+    )
+    confidence = float(
+        evidence_confidence * contrast_confidence
+    )
+    if confidence < 0.25:
+        return {
+            "score": 0.5,
+            "confidence": 0.0,
+            "valid": None,
+            "locked": False,
+            "corners": tuple(
+                item[0]
+                for item in corner_results
+            ),
+            "pair": diagonal[2] if margin >= 0.0 else adjacent[2],
+            "component_count": sum(
+                item[2]
+                for item in corner_results
+            ),
+            "pair_similarity": max(diagonal[1], adjacent[1]),
+            "outer_diagonal_margin": margin,
+            "outer_diagonal_strength": float(diagonal[0]),
+            "outer_adjacent_strength": float(adjacent[0]),
+            "outer_corner_confidence": confidence,
+        }
+
+    valid = margin > 0.0
+    score = float(
+        0.5 + (1.0 if valid else -1.0) * confidence * 0.46
+    )
+    selected_pair = diagonal[2] if valid else adjacent[2]
+    return {
+        "score": score,
+        "confidence": confidence,
+        "valid": valid,
+        "locked": bool(valid and confidence >= 0.72),
+        "corners": tuple(
+            item[0]
+            for item in corner_results
+        ),
+        "pair": selected_pair,
+        "component_count": sum(
+            item[2]
+            for item in corner_results
+        ),
+        "pair_similarity": (
+            diagonal[1] if valid else adjacent[1]
+        ),
+        "outer_diagonal_margin": margin,
+        "outer_diagonal_strength": float(diagonal[0]),
+        "outer_adjacent_strength": float(adjacent[0]),
     }
 
 
@@ -1088,38 +1548,24 @@ def generate_shape_swap_layouts(pieces, base_layout):
     def shapes_are_similar(first_id, second_id):
         first = source_polygons[first_id]
         second = source_polygons[second_id]
-        if len(first) != len(second):
-            return False
         first_area, first_lengths = signatures[first_id]
         second_area, second_lengths = signatures[second_id]
         area_ratio = min(first_area, second_area) / max(
             first_area,
             second_area,
         )
-        if area_ratio < 0.68:
+        if area_ratio < 0.58:
             return False
-        length_error = float(
-            np.mean(
-                np.abs(first_lengths - second_lengths)
-                / np.maximum(first_lengths, second_lengths)
+        if len(first) == len(second):
+            length_error = float(
+                np.mean(
+                    np.abs(first_lengths - second_lengths)
+                    / np.maximum(first_lengths, second_lengths)
+                )
             )
-        )
-        return length_error <= 0.18
-
-    slot_poses = {}
-    for piece_id, source in enumerate(source_polygons):
-        target = target_polygons[piece_id]
-        (
-            target_center,
-            _,
-            rotation,
-            scale,
-        ) = _similarity_pose(source, target)
-        slot_poses[piece_id] = (
-            target_center,
-            rotation,
-            scale,
-        )
+            if length_error > 0.22:
+                return False
+        return _best_similarity_pose(first, second)[-1] <= 0.18
 
     layouts = []
     piece_ids = tuple(range(len(pieces)))
@@ -1132,8 +1578,45 @@ def generate_shape_swap_layouts(pieces, base_layout):
         layout = {}
         for slot_id, source_id in enumerate(assignment):
             source = source_polygons[source_id]
-            source_center = np.mean(source, axis=0)
-            target_center, rotation, scale = slot_poses[slot_id]
+            target = target_polygons[slot_id]
+            (
+                target_center,
+                source_center,
+                rotation,
+                scale,
+                _,
+            ) = _best_similarity_pose(source, target)
+            layout[source_id] = (
+                (source - source_center) @ rotation.T * scale
+                + target_center
+            )
+        layouts.append((layout, assignment))
+    return layouts
+
+
+def generate_all_slot_layouts(pieces, base_layout):
+    """在几何结果的目标槽位上枚举全部碎片分配，供低置信度时补搜索。"""
+    source_polygons = [
+        np.asarray(piece["points"], dtype=np.float64)
+        for piece in pieces
+    ]
+    target_polygons = [
+        np.asarray(base_layout[piece_id], dtype=np.float64)
+        for piece_id in range(len(pieces))
+    ]
+    layouts = []
+    for assignment in itertools.permutations(range(len(pieces))):
+        layout = {}
+        for slot_id, source_id in enumerate(assignment):
+            source = source_polygons[source_id]
+            target = target_polygons[slot_id]
+            (
+                target_center,
+                source_center,
+                rotation,
+                scale,
+                _,
+            ) = _best_similarity_pose(source, target)
             layout[source_id] = (
                 (source - source_center) @ rotation.T * scale
                 + target_center
@@ -1177,6 +1660,15 @@ def solve_card_face(
     ]
     texture_cache = {}
     strip_cache = {}
+    source_masks = []
+    for polygon in polygons:
+        mask = np.zeros(frame_rgb.shape[:2], dtype=np.uint8)
+        cv2.fillPoly(
+            mask,
+            [np.rint(polygon).astype(np.int32)],
+            255,
+        )
+        source_masks.append(mask)
     best_layout = None
     best_metrics = None
     best_score = -1.0
@@ -1185,6 +1677,8 @@ def solve_card_face(
     best_seams = []
     best_at_node = 0
     nodes = 0
+    root_node_limit = node_limit
+    root_deadline = started + time_limit_s
 
     def cached_texture(
         first_id,
@@ -1228,6 +1722,7 @@ def solve_card_face(
                     first_edge,
                     first_offset,
                     shared,
+                    polygon_mask=source_masks[first_id],
                 )
                 strip_cache[first_key] = first_strip
             second_strip = strip_cache.get(second_key)
@@ -1239,6 +1734,7 @@ def solve_card_face(
                     second_offset,
                     shared,
                     reverse=True,
+                    polygon_mask=source_masks[second_id],
                 )
                 strip_cache[second_key] = second_strip
             value = _compare_edge_strips(
@@ -1299,13 +1795,8 @@ def solve_card_face(
             and best_metrics["coverage"] >= 0.97
             and best_metrics["corners"] >= 0.99
             and best_confidence >= 0.55
-            and (
-                (
-                    best_score >= 0.93
-                    and best_texture >= 0.82
-                )
-                or nodes - best_at_node >= 1200
-            )
+            and best_score >= 0.90
+            and best_texture >= 0.78
         )
 
     def search(placed, remaining, usage, seams):
@@ -1318,9 +1809,9 @@ def solve_card_face(
         nonlocal best_at_node
         nonlocal nodes
 
-        if nodes >= node_limit:
+        if nodes >= root_node_limit:
             return
-        if time.perf_counter() - started >= time_limit_s:
+        if time.perf_counter() >= root_deadline:
             return
         if solution_is_strong():
             return
@@ -1595,9 +2086,9 @@ def solve_card_face(
                 next_usage,
                 next_seams,
             )
-            if nodes >= node_limit:
+            if nodes >= root_node_limit:
                 return
-            if time.perf_counter() - started >= time_limit_s:
+            if time.perf_counter() >= root_deadline:
                 return
             if solution_is_strong():
                 return
@@ -1629,9 +2120,45 @@ def solve_card_face(
             ),
         ),
     )
-    for seed_id in seed_order:
+    seed_variants = [
+        (seed_id, seed_edge)
+        for seed_id in seed_order
+        for seed_edge in sorted(
+            range(len(polygons[seed_id])),
+            key=lambda edge_id: edge_length(
+                polygons[seed_id],
+                edge_id,
+            ),
+            reverse=True,
+        )
+    ]
+    for variant_id, (seed_id, seed_edge) in enumerate(seed_variants):
+        remaining_variants = len(seed_variants) - variant_id
+        remaining_nodes = node_limit - nodes
+        remaining_time = started + time_limit_s - time.perf_counter()
+        if remaining_nodes <= 0 or remaining_time <= 0.0:
+            break
+        root_node_limit = nodes + max(
+            1800,
+            remaining_nodes // remaining_variants,
+        )
+        root_deadline = time.perf_counter() + max(
+            0.10,
+            remaining_time / remaining_variants,
+        )
+        seed = polygons[seed_id]
+        vector = seed[(seed_edge + 1) % len(seed)] - seed[seed_edge]
+        angle = -math.atan2(float(vector[1]), float(vector[0]))
+        cosine = math.cos(angle)
+        sine = math.sin(angle)
+        rotation = np.asarray(
+            [[cosine, -sine], [sine, cosine]],
+            dtype=np.float64,
+        )
+        center = polygon_center(seed)
+        oriented_seed = (seed - center) @ rotation.T
         search(
-            {seed_id: polygons[seed_id].copy()},
+            {seed_id: oriented_seed},
             set(range(len(polygons))) - {seed_id},
             {},
             [],

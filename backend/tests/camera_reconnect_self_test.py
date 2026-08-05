@@ -51,4 +51,40 @@ assert len(attempts) == 3
 
 camera.close()
 assert second.closed is True
+
+recoveries = []
+invalid_first = FakeCamera([None])
+invalid_second = FakeCamera([None])
+invalid_third = FakeCamera([None])
+recovered_camera = FakeCamera(["frame-after-reset"])
+invalid_outcomes = [
+    invalid_first,
+    invalid_second,
+    invalid_third,
+    recovered_camera,
+]
+
+
+def open_invalid_camera():
+    return invalid_outcomes.pop(0)
+
+
+def recover_usb_camera():
+    recoveries.append(True)
+    return True
+
+
+camera = RecoveringCamera(open_invalid_camera, recover_usb_camera)
+assert camera.read(now=10.0) is None
+assert invalid_first.closed is True
+assert camera.read(now=10.8) is None
+assert invalid_second.closed is True
+assert recoveries == []
+assert camera.read(now=11.7) is None
+assert invalid_third.closed is True
+assert recoveries == [True]
+assert camera.read(now=12.5) is None
+assert camera.read(now=12.9) == "frame-after-reset"
+assert camera.online is True
+assert camera.failure_count == 0
 print("camera reconnect OK")

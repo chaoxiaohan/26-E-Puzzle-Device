@@ -69,6 +69,7 @@ fitted = place_layout_on_paper(
     layout,
     info,
     (100, 10, 520, 700),
+    50,
 )
 placed = {
     item["piece_id"]: np.array(
@@ -80,22 +81,45 @@ placed = {
 if layout_has_interior_overlap(placed):
     raise RuntimeError("placed layout contains overlap")
 
+execution_gap = info.get("execution_gap", {})
+if not execution_gap.get("applied", False):
+    raise RuntimeError("execution gap was not applied: %s" % execution_gap)
+minimum_vertex_gap = (
+    execution_gap["minimum_gap"] / info["solve_scale"]
+)
+maximum_vertex_gap = (
+    execution_gap["maximum_gap"] / info["solve_scale"]
+)
+if minimum_vertex_gap < 47.0 or maximum_vertex_gap > 53.0:
+    raise RuntimeError(
+        "adjacent vertex gaps are not near 50px: %.2f..%.2f"
+        % (minimum_vertex_gap, maximum_vertex_gap)
+    )
+
 minimum_gap = min(
     polygon_distance(placed[first], placed[second])
     for first in range(4)
     for second in range(first + 1, 4)
 )
-if minimum_gap < 3.0:
+if minimum_gap < 49.5:
     raise RuntimeError(
-        "placed layout gap is too small: %.2fpx"
+        "placed polygon clearance is too small: %.2fpx"
         % minimum_gap
+    )
+if info["execution_gap"].get("minimum_clearance", 0.0) < 49.5:
+    raise RuntimeError(
+        "reported clearance is too small: %s"
+        % info["execution_gap"]
     )
 
 print(
-    "SELF_TEST_OK score=%.3f ratio=%.3f gap=%.1fpx tested=%d time=%.1fms"
+    "SELF_TEST_OK score=%.3f ratio=%.3f vertex_gap=%.1f..%.1fpx "
+    "clearance=%.1fpx tested=%d time=%.1fms"
     % (
         score,
         info["ratio"],
+        minimum_vertex_gap,
+        maximum_vertex_gap,
         minimum_gap,
         tested,
         elapsed_ms,

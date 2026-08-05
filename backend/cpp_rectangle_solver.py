@@ -24,6 +24,7 @@ def load_library():
         ctypes.c_int,
         ctypes.c_double,
         ctypes.c_int,
+        ctypes.c_int,
         ctypes.POINTER(ctypes.c_double),
         ctypes.POINTER(ctypes.c_double),
     ]
@@ -32,7 +33,12 @@ def load_library():
     return library
 
 
-def solve(pieces, fill_ratio=0.80, position_step=4):
+def solve(
+    pieces,
+    fill_ratio=0.80,
+    position_step=4,
+    short_edge_protection=False,
+):
     library = load_library()
     if library is None or not 2 <= len(pieces) <= 4:
         return None, 0.0, 0, None
@@ -72,6 +78,7 @@ def solve(pieces, fill_ratio=0.80, position_step=4):
         len(pieces),
         float(fill_ratio),
         int(position_step),
+        int(bool(short_edge_protection)),
         output.ctypes.data_as(
             ctypes.POINTER(ctypes.c_double)
         ),
