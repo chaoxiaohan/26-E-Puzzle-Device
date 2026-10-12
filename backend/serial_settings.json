@@ -1,0 +1,55 @@
+{
+  "port": "/dev/ttyUSB0",
+  "baud": 115200,
+  "pick_z": 0,
+  "place_z": 0,
+  "auto_connect": true,
+  "visual_a": [
+    496.0,
+    374.0
+  ],
+  "visual_b": [
+    196.0,
+    384.0
+  ],
+  "visual_c": [
+    368.0,
+    610.0
+  ],
+  "visual_d": [
+    438.0,
+    782.0
+  ],
+  "visual_e": [
+    522.0,
+    926.0
+  ],
+  "visual_f": [
+    194.0,
+    918.0
+  ],
+  "platform_a": [
+    3500,
+    3000
+  ],
+  "platform_b": [
+    12899,
+    3400
+  ],
+  "platform_c": [
+    7699,
+    10900
+  ],
+  "platform_d": [
+    5500,
+    16499
+  ],
+  "platform_e": [
+    3000,
+    21000
+  ],
+  "platform_f": [
+    13599,
+    20899
+  ]
+}

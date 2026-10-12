@@ -83,3 +83,19 @@ PUZZLE_HEADLESS=1 python3 main.py
 - `librectangle_solver.so`、`flutter_ui/build/`：编译产物。
 
 `deploy_pi5.sh` 更新代码时会保留这些文件。
+
+## 设备分支和当前快照
+
+- `raspberry-pi5`：树莓派 5 当前源码与现场参数快照，后端原提交 `410ded8`，界面原提交 `2304d77`。
+- `lubancat-1`：鲁班猫 1 的 Python 3.13、摄像头发现、中文界面兼容和 C++ 求解优化。
+- `main`：原有发布分支保留。
+
+本分支在 2026-10-12 从树莓派当前运行目录逐文件核对。代码及 Flutter 资源与原 `main` 一致；新增保存了现场 `vision_settings.json`、`serial_settings.json`、`roi_settings.json`、`templates.json`，并修正中文 PDF 文件名。完整文件哈希及原设备 Git 状态见 `SOURCE-SNAPSHOT.json`。
+
+这些配置是本次设备快照。原部署脚本会保留目标设备已有配置，并在同步时排除这些文件；新设备需要使用快照配置时，可在部署后端目录后手动复制，再根据实际摄像头位置重新验证 ROI 和六点标定。
+
+```bash
+git clone --branch raspberry-pi5 https://github.com/chaoxiaohan/26-E-Puzzle-Device.git
+```
+
+Git 保存源码、必要资源和此次配置快照；历史采集图片、虚拟环境、Flutter SDK、wheelhouse 和编译产物未纳入源码分支。
