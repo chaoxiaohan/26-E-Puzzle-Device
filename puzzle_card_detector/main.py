@@ -34,6 +34,8 @@ from card_topology_solver import (
     classify_card_pieces,
     generate_rectangle_grid_hypotheses,
 )
+from card_joint_solver import generate_rectangular_card_candidates, layout_pose_key, relative_texture_matches
+from card_graph_solver import generate_card_graph_candidates
 from puzzle_solver import normalize_layout, solve_camera_rectangle
 from serial_protocol import SerialController
 from solver_v2 import solve as solve_edge_layout
@@ -4136,25 +4138,10 @@ def refine_card_layout_geometry(layout, time_limit_s=0.8):
 
 
 def card_layout_signature(layout):
-    """用中心和相对顶点共同去重，保留同中心但旋转不同的牌面候选。"""
-    signature = []
-    for piece_id in sorted(layout):
-        polygon = np.asarray(layout[piece_id], dtype=np.float64)
-        center = np.mean(polygon, axis=0)
-        relative = tuple(sorted(
-            (
-                int(round((point[0] - center[0]) * 0.5)),
-                int(round((point[1] - center[1]) * 0.5)),
-            )
-            for point in polygon
-        ))
-        signature.append((
-            int(piece_id),
-            int(round(center[0] * 0.5)),
-            int(round(center[1] * 0.5)),
-            relative,
-        ))
-    return tuple(signature)
+    """保留有序顶点对应关系，不能合并同形碎片的独立旋转。"""
+    return tuple((int(piece_id), tuple(np.rint(
+        np.asarray(layout[piece_id], dtype=float) * 0.5,
+    ).astype(int).ravel())) for piece_id in sorted(layout))
 
 
 def evaluate_card_candidate(
@@ -4261,16 +4248,15 @@ def evaluate_card_candidate(
         pattern_layout,
         cache=texture_cache,
     )
-    global_pattern = score_layout_global_pattern(
-        frame_rgb,
-        pieces,
-        pattern_layout,
-    )
-    rank_index = score_rank_index_diagonal(
-        frame_rgb,
-        pieces,
-        pattern_layout,
-    )
+    if "face_source" not in texture_cache:
+        scale = min(1.0, 640.0 / max(frame_rgb.shape[:2]))
+        reduced = cv2.resize(frame_rgb, None, fx=scale, fy=scale) if scale < 1.0 else frame_rgb
+        reduced_pieces = [dict(piece, points=np.asarray(piece["points"]) * scale) for piece in pieces]
+        texture_cache["face_source"] = (reduced, reduced_pieces, scale)
+    reduced, reduced_pieces, scale = texture_cache["face_source"]
+    reduced_layout = {piece_id: polygon * scale for piece_id, polygon in pattern_layout.items()}
+    global_pattern = score_layout_global_pattern(reduced, reduced_pieces, reduced_layout)
+    rank_index = score_rank_index_diagonal(reduced, reduced_pieces, reduced_layout)
     report = {
         "coverage": pattern_report["coverage"],
         "overlap": pattern_report["overlap"],
@@ -4366,6 +4352,7 @@ def evaluate_card_candidate(
         "base_rank": float(base_rank),
         "layout": prepared,
         "pattern_layout": pattern_layout,
+        "raw_texture": texture,
         "info": solve_info,
     }
 
@@ -4374,6 +4361,17 @@ def card_candidate_primary_score(candidate):
     """对已经通过安全检查的候选，用花纹为主进行统一排名。"""
     info = candidate["info"]
     report = info.get("constraint_report", {})
+    if info.get("card_joint_search", False):
+        texture = info.get("texture_score", 0.5)
+        pattern = 0.5 + (info.get("global_pattern_score", 0.5) - 0.5) * info.get("global_pattern_confidence", 0.0)
+        index = 0.5 + (info.get("rank_index_score", 0.5) - 0.5) * info.get("rank_index_confidence", 0.0)
+        p = get_card_scoring_params()
+        angle = max(0.0, 1.0 - report.get("boundary_angle_error", 10.0) / 10.0)
+        boundary = (report.get("corners", 0.0) * 0.35 + report.get("outer_piece_ratio", 0.0) * 0.25
+                    + report.get("boundary_min_coverage", 0.0) * 0.25 + angle * 0.15)
+        return float(texture * p["card_weight_texture"] + report.get("coverage", 0.0) * p["card_weight_coverage"]
+                     + report.get("internal_match", 0.0) * p["card_weight_internal_match"]
+                     + boundary * p["card_weight_boundary"] + pattern * p["card_weight_global"] + index * p["card_weight_index"])
     p = get_card_scoring_params()
     texture_score = info.get("texture_score", 0.5)
     texture_confidence = info.get("texture_confidence", 0.0)
@@ -4421,44 +4419,49 @@ def card_candidate_primary_score(candidate):
 
 
 def select_card_candidate(candidates):
-    """几何只负责安全准入；安全候选主要按花纹连续性排序。"""
+    """先比较不同刚体牌面；角标只作软证据，不锁死候选。"""
     if not candidates:
         return None
-    safe = [
-        candidate
-        for candidate in candidates
-        if candidate["info"].get("geometry_tier", 0) >= 1
-    ] or list(candidates)
-    locked = [
-        candidate
-        for candidate in safe
-        if candidate["info"].get("rank_index_locked", False)
-    ]
-    if locked and get_card_scoring_params().get(
-        "card_locked_filter_enabled", True
-    ):
-        safe = locked
+    safe = [item for item in candidates if item["info"].get("geometry_tier", 0) >= 2]
+    preview_only = not safe
+    if not safe:
+        safe = list(candidates)
+    unique = {}
     for candidate in safe:
-        candidate["primary_score"] = card_candidate_primary_score(
-            candidate
-        )
-    ordered = sorted(
-        safe,
-        key=lambda item: item["primary_score"],
-        reverse=True,
-    )
+        candidate["primary_score"] = card_candidate_primary_score(candidate)
+        key = layout_pose_key(candidate["pattern_layout"])
+        previous = unique.get(key)
+        if previous is None or candidate["primary_score"] > previous["primary_score"]:
+            unique[key] = candidate
+    ordered = sorted(unique.values(), key=lambda item: item["primary_score"], reverse=True)
     selected = ordered[0]
-    selection_margin = (
-        selected["primary_score"] - ordered[1]["primary_score"]
-        if len(ordered) > 1
-        else 1.0
-    )
+    info = selected["info"]
+    margin = selected["primary_score"] - ordered[1]["primary_score"] if len(ordered) > 1 else 0.0
+    texture = info.get("texture_score", 0.5)
+    confidence = info.get("texture_confidence", 0.0)
+    report = info.get("constraint_report", {})
+    unique_geometry = (len(ordered) == 1 and info.get("card_search_complete", False)
+                       and info.get("card_candidate_pool_complete", False)
+                       and info.get("card_generated_candidate_count") == 1)
+    effective_texture = lambda item: item["info"].get("texture_score", 0.5)
+    competitors = [effective_texture(item) for item in ordered[1:]]
+    excluded_bound = info.get("card_excluded_texture_bound")
+    if excluded_bound is not None:
+        competitors.append(float(excluded_bound))
+    texture_margin = effective_texture(selected) - max(competitors) if competitors else 0.0
+    verified = bool(not preview_only and confidence >= 0.30 and texture >= 0.62
+                    and report.get("coverage", 0.0) >= 0.84
+                    and report.get("internal_match", 0.0) >= 0.55
+                    and report.get("outer_piece_ratio", 0.0) >= 0.999
+                    and ((margin >= 0.025 and texture_margin >= 0.025) or unique_geometry))
+    info["selection_score"] = float(selected["primary_score"])
+    info["selection_margin"] = float(margin)
+    info["texture_selection_margin"] = float(texture_margin)
+    info["selection_candidate_count"] = len(ordered)
+    info["card_execution_ready"] = verified
+    info["card_status"] = ("VERIFIED" if verified else "GEOMETRY_ONLY" if preview_only
+                           else "WEAK_TEXTURE" if confidence < 0.30 else "AMBIGUOUS")
     selected["score"] = float(selected["primary_score"])
-    selected["info"]["selection_score"] = float(
-        selected["primary_score"]
-    )
-    selected["info"]["selection_margin"] = float(selection_margin)
-    selected["info"]["selection_candidate_count"] = len(ordered)
     return selected
 
 
@@ -4569,450 +4572,126 @@ def build_card_candidate_pool(
 
 
 def card_candidates_are_confident(candidates):
-    """花纹结果明显领先或连续多组稳定时，跳过后续扩展搜索。"""
-    if len(candidates) < 2:
-        return False
-    highest_tier = max(
-        candidate["info"].get("geometry_tier", 0)
-        for candidate in candidates
-    )
-    minimum_tier = 2 if highest_tier >= 2 else min(1, highest_tier)
-    safe = [
-        candidate
-        for candidate in candidates
-        if candidate["info"].get("geometry_tier", 0) >= minimum_tier
-    ]
-    locked = [
-        candidate
-        for candidate in safe
-        if candidate["info"].get("rank_index_locked", False)
-    ]
-    if locked and get_card_scoring_params().get(
-        "card_locked_filter_enabled", True
-    ):
-        safe = locked
-    if len(safe) < 2:
-        if not safe:
-            return False
-        info = safe[0]["info"]
-        report = info["constraint_report"]
-        return bool(
-            info.get("rank_index_locked", False)
-            and report["outer_piece_ratio"] >= 0.999
-            and report["corners"] >= 0.75
-            and report["coverage"] >= 0.86
-            and report["internal_match"] >= 0.52
-        )
-    for candidate in safe:
-        candidate["primary_score"] = card_candidate_primary_score(
-            candidate
-        )
-    ordered = sorted(
-        safe,
-        key=lambda item: item["primary_score"],
-        reverse=True,
-    )
-    best = ordered[0]
-    second = ordered[1]
-    info = best["info"]
-    report = info["constraint_report"]
-    margin = best["primary_score"] - second["primary_score"]
-    stable_assignment = (
-        info.get("card_assignment") is not None
-        and info.get("card_assignment")
-        == second["info"].get("card_assignment")
-        and margin <= 0.035
-    )
-    has_pattern_evidence = (
-        info.get("texture_confidence", 0.0) >= 0.38
-        and info.get("texture_score", 0.5) >= 0.58
-    )
-    strong_geometry = (
-        info.get("geometry_tier", 0) >= 2
-        and report["coverage"] >= 0.92
-        and report["internal_match"] >= 0.68
-    )
-    strong_index = (
-        info.get("rank_index_locked", False)
-        and info.get("geometry_tier", 0) >= 2
-        and report["coverage"] >= 0.86
-        and report["internal_match"] >= 0.52
-    )
-    return bool(
-        report["outer_piece_ratio"] >= 0.999
-        and report["corners"] >= 0.75
-        and (
-            strong_index
-            or (
-                has_pattern_evidence
-                and strong_geometry
-                and (margin >= 0.050 or stable_assignment)
-            )
-        )
-    )
+    """与最终执行共用牌面准入，不用相同 assignment 冒充稳定朝向。"""
+    selected = select_card_candidate(candidates)
+    return selected is not None and card_execution_ready(selected["info"])
+
+
+def card_execution_ready(solve_info):
+    return bool(solve_info and solve_info.get("card_status") == "VERIFIED"
+                and solve_info.get("card_execution_ready", False))
 
 
 def solve_card_piece_set_worker(frame_rgb, pieces, roi):
-    """独立执行扑克牌花纹求解，不调用或改写普通矩形求解链路。"""
+    """形状约束合法摆放，纹理同时决定块的身份、朝向和邻接。"""
     global _card_scoring_params
-    if _card_scoring_params is None:
-        _card_scoring_params = get_default_card_scoring_params()
-        try:
-            saved = load_card_scoring_settings()
-            _card_scoring_params.update(saved)
-        except Exception:
-            pass
+    _card_scoring_params = get_default_card_scoring_params()
+    _card_scoring_params.update(load_card_scoring_settings())
     cv2.setNumThreads(1)
     started = time.monotonic()
-    candidates = []
-    solver_nodes = 0
-    seen = set()
-    texture_cache = {}
-
-    initial_classification = classify_card_pieces(pieces)
-    if initial_classification["kind"] == "all-rectangles":
-        grouped_hypotheses = {}
-        for hypothesis in generate_rectangle_grid_hypotheses(pieces):
-            texture = score_layout_texture(
-                frame_rgb,
-                pieces,
-                hypothesis["layout"],
-                cache=texture_cache,
-            )
-            effective_texture = 0.5 + (
-                texture["score"] - 0.5
-            ) * texture["confidence"]
-            arrangement = hypothesis["topology"][1]
-            grouped_hypotheses.setdefault(arrangement, []).append((
-                effective_texture,
-                hypothesis,
-            ))
-        topology_candidates = []
-        for group in grouped_hypotheses.values():
-            for _, hypothesis in sorted(
-                group,
-                key=lambda item: item[0],
-                reverse=True,
-            )[:2]:
-                report = evaluate_layout(
-                    hypothesis["layout"],
-                    edge_tolerance_ratio=0.065,
-                )
-                hypothesis["report"] = report
-                hypothesis["geometry_score"] = (
-                    report.get("coverage", 0.0) * 0.50
-                    + report.get("internal_match", 0.0) * 0.28
-                    + report.get("corners", 0.0) * 0.12
-                    + report.get("outer_piece_ratio", 0.0) * 0.10
-                    - report.get("overlap", 1.0) * 4.0
-                )
-                topology_candidates.append(hypothesis)
-        topology_result = {
-            "classification": initial_classification,
-            "candidates": topology_candidates,
-            "nodes": len(grouped_hypotheses),
-        }
+    empty = {"layout": None, "score": 0.0, "nodes": 0, "info": None,
+             "pieces": pieces, "mode": "CARD", "elapsed_ms": 0.0}
+    if not 2 <= len(pieces) <= 4:
+        return empty
+    for piece in pieces:
+        polygon = np.asarray(piece["points"], dtype=float)
+        if (polygon.ndim != 2 or polygon.shape[1] != 2 or not 3 <= len(polygon) <= 32
+                or not np.isfinite(polygon).all()):
+            return empty
+        if (abs(cv2.contourArea(polygon.astype(np.float32))) < 1.0
+                or np.min(np.linalg.norm(np.roll(polygon, -1, axis=0) - polygon, axis=1)) < 1e-6):
+            return empty
+    cache = {}
+    classification = classify_card_pieces(pieces)
+    if classification["kind"] == "all-rectangles":
+        generated = generate_rectangular_card_candidates(frame_rgb, pieces, candidate_limit=12, cache=cache)
+        if not generated["candidates"]:
+            generated = generate_card_graph_candidates(frame_rgb, pieces, time_limit_s=4.0, candidate_limit=12, cache=cache)
     else:
-        topology_result = {
-            "classification": initial_classification,
-            "candidates": [],
-            "nodes": 0,
-        }
-    solver_nodes += topology_result["nodes"]
-    classification = topology_result["classification"]
-    print(
-        "CARD_TOPOLOGY kind=%s rect=%s uncertain=%s candidates=%d"
-        % (
-            classification["kind"],
-            classification.get("strong_rectangles", ()),
-            classification.get("uncertain_rectangles", ()),
-            len(topology_result["candidates"]),
-        ),
-        flush=True,
-    )
-    for generated in topology_result["candidates"]:
-        report = generated["report"]
-        base_info = {
-            "ratio": report.get("width", 1.0) / max(
-                1.0,
-                report.get("height", 1.0),
-            ),
-            "solve_scale": 1.0,
-            "width": report.get("width", 0.0),
-            "height": report.get("height", 0.0),
-            "coverage": report.get("coverage", 0.0),
-            "overlap": report.get("overlap", 0.0),
-            "forced": False,
-            "boundary_safe": False,
-            "method": generated["source"],
-            "card_topology": generated["topology"],
-            "card_topology_kind": classification["kind"],
-            "card_topology_orientation": generated["orientation"],
-        }
-        signature = ("topology", generated["signature"])
-        if signature in seen:
+        generated = generate_card_graph_candidates(frame_rgb, pieces, time_limit_s=4.0, candidate_limit=12, cache=cache)
+    nodes = generated["nodes"]
+    search_complete = generated["search_complete"]
+    layouts = generated["candidates"]
+    geometry_seed = None
+    # 没有合法候选时，C++只提供一个几何种子；仍要展开所有刚体朝向并按纹理比较。
+    if not layouts:
+        base, _, tested, base_info = solve_rectangle_by_cover_cpp(pieces, fill_ratio=0.88, position_step=3)
+        nodes += tested
+        search_complete = False
+        if base is not None:
+            solve_scale = float(base_info["solve_scale"])
+            base = {piece_id: polygon / solve_scale for piece_id, polygon in base.items()}
+            base_info = dict(base_info, solve_scale=1.0,
+                             width=base_info["width"] / solve_scale,
+                             height=base_info["height"] / solve_scale)
+            geometry_seed = (base, base_info)
+            alternatives = []
+            for layout, assignment in generate_all_slot_layouts(pieces, base):
+                texture = score_layout_texture(frame_rgb, pieces, layout, cache=cache)
+                alternatives.append({"layout": layout, "texture": texture,
+                                     "source": "card-joint-cpp", "assignment": assignment})
+            for alternative in alternatives:
+                alternative["texture"] = relative_texture_matches(alternative["texture"], cache.get("pairs", {}))
+            alternatives.sort(key=lambda item: item["texture"]["score"], reverse=True)
+            generated["candidate_pool_complete"] = len(alternatives) <= 12
+            generated["excluded_texture_bound"] = alternatives[12]["texture"]["score"] if len(alternatives) > 12 else None
+            layouts = alternatives[:12]
+    candidates = []
+    seen = set()
+    for item in layouts:
+        layout = item["layout"]
+        key = layout_pose_key(layout)
+        if key in seen:
             continue
-        seen.add(signature)
+        seen.add(key)
+        report = item.get("report") or evaluate_layout(layout, edge_tolerance_ratio=0.065)
+        if report["overlap"] > 0.008 or report["coverage"] < 0.80:
+            continue
+        base_info = {"ratio": report["width"] / max(1.0, report["height"]),
+                     "solve_scale": 1.0, "width": report["width"], "height": report["height"],
+                     "coverage": report["coverage"], "overlap": report["overlap"],
+                     "forced": False, "method": item["source"], "card_mode": True,
+                     "card_joint_search": True, "card_search_complete": search_complete,
+                     "card_candidate_pool_complete": generated.get("candidate_pool_complete", search_complete),
+                     "card_generated_candidate_count": len(layouts),
+                     "card_excluded_texture_bound": generated.get("excluded_texture_bound"),
+                     "card_search_nodes": nodes}
         candidate = evaluate_card_candidate(
-            frame_rgb,
-            pieces,
-            generated["layout"],
-            base_info,
-            roi,
-            texture_cache,
-            generated["source"],
-            tuple(range(len(pieces))),
-            allow_refine=False,
-        )
-        if candidate is None:
-            continue
-        candidate["raw_layout"] = generated["layout"]
-        candidate["base_info"] = base_info
-        candidates.append(candidate)
-    print(
-        "CARD_TOPOLOGY_ACCEPTED candidates=%d"
-        % len(candidates),
-        flush=True,
-    )
-    search_settings = (
-        (0.92, 3),
-        (0.88, 4),
-        (0.80, 3),
-        (0.72, 2),
-    )
-
-    for setting_id, (fill_ratio, position_step) in enumerate(search_settings):
-        (
-            base_layout,
-            _,
-            candidate_nodes,
-            base_info,
-        ) = solve_rectangle_by_cover_cpp(
-            pieces,
-            fill_ratio=fill_ratio,
-            position_step=position_step,
-        )
-        solver_nodes += candidate_nodes
-        if base_layout is None:
-            continue
-
-        setting_candidates_before = len(candidates)
-        for layout, assignment in generate_shape_swap_layouts(
-            pieces,
-            base_layout,
-        ):
-            signature = card_layout_signature(layout)
-            if signature in seen:
-                continue
-            seen.add(signature)
-            candidate = evaluate_card_candidate(
-                frame_rgb,
-                pieces,
-                layout,
-                base_info,
-                roi,
-                texture_cache,
-                "card-cpp-rerank",
-                assignment,
-            )
-            if candidate is None:
-                print(
-                    "CARD_CANDIDATE_REJECT fill=%.2f order=%s"
-                    % (fill_ratio, assignment),
-                    flush=True,
-                )
-                continue
+            frame_rgb, pieces, layout, base_info, roi, cache, item["source"],
+            item.get("assignment", tuple(range(len(pieces)))), allow_refine=False)
+        if candidate is not None:
             candidates.append(candidate)
-            candidate["raw_layout"] = layout
-            candidate["base_info"] = base_info
-            report = candidate["info"]["constraint_report"]
-            print(
-                "CARD_CANDIDATE fill=%.2f order=%s tier=%d rank=%.3f "
-                "coverage=%.3f internal=%.3f texture=%.3f/%.3f "
-                "global=%.3f index=%.3f/%.3f/%s"
-                % (
-                    fill_ratio,
-                    assignment,
-                    candidate["info"]["geometry_tier"],
-                    candidate["base_rank"],
-                    report["coverage"],
-                    report["internal_match"],
-                    candidate["info"]["texture_score"],
-                    candidate["info"]["texture_confidence"],
-                    candidate["info"]["global_pattern_score"],
-                    candidate["info"]["rank_index_score"],
-                    candidate["info"]["rank_index_confidence"],
-                    candidate["info"]["rank_index_valid"],
-                ),
-                flush=True,
-            )
-
-        setting_produced_candidates = (
-            len(candidates) - setting_candidates_before > 0
-        )
-        if setting_produced_candidates:
-            print(
-                "CARD_CANDIDATE_EARLY_STOP setting=%d candidates=%d"
-                % (setting_id + 1, len(candidates)),
-                flush=True,
-            )
-            break
-
-        if (
-            setting_id + 1 >= 3
-            and card_candidates_are_confident(candidates)
-        ):
-            print(
-                "CARD_ADAPTIVE_STOP settings=%d candidates=%d"
-                % (setting_id + 1, len(candidates)),
-                flush=True,
-            )
-            break
-
-    if candidates:
-        relaxed_seeds = sorted(
-            candidates,
-            key=lambda item: (
-                item["info"].get("geometry_tier", 0),
-                item["base_rank"],
-            ),
-            reverse=True,
-        )[:3]
-        for seed in relaxed_seeds:
-            for relaxed_layout, assignment in generate_all_slot_layouts(
-                pieces,
-                seed["raw_layout"],
-            ):
-                signature = card_layout_signature(relaxed_layout)
-                if signature in seen:
-                    continue
-                seen.add(signature)
-                quick_report = evaluate_layout(
-                    relaxed_layout,
-                    edge_tolerance_ratio=0.07,
-                )
-                if (
-                    quick_report["overlap"] > 0.008
-                    or quick_report["coverage"] < 0.70
-                    or quick_report["corners"] < 0.75
-                    or quick_report["outer_piece_ratio"] < 0.75
-                ):
-                    continue
-                candidate = evaluate_card_candidate(
-                    frame_rgb,
-                    pieces,
-                    relaxed_layout,
-                    seed["base_info"],
-                    roi,
-                    texture_cache,
-                    "card-full-permutation",
-                    assignment,
-                    allow_refine=False,
-                )
-                if candidate is not None:
-                    candidate["raw_layout"] = relaxed_layout
-                    candidate["base_info"] = seed["base_info"]
-                    candidates.append(candidate)
-                    print(
-                        "CARD_PERMUTATION_CANDIDATE order=%s tier=%d "
-                        "rank=%.3f texture=%.3f/%.3f global=%.3f "
-                        "index=%.3f/%.3f/%s"
-                        % (
-                            assignment,
-                            candidate["info"]["geometry_tier"],
-                            candidate["base_rank"],
-                            candidate["info"]["texture_score"],
-                            candidate["info"]["texture_confidence"],
-                            candidate["info"]["global_pattern_score"],
-                            candidate["info"]["rank_index_score"],
-                            candidate["info"]["rank_index_confidence"],
-                            candidate["info"]["rank_index_valid"],
-                        ),
-                        flush=True,
-                    )
-
-    if not card_candidates_are_confident(candidates):
-        texture_result = solve_card_face(
-            frame_rgb,
-            pieces,
-            node_limit=90000,
-            time_limit_s=5.0,
-        )
-        solver_nodes += texture_result["nodes"]
-        texture_layout = texture_result["layout"]
-        if texture_layout is not None:
-            signature = card_layout_signature(texture_layout)
-            if signature not in seen:
-                seen.add(signature)
-                candidate = evaluate_card_candidate(
-                    frame_rgb,
-                    pieces,
-                    texture_layout,
-                    texture_result["info"],
-                    roi,
-                    texture_cache,
-                    "card-face",
-                    tuple(range(len(pieces))),
-                    allow_refine=False,
-                )
-                if candidate is not None:
-                    candidates.append(candidate)
-                    print(
-                        "CARD_TEXTURE_CANDIDATE tier=%d rank=%.3f"
-                        % (
-                            candidate["info"]["geometry_tier"],
-                            candidate["base_rank"],
-                        ),
-                        flush=True,
-                    )
-
+    pairs = dict(cache.get("joint_pairs", {}))
+    pairs.update(cache.get("card_graph", {}).get("texture", {}).get("pairs", {}))
+    pairs.update(cache.get("pairs", {}))
+    for candidate in candidates:
+        relative = relative_texture_matches(candidate["raw_texture"], pairs)
+        candidate["info"].update(texture_score=relative["score"], texture_confidence=relative["confidence"],
+                                  raw_texture_score=candidate["raw_texture"]["score"])
     best = select_card_candidate(candidates)
-    if best is not None:
-        return {
-            "layout": best["layout"],
-            "score": best["score"],
-            "nodes": solver_nodes,
-            "info": best["info"],
-            "pieces": pieces,
-            "preview_rgb": render_layout_preview(
-                frame_rgb,
-                pieces,
-                best["pattern_layout"],
-                fill_rectangle=True,
-            ),
-            "candidate_pool": build_card_candidate_pool(
-                frame_rgb,
-                pieces,
-                candidates,
-                best,
-                limit=48,
-                preview_long_side=240,
-            ),
-            "mode": "CARD",
-            "elapsed_ms": (
-                time.monotonic() - started
-            ) * 1000.0,
-        }
-
-    geometry_result = solve_piece_set_worker(pieces, roi)
-    if geometry_result["layout"] is not None:
-        geometry_result["info"]["method"] = "card-geometry-best"
-        geometry_result["info"]["execution_mode"] = "BEST"
-        pattern_layout = close_card_pattern_layout(
-            geometry_result["layout"],
-            geometry_result["info"],
-        )
-        geometry_result["preview_rgb"] = render_layout_preview(
-            frame_rgb,
-            pieces,
-            pattern_layout,
-            fill_rectangle=True,
-        )
-        geometry_result["mode"] = "CARD"
-        geometry_result["elapsed_ms"] = (
-            time.monotonic() - started
-        ) * 1000.0
-    return geometry_result
+    print("CARD_JOINT kind=%s nodes=%d candidates=%d complete=%s status=%s margin=%.4f" % (
+        classification["kind"], nodes, len(candidates), search_complete,
+        best["info"]["card_status"] if best else "NO_RECTANGLE",
+        best["info"]["selection_margin"] if best else 0.0), flush=True)
+    if best is None:
+        # 几何兜底仍可预览，但不会冒充花纹正确或驱动比赛自动执行。
+        empty["elapsed_ms"] = (time.monotonic() - started) * 1000.0
+        empty["nodes"] = nodes
+        if geometry_seed is not None:
+            base, info = geometry_seed
+            info.update(method="card-geometry-only", card_mode=True,
+                        card_status="GEOMETRY_ONLY", card_execution_ready=False, boundary_safe=False)
+            prepared, _ = prepare_best_effort_layout(base, info, roi)
+            if prepared is not None:
+                empty.update(layout=prepared, info=info,
+                             preview_rgb=render_layout_preview(frame_rgb, pieces, base, fill_rectangle=True))
+        return empty
+    return {"layout": best["layout"], "score": best["score"], "nodes": nodes,
+            "info": best["info"], "pieces": pieces, "mode": "CARD",
+            "preview_rgb": render_layout_preview(frame_rgb, pieces, best["pattern_layout"], fill_rectangle=True),
+            "candidate_pool": build_card_candidate_pool(frame_rgb, pieces, candidates, best,
+                                                       limit=12, preview_long_side=240),
+            "elapsed_ms": (time.monotonic() - started) * 1000.0}
 
 
 VISION_SETTINGS_PATH = os.path.join(
@@ -5055,7 +4734,9 @@ def load_card_scoring_settings():
     """从磁盘加载扑克牌计算参数，加载失败时返回空字典。"""
     try:
         with open(CARD_SCORING_SETTINGS_PATH, "r", encoding="utf-8") as file:
-            return json.load(file)
+            settings = json.load(file)
+            # 旧权重属于先几何后评分的算法，磁盘保留原值，新搜索使用新默认值。
+            return settings if isinstance(settings, dict) and settings.get("card_scoring_version") == 2 else {}
     except (
         FileNotFoundError,
         KeyError,
@@ -5078,15 +4759,16 @@ def save_card_scoring_settings(settings):
 def get_default_card_scoring_params():
     """返回所有扑克牌计算参数的默认值。"""
     return {
-        "card_weight_texture": 0.42,
-        "card_weight_coverage": 0.12,
-        "card_weight_internal_match": 0.10,
-        "card_weight_boundary": 0.06,
-        "card_weight_global": 0.10,
-        "card_weight_index": 0.20,
+        "card_scoring_version": 2,
+        "card_weight_texture": 0.78,
+        "card_weight_coverage": 0.055,
+        "card_weight_internal_match": 0.045,
+        "card_weight_boundary": 0.0,
+        "card_weight_global": 0.08,
+        "card_weight_index": 0.04,
         "card_tier1_penalty": 0.12,
         "card_tier0_penalty": 0.25,
-        "card_locked_filter_enabled": True,
+        "card_locked_filter_enabled": False,
     }
 
 
@@ -5205,6 +4887,11 @@ def build_ui_score_items(solve_info):
             )
         items.append(item)
 
+    if "card_status" in solve_info:
+        status = solve_info["card_status"]
+        label = {"VERIFIED": "牌面已验证", "WEAK_TEXTURE": "花纹证据不足",
+                 "GEOMETRY_ONLY": "仅几何可行"}.get(status, "牌面存在歧义")
+        add(label, 1.0 if status == "VERIFIED" else 0.0)
     if "texture_score" in solve_info:
         texture_score = solve_info.get("texture_score", 0.5)
         texture_confidence = solve_info.get("texture_confidence", 0.0)
@@ -5235,13 +4922,25 @@ def build_ui_score_items(solve_info):
         effective_index = 0.5 + (
             solve_info.get("rank_index_score", 0.5) - 0.5
         ) * index_confidence
-        p = get_card_scoring_params()
-        add("跨缝连续", effective_texture, p["card_weight_texture"])
-        add("矩形覆盖度", report.get("coverage", 0.0), p["card_weight_coverage"])
-        add("内部边匹配", report.get("internal_match", 0.0), p["card_weight_internal_match"])
-        add("外框质量", boundary_quality, p["card_weight_boundary"])
-        add("全局牌面", effective_global, p["card_weight_global"])
-        add("对角角标", effective_index, p["card_weight_index"])
+        if solve_info.get("card_joint_search", False):
+            effective_texture = texture_score
+            p = get_card_scoring_params()
+            add("相对拼缝匹配", effective_texture, p["card_weight_texture"])
+            add("原始拼缝分", solve_info.get("raw_texture_score"))
+            add("矩形覆盖度", report.get("coverage", 0.0), p["card_weight_coverage"])
+            add("内部边匹配", report.get("internal_match", 0.0), p["card_weight_internal_match"])
+            add("外框质量", boundary_quality, p["card_weight_boundary"])
+            add("全局牌面", effective_global, p["card_weight_global"])
+            add("对角角标", effective_index, p["card_weight_index"])
+            add("不同牌面分差", solve_info.get("selection_margin"))
+        else:
+            p = get_card_scoring_params()
+            add("跨缝连续", effective_texture, p["card_weight_texture"])
+            add("矩形覆盖度", report.get("coverage", 0.0), p["card_weight_coverage"])
+            add("内部边匹配", report.get("internal_match", 0.0), p["card_weight_internal_match"])
+            add("外框质量", boundary_quality, p["card_weight_boundary"])
+            add("全局牌面", effective_global, p["card_weight_global"])
+            add("对角角标", effective_index, p["card_weight_index"])
         add("纹理证据", texture_confidence)
         add("角标证据", solve_info.get("rank_index_confidence", 0.0))
         add("最终候选", solve_info.get("selection_score"))
@@ -5335,22 +5034,20 @@ def competition_result_ready(
     motion_plan,
     solve_info,
     expected_piece_count,
+    mode=None,
 ):
-    """比赛模式有完整、无重叠的输出就立即执行，包括保底结果。"""
+    """普通拼图保留原行为；扑克牌必须有明确的牌面准入结果。"""
     if not competition_candidate_safe(
         solved_display,
         motion_plan,
         expected_piece_count,
     ):
         return False
-    if (
-        solve_info is not None
-        and "texture_score" in solve_info
-        and int(solve_info.get("selection_candidate_count", 1)) > 1
-        and float(solve_info.get("selection_margin", 1.0)) < 0.025
-        and not solve_info.get("rank_index_locked", False)
-    ):
-        return False
+    is_card = str(mode).upper() == "CARD" or bool(solve_info and (
+        solve_info.get("card_mode") or "texture_score" in solve_info
+        or str(solve_info.get("method", "")).startswith("card-")))
+    if is_card:
+        return card_execution_ready(solve_info)
     return True
 
 
@@ -5738,7 +5435,10 @@ def main():
             elif action == "arm_home":
                 serial_controller.home()
             elif action == "arm_send_plan":
-                serial_controller.send_motion_plan(motion_plan)
+                if (solved_mode != "CARD" and ui_mode != "CARD") or card_execution_ready(solve_info):
+                    serial_controller.send_motion_plan(motion_plan)
+                else:
+                    solver_message = "CARD AMBIGUOUS"
             elif action == "platform_query_position":
                 serial_controller.query_position()
             elif action in (
@@ -5937,6 +5637,7 @@ def main():
                     "motion_plan_count": len(motion_plan),
                     "solved_display": solved_display or [],
                     "candidate_items": candidate_pool_items,
+                    "card_solver_revision": "joint-relative-20261012",
                     "card_scoring": get_card_scoring_params(),
                     "competition_mode": bool(competition_mode),
                     "competition_active": bool(competition_active),
@@ -6532,7 +6233,7 @@ def main():
                     else "SOLVE ERROR"
                 )
                 # 尝试用当前碎片直接做降级搬运
-                if 2 <= len(pieces) <= 4:
+                if result_mode != "CARD" and 2 <= len(pieces) <= 4:
                     fallback_layout, _, fallback_info = (
                         build_last_resort_layout(
                             pieces,
@@ -6581,7 +6282,7 @@ def main():
                 solve_info = result["info"]
                 solve_pieces = result["pieces"]
                 is_fallback = False
-                if solved_layout is None:
+                if solved_layout is None and result_mode != "CARD":
                     # 求解器失败时自动降级：用紧凑排列至少完成搬运
                     solved_layout, solved_score, fallback_info = (
                         build_last_resort_layout(
@@ -6689,11 +6390,12 @@ def main():
                         if is_fallback:
                             solver_message = "FALLBACK"
                         elif result_mode == "CARD":
-                            solver_message = (
-                                "CARD BEST"
-                                if solve_info.get("execution_mode") == "BEST"
-                                else "CARD RECT"
-                            )
+                            status = solve_info.get("card_status", "GEOMETRY_ONLY")
+                            solver_message = {
+                                "VERIFIED": "CARD VERIFIED",
+                                "GEOMETRY_ONLY": "CARD GEOMETRY ONLY",
+                                "WEAK_TEXTURE": "CARD WEAK TEXTURE",
+                            }.get(status, "CARD AMBIGUOUS")
                         elif solve_info.get("execution_mode") == "RECT":
                             solver_message = "SOLVE RECT"
                         elif (
@@ -6733,6 +6435,7 @@ def main():
             competition_active
             and ui_mode in ("NORMAL", "CARD")
             and solve_info is not None
+            and ((ui_mode != "CARD" and solved_mode != "CARD") or card_execution_ready(solve_info))
             and competition_candidate_safe(
                 solved_display,
                 motion_plan,
@@ -6831,7 +6534,8 @@ def main():
                 motion_plan,
                 solve_info,
                 len(solve_pieces) if solve_pieces else 0,
-            ) or competition_forced_best
+                mode=ui_mode,
+            ) or (competition_forced_best and ui_mode != "CARD" and solved_mode != "CARD")
             if ready_to_execute:
                 if time.monotonic() >= competition_retry_at:
                     if serial_controller.send_motion_plan(motion_plan):
@@ -7049,6 +6753,7 @@ def main():
                 "motion_plan_count": len(motion_plan),
                 "solved_display": solved_display or [],
                 "candidate_items": candidate_pool_items,
+                "card_solver_revision": "joint-relative-20261012",
                 "card_scoring": get_card_scoring_params(),
                 "competition_mode": bool(competition_mode),
                 "competition_active": bool(competition_active),

@@ -129,7 +129,8 @@ def _profile_features(samples):
         0.0,
         rgb[:, :, 0] - np.maximum(rgb[:, :, 1], rgb[:, :, 2]),
     )
-    blackness = darkness * np.maximum(0.0, 1.0 - saturation * 1.5)
+    # 略暗的白纸不算黑色印刷，避免空白拼缝获得虚假的信息量。
+    blackness = np.maximum(0.0, darkness - 0.08) * np.maximum(0.0, 1.0 - saturation * 1.5)
     along_gradient = np.abs(np.gradient(gray, axis=1))
     return np.stack(
         (
@@ -145,138 +146,46 @@ def _profile_features(samples):
 
 
 def _compare_edge_strips(first, second):
+    """一次比较七个沿边偏移；深层只估计变化，不直接比较深处图案。"""
     if first is None or second is None:
         return 0.5, 0.0
-
-    first_features = _profile_features(first[0])
-    second_features = _profile_features(second[0])
-    first_valid = first[1]
-    second_valid = second[1]
-    best_error = 1.0
-    # 只使用最靠近接缝的三层。深处图案相似不能证明两块在切口处连续。
-    feature_weight = np.array(
-        [0.22, 0.24, 0.13, 0.18, 0.11, 0.12],
-        dtype=np.float32,
-    )
-    depth_weight = np.array([1.0, 0.58, 0.24], dtype=np.float32)[:, None]
-    best_evidence = 0.0
-
-    for shift in range(-3, 4):
-        if shift < 0:
-            first_slice = slice(-shift, None)
-            second_slice = slice(None, shift)
-        elif shift > 0:
-            first_slice = slice(None, -shift)
-            second_slice = slice(shift, None)
-        else:
-            first_slice = slice(None)
-            second_slice = slice(None)
-
-        valid = (
-            first_valid[:, first_slice]
-            & second_valid[:, second_slice]
-        )
-        if np.count_nonzero(valid) < 18:
-            continue
-        first_near = first_features[:3, first_slice]
-        second_near = second_features[:3, second_slice]
-        valid_near = valid[:3]
-        # 绿色垫板或绿色检测边缘不是扑克牌花纹，与白底一样不参与评分。
-        first_rgb = first[0][:3, first_slice] / 255.0
-        second_rgb = second[0][:3, second_slice] / 255.0
-        first_green = (
-            (first_rgb[:, :, 1] > 0.28)
-            & (first_rgb[:, :, 1] > first_rgb[:, :, 0] * 1.15)
-            & (first_rgb[:, :, 1] > first_rgb[:, :, 2] * 1.08)
-        )
-        second_green = (
-            (second_rgb[:, :, 1] > 0.28)
-            & (second_rgb[:, :, 1] > second_rgb[:, :, 0] * 1.15)
-            & (second_rgb[:, :, 1] > second_rgb[:, :, 2] * 1.08)
-        )
-        valid_near = valid_near & ~first_green & ~second_green
-        if np.count_nonzero(valid_near) < 18:
-            continue
-        difference = np.abs(first_near - second_near)
-        boundary_error = np.sum(
-            difference * feature_weight[None, None, :],
-            axis=2,
-        )
-
-        # 对连续图案而言，接缝两侧的变化趋势应能接上；这里不再比较两侧
-        # 深处是否相像，而是比较切口附近的法向延拓是否突变。
-        first_slope = first_near[0] - first_near[1]
-        second_slope = second_near[1] - second_near[0]
-        slope_error = np.sum(
-            np.abs(first_slope - second_slope)
-            * feature_weight[None, :],
-            axis=1,
-        )
-        local_change = np.sum(
-            (
-                np.abs(first_near[0] - first_near[1])
-                + np.abs(second_near[0] - second_near[1])
-            )
-            * feature_weight[None, :],
-            axis=1,
-        )
-        discontinuity = np.maximum(
-            0.0,
-            boundary_error[0] - local_change * 1.15,
-        )
-        first_detail = np.maximum(
-            first_near[:, :, 5],
-            np.abs(first_near[0] - first_near[1]).mean(axis=1),
-        )
-        second_detail = np.maximum(
-            second_near[:, :, 5],
-            np.abs(second_near[0] - second_near[1]).mean(axis=1),
-        )
-        detail = np.maximum(first_detail, second_detail)
-        first_ink = np.maximum.reduce((
-            first_near[:, :, 3] * 1.15,
-            first_near[:, :, 4],
-            first_near[:, :, 2] * 0.45,
-        ))
-        second_ink = np.maximum.reduce((
-            second_near[:, :, 3] * 1.15,
-            second_near[:, :, 4],
-            second_near[:, :, 2] * 0.45,
-        ))
-        both_ink = np.minimum(first_ink, second_ink)
-        ink_mismatch = np.abs(first_ink - second_ink)
-
-        # 白底对白底没有区分力：不给奖励也不参与平均；白底与花纹相对时
-        # 则作为明确的接缝断裂证据参与扣分。
-        matched_detail = detail * (0.20 + both_ink) + both_ink * 0.08
-        mismatch_detail = ink_mismatch * 0.90
-        pattern_weight = matched_detail + mismatch_detail
-        pattern_weight *= depth_weight
-        error = (
-            boundary_error * 0.58
-            + slope_error[None, :] * 0.22
-            + discontinuity[None, :] * 0.20
-            + ink_mismatch * 0.55
-        )
-        if np.sum(pattern_weight[valid_near]) < 1e-5:
-            continue
-        error = float(
-            np.sum(error[valid_near] * pattern_weight[valid_near])
-            / max(1e-6, np.sum(pattern_weight[valid_near]))
-        )
-        if error < best_error:
-            best_error = error
-            best_evidence = float(
-                np.mean(
-                    (matched_detail + mismatch_detail)[valid_near]
-                )
-            )
-
-    if best_evidence <= 0.0:
+    a, b = _profile_features(first[0])[:2], _profile_features(second[0])[:2]
+    count = min(a.shape[1], b.shape[1])
+    if count < 24:
         return 0.5, 0.0
-    evidence = min(1.0, best_evidence * 8.0)
-    quality = math.exp(-best_error * 6.5)
-    return quality, evidence
+    indices = np.arange(3, count - 3)
+    shifted = indices[None, :] + np.arange(-3, 4)[:, None]
+    first_near, first_deep = a[0, indices][None, :], a[1, indices][None, :]
+    second_near, second_deep = b[0, shifted], b[1, shifted]
+    valid = first[1][0, indices][None, :] & second[1][0, shifted]
+    first_rgb = first[0][0, indices][None, :] / 255.0
+    second_rgb = second[0][0, shifted] / 255.0
+    for rgb in (first_rgb, second_rgb):
+        green = (rgb[..., 1] > 0.28) & (rgb[..., 1] > rgb[..., 0] * 1.15) & (rgb[..., 1] > rgb[..., 2] * 1.08)
+        valid &= ~green
+    weights = np.array([0.22, 0.24, 0.13, 0.18, 0.11, 0.12], dtype=np.float32)
+    boundary = np.sum(np.abs(first_near - second_near) * weights, axis=2)
+    first_slope, second_slope = first_near - first_deep, second_deep - second_near
+    slope = np.minimum(boundary, np.sum(np.abs(first_slope - second_slope) * weights, axis=2))
+    change = np.sum((np.abs(first_slope) + np.abs(second_slope)) * weights, axis=2)
+    discontinuity = np.maximum(0.0, boundary - change * 1.15)
+    detail = np.maximum(np.maximum(first_near[..., 5], second_near[..., 5]),
+                        np.maximum(np.mean(np.abs(first_slope), axis=2), np.mean(np.abs(second_slope), axis=2)))
+    first_ink = np.maximum(np.maximum(first_near[..., 3] * 1.15, first_near[..., 4]), first_near[..., 2] * 0.45)
+    second_ink = np.maximum(np.maximum(second_near[..., 3] * 1.15, second_near[..., 4]), second_near[..., 2] * 0.45)
+    both = np.minimum(first_ink, second_ink)
+    mismatch = np.abs(first_ink - second_ink)
+    importance = detail * (0.20 + both) + both * 0.08 + mismatch * 0.90
+    pattern_weight = importance * valid
+    total = pattern_weight.sum(axis=1)
+    error = boundary * 0.58 + slope * 0.22 + discontinuity * 0.20 + mismatch * 0.55
+    errors = (error * pattern_weight).sum(axis=1) / np.maximum(1e-6, total)
+    errors[(valid.sum(axis=1) < 18) | (total < 1e-5)] = np.inf
+    best = int(np.argmin(errors))
+    if not np.isfinite(errors[best]):
+        return 0.5, 0.0
+    evidence = min(1.0, float(importance[best, valid[best]].mean()) * 8.0)
+    return math.exp(-float(errors[best]) * 6.5), evidence
 
 
 def _texture_summary(seams):
@@ -304,10 +213,18 @@ def score_layout_texture(frame_rgb, pieces, layout, cache=None):
         piece_id: np.asarray(polygon, dtype=np.float64)
         for piece_id, polygon in layout.items()
     }
+    # 同时反向源和目标，保留牌面对应关系并统一公共边的遍历方向。
+    for piece_id, polygon in enumerate(source_polygons):
+        if cv2.contourArea(polygon.astype(np.float32), oriented=True) < 0:
+            source_polygons[piece_id] = polygon[::-1].copy()
+            if piece_id in target_polygons:
+                target_polygons[piece_id] = target_polygons[piece_id][::-1].copy()
     seams = []
     if cache is None:
         cache = {}
     strip_cache = cache.setdefault("strips", {})
+    pair_cache = cache.setdefault("pairs", {})
+    pair_keys = []
     masks = cache.get("masks")
     if masks is None:
         masks = []
@@ -318,6 +235,7 @@ def score_layout_texture(frame_rgb, pieces, layout, cache=None):
                 [np.rint(polygon).astype(np.int32)],
                 255,
             )
+            mask = cv2.erode(mask, np.ones((3, 3), dtype=np.uint8))
             masks.append(mask)
         cache["masks"] = masks
     piece_ids = sorted(target_polygons)
@@ -467,6 +385,12 @@ def score_layout_texture(frame_rgb, pieces, layout, cache=None):
                         int(round(shared_source * 2.0)),
                         True,
                     )
+                    pair_key = (first_key, second_key)
+                    pair_keys.append(pair_key)
+                    if pair_key in pair_cache:
+                        quality, evidence = pair_cache[pair_key]
+                        seams.append((quality, evidence, first_id, second_id, overlap))
+                        continue
                     first_strip = strip_cache.get(first_key)
                     if first_strip is None:
                         first_strip = _sample_edge_strip(
@@ -494,6 +418,7 @@ def score_layout_texture(frame_rgb, pieces, layout, cache=None):
                         first_strip,
                         second_strip,
                     )
+                    pair_cache[pair_key] = (quality, evidence)
                     seams.append(
                         (
                             quality,
@@ -510,6 +435,7 @@ def score_layout_texture(frame_rgb, pieces, layout, cache=None):
         "confidence": confidence,
         "seam_count": len(seams),
         "seams": seams,
+        "pair_keys": pair_keys,
     }
 
 
@@ -588,6 +514,54 @@ def _best_similarity_pose(source, target):
             if best is None or error < best[-1]:
                 best = (*pose, error)
     return best
+
+
+def _rigid_similarity_poses(source, target):
+    """保留近等价的顶点对应姿态；只旋转和平移，不改变碎片尺寸。"""
+    source = np.asarray(source, dtype=np.float64)
+    target = np.asarray(target, dtype=np.float64)
+    if (
+        len(source) < 3 or len(target) < 3
+        or not np.all(np.isfinite(source))
+        or not np.all(np.isfinite(target))
+    ):
+        return []
+    if len(source) != len(target):
+        source = _resample_polygon_boundary(source)
+        target = _resample_polygon_boundary(target)
+
+    source_center = np.mean(source, axis=0)
+    target_center = np.mean(target, axis=0)
+    centered = source - source_center
+    radius = math.sqrt(float(np.mean(np.sum(centered ** 2, axis=1))))
+    target_radius = math.sqrt(float(np.mean(np.sum(
+        (target - target_center) ** 2, axis=1,
+    ))))
+    if min(radius, target_radius) < 1e-9:
+        return []
+
+    candidates = []
+    for ordered in (target, target[::-1]):
+        for shift in range(len(ordered)):
+            corresponding = np.roll(ordered, shift, axis=0)
+            _, _, rotation, _ = _similarity_pose(source, corresponding)
+            transformed = centered @ rotation.T + target_center
+            error = float(np.mean(np.linalg.norm(
+                transformed - corresponding, axis=1,
+            )) / max(radius, target_radius))
+            candidates.append((target_center, source_center, rotation, 1.0, error))
+
+    best_error = min(pose[-1] for pose in candidates)
+    # 容忍轮廓提取噪声，但不把明显不匹配的方向也视为对称方向。
+    limit = min(0.12, best_error + 0.035)
+    poses = []
+    for pose in sorted(candidates, key=lambda item: item[-1]):
+        if pose[-1] > limit:
+            continue
+        if any(np.allclose(pose[2], old[2], atol=1e-7, rtol=0.0) for old in poses):
+            continue
+        poses.append(pose)
+    return poses
 
 
 def close_card_pattern_layout(layout, solve_info):
@@ -1513,116 +1487,42 @@ def score_rank_index_diagonal(
     }
 
 
-def generate_shape_swap_layouts(pieces, base_layout):
-    """
-    在外形近似的碎片之间交换目标槽位。
-
-    C++ 几何求解器只返回一个最优排列；扑克牌模式需要保留这些几何
-    近似等价的排列，再用花纹连续性决定最终顺序。
-    """
-    source_polygons = [
-        np.asarray(piece["points"], dtype=np.float64)
-        for piece in pieces
-    ]
-    target_polygons = {
-        piece_id: np.asarray(polygon, dtype=np.float64)
-        for piece_id, polygon in base_layout.items()
-    }
-
-    def shape_signature(polygon):
-        area = max(
-            1.0,
-            abs(float(cv2.contourArea(polygon.astype(np.float32)))),
-        )
-        lengths = sorted(
-            edge_length(polygon, edge_id) / math.sqrt(area)
-            for edge_id in range(len(polygon))
-        )
-        return area, np.asarray(lengths, dtype=np.float64)
-
-    signatures = [
-        shape_signature(polygon)
-        for polygon in source_polygons
-    ]
-
-    def shapes_are_similar(first_id, second_id):
-        first = source_polygons[first_id]
-        second = source_polygons[second_id]
-        first_area, first_lengths = signatures[first_id]
-        second_area, second_lengths = signatures[second_id]
-        area_ratio = min(first_area, second_area) / max(
-            first_area,
-            second_area,
-        )
-        if area_ratio < 0.58:
-            return False
-        if len(first) == len(second):
-            length_error = float(
-                np.mean(
-                    np.abs(first_lengths - second_lengths)
-                    / np.maximum(first_lengths, second_lengths)
-                )
-            )
-            if length_error > 0.22:
-                return False
-        return _best_similarity_pose(first, second)[-1] <= 0.18
+def _generate_rigid_slot_layouts(pieces, base_layout):
+    """每对碎片/槽位只拟合一次，再枚举合法分配和独立姿态。"""
+    sources = [np.asarray(piece["points"], dtype=np.float64) for piece in pieces]
+    targets = [np.asarray(base_layout[index], dtype=np.float64)
+               for index in range(len(pieces))]
+    placed = {}
+    for source_id, source in enumerate(sources):
+        for slot_id, target in enumerate(targets):
+            placed[source_id, slot_id] = [
+                (source - source_center) @ rotation.T + target_center
+                for target_center, source_center, rotation, _, _
+                in _rigid_similarity_poses(source, target)
+            ]
 
     layouts = []
-    piece_ids = tuple(range(len(pieces)))
-    for assignment in itertools.permutations(piece_ids):
-        if any(
-            not shapes_are_similar(slot_id, source_id)
-            for slot_id, source_id in enumerate(assignment)
-        ):
+    for assignment in itertools.permutations(range(len(pieces))):
+        choices = [placed[source_id, slot_id]
+                   for slot_id, source_id in enumerate(assignment)]
+        if any(not options for options in choices):
             continue
-        layout = {}
-        for slot_id, source_id in enumerate(assignment):
-            source = source_polygons[source_id]
-            target = target_polygons[slot_id]
-            (
-                target_center,
-                source_center,
-                rotation,
-                scale,
-                _,
-            ) = _best_similarity_pose(source, target)
-            layout[source_id] = (
-                (source - source_center) @ rotation.T * scale
-                + target_center
-            )
-        layouts.append((layout, assignment))
+        for polygons in itertools.product(*choices):
+            # 保留原顶点顺序，半转/四向的相同轮廓仍有不同纹理对应关系。
+            layout = {source_id: polygon.copy()
+                      for source_id, polygon in zip(assignment, polygons)}
+            layouts.append((layout, assignment))
     return layouts
+
+
+def generate_shape_swap_layouts(pieces, base_layout):
+    """交换刚体外形近似的碎片，并保留每片所有近等价朝向。"""
+    return _generate_rigid_slot_layouts(pieces, base_layout)
 
 
 def generate_all_slot_layouts(pieces, base_layout):
-    """在几何结果的目标槽位上枚举全部碎片分配，供低置信度时补搜索。"""
-    source_polygons = [
-        np.asarray(piece["points"], dtype=np.float64)
-        for piece in pieces
-    ]
-    target_polygons = [
-        np.asarray(base_layout[piece_id], dtype=np.float64)
-        for piece_id in range(len(pieces))
-    ]
-    layouts = []
-    for assignment in itertools.permutations(range(len(pieces))):
-        layout = {}
-        for slot_id, source_id in enumerate(assignment):
-            source = source_polygons[source_id]
-            target = target_polygons[slot_id]
-            (
-                target_center,
-                source_center,
-                rotation,
-                scale,
-                _,
-            ) = _best_similarity_pose(source, target)
-            layout[source_id] = (
-                (source - source_center) @ rotation.T * scale
-                + target_center
-            )
-        layouts.append((layout, assignment))
-    return layouts
+    """枚举全部几何兼容的槽位分配及独立朝向，供低置信度时补搜索。"""
+    return _generate_rigid_slot_layouts(pieces, base_layout)
 
 
 def solve_card_face(

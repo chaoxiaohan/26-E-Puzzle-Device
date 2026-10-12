@@ -97,13 +97,22 @@ def main():
         ambiguous_card,
         2,
     )
-    clear_card = dict(ambiguous_card, selection_margin=0.04)
+    clear_card = dict(ambiguous_card, selection_margin=0.04,
+                      card_status="VERIFIED", card_execution_ready=True)
     assert competition_result_ready(
         display,
         motion_plan,
         clear_card,
         2,
     )
+    assert not competition_timeout_reached(
+        "NORMAL", 100.0, None, now=200.0,
+    )
+    for card_info in (None, solve_info, dict(solve_info, method="card-geometry-only"),
+                      dict(clear_card, card_status="AMBIGUOUS"),
+                      dict(clear_card, card_execution_ready=False)):
+        assert not competition_result_ready(display, motion_plan, card_info, 2, mode="CARD")
+    assert competition_result_ready(display, motion_plan, clear_card, 2, mode="CARD")
     assert not competition_timeout_reached(
         "NORMAL",
         100.0,

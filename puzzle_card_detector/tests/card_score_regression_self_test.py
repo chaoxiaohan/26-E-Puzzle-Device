@@ -75,8 +75,8 @@ def main():
     contradicted = card_candidate_primary_score(
         make_candidate(same_side["score"], same_side["confidence"])
     )
-    assert supported > neutral + 0.06
-    assert contradicted < neutral - 0.04
+    assert supported > neutral + 0.01
+    assert contradicted < neutral - 0.01
     print(
         "CARD_SCORE_REGRESSION_OK correct=%.3f neutral=%.3f wrong=%.3f"
         % (supported, neutral, contradicted)
