@@ -8,7 +8,7 @@
 - 中部：由原始碎片纹理重建的拼接实图
 - 底部：碎片数、置信度、耗时、拍照、调参和求解
 
-当前版本已连接 `/home/pi5/puzzle_card_detector` 视觉后端：
+鲁班猫的安装、运行和验证限制见上级目录的 `README-LUBANCAT.md`。当前版本通过启动脚本的 `PUZZLE_BACKEND_DIR` 连接同级 `puzzle_card_detector` 后端：
 
 - 实时显示摄像头检测画面和二值图；
 - 三种模式可分别发起普通或扑克牌求解；

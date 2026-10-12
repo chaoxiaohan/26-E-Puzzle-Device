@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-cd /home/pi5/puzzle_card_detector
+cd "$(dirname "$0")"
 
 g++ \
     -O3 \
@@ -14,4 +14,4 @@ g++ \
     rectangle_solver.cpp \
     -o librectangle_solver.so
 
-echo "built /home/pi5/puzzle_card_detector/librectangle_solver.so"
+echo "Built $(pwd)/librectangle_solver.so for $(uname -m)"

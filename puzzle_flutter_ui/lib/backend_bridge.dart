@@ -362,16 +362,24 @@ class BackendUpdate {
 
 class BackendBridge {
   BackendBridge({
-    String controlPath = '/tmp/puzzle_ui_control.json',
-    this.backendDir = '/home/pi5/puzzle_card_detector',
-  }) : _control = File(controlPath);
+    String? controlPath,
+    String? backendDir,
+  }) : _control = File(controlPath ?? _uiPath('puzzle_ui_control.json')),
+       backendDir = backendDir ??
+           Platform.environment['PUZZLE_BACKEND_DIR'] ??
+           '${Directory.current.parent.path}/puzzle_card_detector';
 
   final File _control;
-  final File _state = File('/tmp/puzzle_ui_state.json');
-  final File _frame = File('/tmp/puzzle_ui_frame.jpg');
-  final File _binary = File('/tmp/puzzle_ui_binary.jpg');
-  final File _result = File('/tmp/puzzle_ui_result.jpg');
-  final String _candidatePrefix = '/tmp/puzzle_ui_candidate_';
+  static String _uiPath(String name) {
+    final directory = Platform.environment['PUZZLE_UI_DIR'] ?? '/tmp';
+    return '$directory/$name';
+  }
+
+  final File _state = File(_uiPath('puzzle_ui_state.json'));
+  final File _frame = File(_uiPath('puzzle_ui_frame.jpg'));
+  final File _binary = File(_uiPath('puzzle_ui_binary.jpg'));
+  final File _result = File(_uiPath('puzzle_ui_result.jpg'));
+  final String _candidatePrefix = _uiPath('puzzle_ui_candidate_');
   final String backendDir;
   int _frameRevision = -1;
   int _resultRevision = -1;
@@ -403,14 +411,18 @@ class BackendBridge {
     _restarting = true;
     _lastRestartMs = DateTime.now().millisecondsSinceEpoch;
     try {
-      // 杀掉所有 puzzle 相关后端进程（覆盖不同启动路径）
-      await Process.run('pkill', ['-f', 'python3.*main.py']);
+      final python = Platform.environment['PUZZLE_PYTHON'] ?? 'python3';
+      // Only stop this application's backend.
+      await Process.run('pkill', [
+        '-f',
+        '^${RegExp.escape(python)} ${RegExp.escape('$backendDir/main.py')}\$',
+      ]);
       await Future<void>.delayed(const Duration(milliseconds: 600));
 
       // 启动后端
       _backendProcess = await Process.start(
-        'python3',
-        ['/home/pi5/puzzle_card_detector/main.py'],
+        'bash',
+        ['$backendDir/start.sh'],
         workingDirectory: backendDir,
         environment: {
           ...Platform.environment,

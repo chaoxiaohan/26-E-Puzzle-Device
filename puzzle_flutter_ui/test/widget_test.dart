@@ -56,10 +56,13 @@ void main() {
     await tester.tap(find.text('平台标定'));
     await tester.pump();
 
-    expect(find.text('平台三点仿射标定'), findsOneWidget);
-    expect(find.text('A：右上角'), findsOneWidget);
-    expect(find.text('B：左下角'), findsOneWidget);
-    expect(find.text('C：左上角'), findsOneWidget);
+    expect(find.text('平台六点仿射标定'), findsOneWidget);
+    expect(find.text('A · 左上区域'), findsOneWidget);
+    expect(find.text('B · 右上区域'), findsOneWidget);
+    expect(find.text('C · 左中区域'), findsOneWidget);
+    expect(find.text('D · 右中区域'), findsOneWidget);
+    expect(find.text('E · 左下区域'), findsOneWidget);
+    expect(find.text('F · 右下区域'), findsOneWidget);
     expect(find.text('计算并保存'), findsOneWidget);
 
     await tester.binding.setSurfaceSize(null);

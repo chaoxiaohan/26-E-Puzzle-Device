@@ -154,7 +154,10 @@ def main():
     time.sleep(0.2)
     executor = stop_solver_executor(executor, future)
     assert executor.submit(pow, 2, 5).result(timeout=3) == 32
-    executor.shutdown(wait=False, cancel_futures=True)
+    try:
+        executor.shutdown(wait=False, cancel_futures=True)
+    except TypeError:
+        executor.shutdown(wait=False)
 
     print("competition mode validation and cancellation OK")
 

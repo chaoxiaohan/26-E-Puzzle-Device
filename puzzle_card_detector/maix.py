@@ -5,6 +5,8 @@ import os
 import cv2
 import numpy as np
 
+from hardware_devices import camera_device
+
 
 class _Runtime:
     def __init__(self):
@@ -198,7 +200,7 @@ class _CameraDevice:
         fps=30,
         buff_num=3,
     ):
-        device = os.environ.get("PUZZLE_CAMERA", "/dev/video0")
+        device = camera_device()
         self.capture = cv2.VideoCapture(device, cv2.CAP_V4L2)
         self.capture.set(
             cv2.CAP_PROP_FOURCC,

@@ -16,10 +16,19 @@ struct Point {
     double y;
 };
 
+struct CandidateEdge {
+    double dx;
+    double dy;
+    double length;
+};
+
 struct Candidate {
     std::vector<Point> polygon;
+    std::vector<CandidateEdge> edges;
     std::vector<std::uint64_t> mask;
     std::vector<std::uint64_t> core;
+    Point minimum;
+    Point maximum;
     int area = 0;
     int corners = 0;
 };
@@ -184,6 +193,14 @@ static void set_bit(std::vector<std::uint64_t>& bits, int index) {
     bits[index >> 6] |= std::uint64_t(1) << (index & 63);
 }
 
+static bool candidates_overlap(const Candidate& first, const Candidate& second) {
+    if (first.maximum.x < second.minimum.x || second.maximum.x < first.minimum.x
+        || first.maximum.y < second.minimum.y || second.maximum.y < first.minimum.y) {
+        return false;
+    }
+    return polygons_overlap(first.polygon, second.polygon);
+}
+
 static bool get_bit(
     const std::vector<std::uint64_t>& bits,
     int index
@@ -192,6 +209,16 @@ static bool get_bit(
         bits[index >> 6]
         & (std::uint64_t(1) << (index & 63))
     ) != 0;
+}
+
+static std::uint64_t shifted_word(const std::vector<std::uint64_t>& bits, int word, int offset) {
+    int position = word * 64 + offset;
+    int first = position >= 0 ? position / 64 : (position - 63) / 64;
+    int shift = position - first * 64;
+    auto value = [&](int index) {
+        return index >= 0 && index < int(bits.size()) ? bits[index] : std::uint64_t(0);
+    };
+    return shift == 0 ? value(first) : (value(first) >> shift) | (value(first + 1) << (64 - shift));
 }
 
 static int intersection_count(
@@ -212,6 +239,13 @@ static Candidate rasterize(
 ) {
     Candidate candidate;
     candidate.polygon = polygon;
+    for (std::size_t index = 0; index < polygon.size(); ++index) {
+        const Point& first = polygon[index];
+        const Point& second = polygon[(index + 1) % polygon.size()];
+        double dx = second.x - first.x;
+        double dy = second.y - first.y;
+        candidate.edges.push_back({dx, dy, std::hypot(dx, dy)});
+    }
     int pixel_count = width * height;
     int word_count = (pixel_count + 63) / 64;
     candidate.mask.assign(word_count, 0);
@@ -227,37 +261,71 @@ static Candidate rasterize(
         minimum_y = std::min(minimum_y, point.y);
         maximum_y = std::max(maximum_y, point.y);
     }
+    candidate.minimum = {minimum_x, minimum_y};
+    candidate.maximum = {maximum_x, maximum_y};
     int start_x = std::max(0, int(std::floor(minimum_x)) - 1);
     int end_x = std::min(width - 1, int(std::ceil(maximum_x)) + 1);
     int start_y = std::max(0, int(std::floor(minimum_y)) - 1);
     int end_y = std::min(height - 1, int(std::ceil(maximum_y)) + 1);
+    std::vector<double> crossings;
+    crossings.reserve(polygon.size());
     for (int y = start_y; y <= end_y; ++y) {
-        for (int x = start_x; x <= end_x; ++x) {
-            if (point_in_polygon(x + 0.5, y + 0.5, polygon)) {
-                set_bit(candidate.mask, y * width + x);
-                ++candidate.area;
+        crossings.clear();
+        double sample_y = y + 0.5;
+        for (std::size_t first_id = 0, second_id = polygon.size() - 1;
+             first_id < polygon.size(); second_id = first_id++) {
+            const Point& first = polygon[first_id];
+            const Point& second = polygon[second_id];
+            if ((first.y > sample_y) != (second.y > sample_y)) {
+                crossings.push_back((second.x - first.x) * (sample_y - first.y)
+                    / (second.y - first.y) + first.x);
             }
+        }
+        std::sort(crossings.begin(), crossings.end());
+        for (std::size_t index = 0; index + 1 < crossings.size(); index += 2) {
+            int first_x = std::max(start_x, int(std::ceil(crossings[index] - 0.5)));
+            int last_x = std::min(end_x, int(std::ceil(crossings[index + 1] - 0.5)) - 1);
+            if (first_x > last_x) {
+                continue;
+            }
+            int first_bit = y * width + first_x;
+            int last_bit = y * width + last_x;
+            int first_word = first_bit / 64;
+            int last_word = last_bit / 64;
+            std::uint64_t left = ~std::uint64_t(0) << (first_bit % 64);
+            std::uint64_t right = ~std::uint64_t(0) >> (63 - last_bit % 64);
+            if (first_word == last_word) {
+                candidate.mask[first_word] |= left & right;
+            } else {
+                candidate.mask[first_word] |= left;
+                for (int word = first_word + 1; word < last_word; ++word) {
+                    candidate.mask[word] = ~std::uint64_t(0);
+                }
+                candidate.mask[last_word] |= right;
+            }
+            candidate.area += last_x - first_x + 1;
         }
     }
 
-    for (int y = 1; y < height - 1; ++y) {
-        for (int x = 1; x < width - 1; ++x) {
-            bool keep = true;
-            for (int offset_y = -1; offset_y <= 1 && keep; ++offset_y) {
-                for (int offset_x = -1; offset_x <= 1; ++offset_x) {
-                    if (!get_bit(
-                        candidate.mask,
-                        (y + offset_y) * width + x + offset_x
-                    )) {
-                        keep = false;
-                        break;
-                    }
-                }
-            }
-            if (keep) {
-                set_bit(candidate.core, y * width + x);
-            }
+    // The original 3x3 erosion, evaluated 64 pixels at a time.
+    const int offsets[] = {-width - 1, -width, -width + 1, -1, 1, width - 1, width, width + 1};
+    for (int word = 0; word < word_count; ++word) {
+        std::uint64_t core = candidate.mask[word];
+        for (int offset : offsets) {
+            core &= shifted_word(candidate.mask, word, offset);
         }
+        candidate.core[word] = core;
+    }
+    auto clear_core = [&](int pixel) {
+        candidate.core[pixel / 64] &= ~(std::uint64_t(1) << (pixel % 64));
+    };
+    for (int x = 0; x < width; ++x) {
+        clear_core(x);
+        clear_core((height - 1) * width + x);
+    }
+    for (int y = 1; y < height - 1; ++y) {
+        clear_core(y * width);
+        clear_core(y * width + width - 1);
     }
 
     const Point corners[4] = {
@@ -547,16 +615,15 @@ static double vertex_proximity(
 }
 
 static double internal_edge_match(
-    const std::vector<Point>& first,
-    const std::vector<Point>& second
+    const Candidate& first,
+    const Candidate& second
 ) {
     double best = 0.0;
-    for (std::size_t first_id = 0; first_id < first.size(); ++first_id) {
-        const Point& first_start = first[first_id];
-        const Point& first_end = first[(first_id + 1) % first.size()];
-        double first_dx = first_end.x - first_start.x;
-        double first_dy = first_end.y - first_start.y;
-        double first_length = std::hypot(first_dx, first_dy);
+    for (std::size_t first_id = 0; first_id < first.polygon.size(); ++first_id) {
+        const Point& first_start = first.polygon[first_id];
+        double first_dx = first.edges[first_id].dx;
+        double first_dy = first.edges[first_id].dy;
+        double first_length = first.edges[first_id].length;
         if (first_length < 5.0) {
             continue;
         }
@@ -565,16 +632,16 @@ static double internal_edge_match(
 
         for (
             std::size_t second_id = 0;
-            second_id < second.size();
+            second_id < second.polygon.size();
             ++second_id
         ) {
-            const Point& second_start = second[second_id];
-            const Point& second_end = second[
-                (second_id + 1) % second.size()
+            const Point& second_start = second.polygon[second_id];
+            const Point& second_end = second.polygon[
+                (second_id + 1) % second.polygon.size()
             ];
-            double second_dx = second_end.x - second_start.x;
-            double second_dy = second_end.y - second_start.y;
-            double second_length = std::hypot(second_dx, second_dy);
+            double second_dx = second.edges[second_id].dx;
+            double second_dy = second.edges[second_id].dy;
+            double second_length = second.edges[second_id].length;
             if (second_length < 5.0) {
                 continue;
             }
@@ -1005,6 +1072,14 @@ static SearchResult search_ratio(
         polygons.size(),
         std::vector<std::vector<float>>(polygons.size())
     );
+    std::vector<std::vector<std::vector<std::int8_t>>> overlap_cache(
+        polygons.size(),
+        std::vector<std::vector<std::int8_t>>(polygons.size())
+    );
+    std::vector<std::vector<std::vector<double>>> proximity_cache(
+        polygons.size(),
+        std::vector<std::vector<double>>(polygons.size())
+    );
     for (int first = 0; first < int(polygons.size()); ++first) {
         for (
             int second = first + 1;
@@ -1017,9 +1092,49 @@ static SearchResult search_ratio(
             );
             if (count <= 1200000) {
                 contact_cache[first][second].assign(count, -1.0f);
+                overlap_cache[first][second].assign(count, -1);
+                proximity_cache[first][second].assign(count, -1.0);
             }
         }
     }
+    auto cached_overlap = [&](int first_piece, int first_candidate,
+                              int second_piece, int second_candidate) {
+        if (first_piece > second_piece) {
+            std::swap(first_piece, second_piece);
+            std::swap(first_candidate, second_candidate);
+        }
+        auto& cache = overlap_cache[first_piece][second_piece];
+        if (cache.empty()) {
+            return candidates_overlap(candidate_sets[first_piece][first_candidate],
+                                      candidate_sets[second_piece][second_candidate]);
+        }
+        std::size_t index = std::size_t(first_candidate)
+            * candidate_sets[second_piece].size() + second_candidate;
+        if (cache[index] < 0) {
+            cache[index] = candidates_overlap(candidate_sets[first_piece][first_candidate],
+                                              candidate_sets[second_piece][second_candidate]);
+        }
+        return cache[index] != 0;
+    };
+    auto cached_proximity = [&](int first_piece, int first_candidate,
+                                int second_piece, int second_candidate) {
+        if (first_piece > second_piece) {
+            std::swap(first_piece, second_piece);
+            std::swap(first_candidate, second_candidate);
+        }
+        auto& cache = proximity_cache[first_piece][second_piece];
+        if (cache.empty()) {
+            return vertex_proximity(candidate_sets[first_piece][first_candidate].polygon,
+                                    candidate_sets[second_piece][second_candidate].polygon);
+        }
+        std::size_t index = std::size_t(first_candidate)
+            * candidate_sets[second_piece].size() + second_candidate;
+        if (cache[index] < 0.0) {
+            cache[index] = vertex_proximity(candidate_sets[first_piece][first_candidate].polygon,
+                                            candidate_sets[second_piece][second_candidate].polygon);
+        }
+        return cache[index];
+    };
     auto cached_contact = [&](
         int first_piece,
         int first_candidate,
@@ -1035,8 +1150,8 @@ static SearchResult search_ratio(
         ][second_piece];
         if (cache.empty()) {
             return internal_edge_match(
-                candidate_sets[first_piece][first_candidate].polygon,
-                candidate_sets[second_piece][second_candidate].polygon
+                candidate_sets[first_piece][first_candidate],
+                candidate_sets[second_piece][second_candidate]
             );
         }
         std::size_t index = (
@@ -1049,10 +1164,10 @@ static SearchResult search_ratio(
                 internal_edge_match(
                     candidate_sets[first_piece][
                         first_candidate
-                    ].polygon,
+                    ],
                     candidate_sets[second_piece][
                         second_candidate
-                    ].polygon
+                    ]
                 )
             );
         }
@@ -1110,12 +1225,7 @@ static SearchResult search_ratio(
                     int old_candidate_id = state.choices[old_piece_id];
                     if (
                         old_candidate_id >= 0
-                        && polygons_overlap(
-                            candidate.polygon,
-                            candidate_sets[old_piece_id][
-                                old_candidate_id
-                            ].polygon
-                        )
+                        && cached_overlap(piece_id, candidate_id, old_piece_id, old_candidate_id)
                     ) {
                         geometry_overlap = true;
                         break;
@@ -1167,12 +1277,7 @@ static SearchResult search_ratio(
                             old_piece_id,
                             old_candidate_id
                         );
-                        proximity += vertex_proximity(
-                            candidate.polygon,
-                            candidate_sets[old_piece_id][
-                                old_candidate_id
-                            ].polygon
-                        );
+                        proximity += cached_proximity(piece_id, candidate_id, old_piece_id, old_candidate_id);
                     }
                 }
                 double rank = (

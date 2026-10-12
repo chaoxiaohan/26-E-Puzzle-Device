@@ -19,7 +19,7 @@ arguments = [
 capture_directory = (
     arguments[0]
     if arguments
-    else "/home/pi5/puzzle_detector/captures"
+    else os.path.join(os.path.dirname(os.path.abspath(__file__)), "captures")
 )
 allow_relaxed = "--relaxed" in sys.argv
 use_legacy = "--legacy" in sys.argv

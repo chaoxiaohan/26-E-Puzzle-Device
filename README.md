@@ -1,101 +1,59 @@
-# 26 电赛 E 题：拼图装置
+# 26 电赛 E 题：鲁班猫 1 拼图装置
 
-树莓派 5 上运行的拼图装置工程，包含视觉后端、Flutter 控制台、平台串口通信与坐标标定。
+本分支保存鲁班猫 1 当前已部署、已验证的完整源码、必要资源和本次设备配置快照。原程序由 Python、C++ 与 Flutter Linux 组成。
 
-## 功能
+## 分支
 
-- 第一问模板学习与普通几何拼图；
-- 白底扑克牌碎片拼图；
-- USB 摄像头实时识别、ROI 与阈值调参；
-- 碎片抓取、旋转、放置动作规划；
-- 串口平台控制与六点仿射标定；
-- Flutter 横屏控制界面。
+- [raspberry-pi5](https://github.com/chaoxiaohan/26-E-Puzzle-Device/tree/raspberry-pi5)：树莓派 5 当前版本和现场参数。
+- [lubancat-1](https://github.com/chaoxiaohan/26-E-Puzzle-Device/tree/lubancat-1)：本分支，鲁班猫 1 适配和求解优化。
+- `main`：原有树莓派发布版本保留。
 
-## 目录
+鲁班猫分支使用 `puzzle_card_detector/`、`puzzle_flutter_ui/`，与设备安装目录一致；树莓派分支使用原仓库的 `backend/`、`flutter_ui/`。运行目录分别是树莓派的 `~/puzzle_card_detector`、`~/puzzle_flutter_ui`，以及鲁班猫的 `~/puzzle-device/`。
 
-- `backend/`：OpenCV 视觉、拼图求解、动作规划、串口协议；
-- `flutter_ui/`：Flutter Linux 控制台；
-- `docs/`：串口通信协议；
-- `deploy_pi5.sh`：树莓派 5 一键部署与启动脚本。
+## 已完成的适配
 
-## 硬件与系统环境
+- Ubuntu 20.04.6 / aarch64 / glibc 2.31，独立 Python 3.13.5 环境。
+- 固定 NumPy、OpenCV 和 pyserial 依赖；本机 C++ 求解库与 GTK 启动程序重新编译。
+- 自动发现 UVC 摄像头，CH340 固定设备名 `/dev/puzzle-arm`。
+- 中文界面默认使用 Flutter 软件渲染，适配原桌面的黑屏问题。
+- 配置、模板、ROI 与六点标定数据保留，避免重复启动，并支持后端自动恢复。
+- C++ 扫描行/64 位掩码和几何缓存优化：固定用例从 9.86 秒降到约 3.37 秒。
 
-- Raspberry Pi 5，64 位 Raspberry Pi OS / Debian；
-- USB 摄像头，默认 `/dev/video0`，MJPG、1280×720；
-- 1024×600 或更高分辨率横屏；
-- 可选：CH340 USB 串口平台控制器；
-- Python 3、OpenCV、NumPy、pyserial；
-- ARM64 Flutter SDK。默认位置为 `/home/pi5/flutter`。
+## 源码与构建产物
 
-## 一键部署
+Git 保存当前设备的 88 个源码、资源、配置与说明文件，原始文件哈希见 `SOURCE-SNAPSHOT.json`。文本文件提交时只统一换行格式。虚拟环境、Python 运行时、Flutter SDK、生成的头文件/引擎、编译产物、wheelhouse 和历史 `captures/` 不纳入 Git。
 
-在树莓派桌面终端执行：
+因此，刚从 Git 克隆的源码还需要生成 Flutter 发布 bundle 和 SDK 头文件；已有的完整离线发布包包含这些产物，可以直接按照 [迁移说明](README-LUBANCAT.md) 恢复。
 
 ```bash
-git clone https://github.com/chaoxiaohan/26-E-Puzzle-Device.git
-cd 26-E-Puzzle-Device
-chmod +x deploy_pi5.sh
-./deploy_pi5.sh
+git clone --branch lubancat-1 https://github.com/chaoxiaohan/26-E-Puzzle-Device.git puzzle-device
 ```
 
-脚本会安装系统依赖，部署后端至 `~/puzzle_card_detector`、部署 Flutter 前端至
-`~/puzzle_flutter_ui`，编译 C++ 求解器和 Flutter Linux 程序，并启动控制台。
-
-若 Flutter 不在默认位置：
+已验证的界面构建使用树莓派上的 Flutter 3.44.8 / Dart 3.12.2 SDK，在独立构建目录运行：
 
 ```bash
-FLUTTER_BIN=/opt/flutter/bin/flutter ./deploy_pi5.sh
+cd puzzle-device/puzzle_flutter_ui
+/home/pi5/flutter/bin/flutter build linux --release
+tar -czf ../flutter-linux-artifacts.tar.gz build/linux/arm64/release/bundle linux/flutter/ephemeral
 ```
 
-首次部署前需要先准备 ARM64 Flutter SDK。项目已经验证过的默认路径是
-`/home/pi5/flutter/bin/flutter`。
-
-## 日常启动
-
-已部署后，直接执行：
+将该压缩包传到鲁班猫源码的 `puzzle_flutter_ui/` 目录并在那里解压，然后从源码根目录运行 `bash setup_lubancat.sh`。安装脚本会在鲁班猫重新编译 GTK 启动程序以适配 glibc 2.31；不要直接使用树莓派生成的启动程序。系统 apt、Python 与 uv 的首次安装需要可用网络或预先准备好的离线依赖。
 
 ```bash
-~/puzzle_flutter_ui/start_all.sh
+cd puzzle-device/puzzle_flutter_ui
+tar -xzf flutter-linux-artifacts.tar.gz
+cd ..
+bash setup_lubancat.sh
+bash puzzle_flutter_ui/start_ui.sh
 ```
 
-前端会在视觉后端未运行时自动启动后端。只启动后端调试：
+源码快照包含本次设备标定和模板。更新已有设备前保存其配置；摄像头安装位置变化后重新验证 ROI 和六点标定。
 
-```bash
-cd ~/puzzle_card_detector
-./start.sh
-```
+## 验证范围
 
-无显示器测试：
+Python 回归 22/24 通过；两项失败在原树莓派上也存在。Flutter 3 项测试通过。12 组新旧 C++ 求解输出完全一致，2909 组栅格参考与未定义行为检查通过。摄像头和串口仍未连接，实际采集、机械运动和整套执行耗时待联调。
 
-```bash
-cd ~/puzzle_card_detector
-PUZZLE_HEADLESS=1 python3 main.py
-```
+- [迁移、安装和硬件说明](README-LUBANCAT.md)
+- [求解优化与实测记录](OPTIMIZATION-20261012.md)
 
-## 运行时文件
-
-以下文件是现场设备相关配置，不建议覆盖或提交：
-
-- `vision_settings.json`：ROI、阈值和背景设置；
-- `serial_settings.json`：串口设备与波特率；
-- `roi_settings.json`、`templates.json`：标定与第一问模板；
-- `captures/`：拍照记录；
-- `librectangle_solver.so`、`flutter_ui/build/`：编译产物。
-
-`deploy_pi5.sh` 更新代码时会保留这些文件。
-
-## 设备分支和当前快照
-
-- `raspberry-pi5`：树莓派 5 当前源码与现场参数快照，后端原提交 `410ded8`，界面原提交 `2304d77`。
-- `lubancat-1`：鲁班猫 1 的 Python 3.13、摄像头发现、中文界面兼容和 C++ 求解优化。
-- `main`：原有发布分支保留。
-
-本分支在 2026-10-12 从树莓派当前运行目录逐文件核对。代码及 Flutter 资源与原 `main` 一致；新增保存了现场 `vision_settings.json`、`serial_settings.json`、`roi_settings.json`、`templates.json`，并修正中文 PDF 文件名。完整文件哈希及原设备 Git 状态见 `SOURCE-SNAPSHOT.json`。
-
-这些配置是本次设备快照。原部署脚本会保留目标设备已有配置，并在同步时排除这些文件；新设备需要使用快照配置时，可在部署后端目录后手动复制，再根据实际摄像头位置重新验证 ROI 和六点标定。
-
-```bash
-git clone --branch raspberry-pi5 https://github.com/chaoxiaohan/26-E-Puzzle-Device.git
-```
-
-Git 保存源码、必要资源和此次配置快照；历史采集图片、虚拟环境、Flutter SDK、wheelhouse 和编译产物未纳入源码分支。
+现场源码原版本标识：`fb130304d64e9bb15da61c6965a8b63956676122`。此标识属于本次迁移工作的本地源码历史，当前 GitHub 分支以自身提交记录为准。

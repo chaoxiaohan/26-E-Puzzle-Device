@@ -13,6 +13,7 @@ import time
 import cv2
 import numpy as np
 from maix import app, camera, display, image, touchscreen
+from hardware_devices import camera_device
 from layout_constraints import (
     add_adjacency_gap,
     evaluate_layout,
@@ -143,8 +144,13 @@ class RecoveringCamera:
         self._close_device()
 
 
-def reset_usb_video_device(video_device="/dev/video0"):
+def reset_usb_video_device(video_device=None):
     """只复位指定 video 节点所属的 USB 设备，不影响 CH340 等其他 USB。"""
+    if video_device is None:
+        try:
+            video_device = camera_device()
+        except RuntimeError:
+            return False
     device_path = os.path.realpath(
         "/sys/class/video4linux/%s/device"
         % os.path.basename(video_device)
@@ -3288,7 +3294,7 @@ def save_capture(
     roi,
     settings,
 ):
-    capture_dir = "/home/pi5/puzzle_card_detector/captures"
+    capture_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "captures")
     os.makedirs(capture_dir, exist_ok=True)
     timestamp = "%s_%03d" % (
         time.strftime("%Y%m%d_%H%M%S"),
@@ -5432,7 +5438,7 @@ def main():
 
     cam = RecoveringCamera(
         create_camera,
-        lambda: reset_usb_video_device("/dev/video0"),
+        reset_usb_video_device,
     )
     disp = display.Display()
     touch = touchscreen.TouchScreen()
@@ -7066,10 +7072,10 @@ def main():
 
     cam.close()
     serial_controller.disconnect()
-    solver_executor.shutdown(
-        wait=False,
-        cancel_futures=True,
-    )
+    try:
+        solver_executor.shutdown(wait=False, cancel_futures=True)
+    except TypeError:
+        solver_executor.shutdown(wait=False)
 
 
 if __name__ == "__main__":

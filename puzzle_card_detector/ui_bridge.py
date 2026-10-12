@@ -12,12 +12,14 @@ class UiBridge:
     """用 /tmp 内存文件连接视觉后端和 Flutter 界面。"""
 
     def __init__(self):
-        self.control_path = "/tmp/puzzle_ui_control.json"
-        self.state_path = "/tmp/puzzle_ui_state.json"
-        self.frame_path = "/tmp/puzzle_ui_frame.jpg"
-        self.binary_path = "/tmp/puzzle_ui_binary.jpg"
-        self.result_path = "/tmp/puzzle_ui_result.jpg"
-        self.candidate_prefix = "/tmp/puzzle_ui_candidate_"
+        directory = os.environ.get("PUZZLE_UI_DIR", "/tmp")
+        os.makedirs(directory, exist_ok=True)
+        self.control_path = os.path.join(directory, "puzzle_ui_control.json")
+        self.state_path = os.path.join(directory, "puzzle_ui_state.json")
+        self.frame_path = os.path.join(directory, "puzzle_ui_frame.jpg")
+        self.binary_path = os.path.join(directory, "puzzle_ui_binary.jpg")
+        self.result_path = os.path.join(directory, "puzzle_ui_result.jpg")
+        self.candidate_prefix = os.path.join(directory, "puzzle_ui_candidate_")
         self.last_control_revision = self._read_control_revision(
             self.control_path
         )
