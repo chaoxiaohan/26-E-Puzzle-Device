@@ -442,7 +442,9 @@ def _letter_index_evidence(ink,shape_cache=None):
         low,high=int(bh*.30),int(bh*.70)
         if high<=low:
             continue
-        row=low+int(np.argmin(profile[low:high]))
+        rows=np.arange(low,high)
+        valley=profile[low:high]/max(1,profile.max())+np.abs(rows/bh-.5)*.5
+        row=low+int(np.argmin(valley))
         if profile[row]>max(1,profile.max()*.25):
             continue
         for start,stop in ((0,row),(row,bh)):
@@ -491,6 +493,8 @@ def _letter_index_evidence(ink,shape_cache=None):
     neutral=(.5,0.0,{'groups':0})
     if len(letters)<10:
         return neutral
+    cell_height=max(item['box'][3] for item in letters)+4
+    cell_width=max(item['box'][2] for item in letters)+4
     groups={}
     for anchor in letters:
         column=sorted([item for item in letters if abs(item['center'][0]-anchor['center'][0])<w*.04],
@@ -517,8 +521,6 @@ def _letter_index_evidence(ink,shape_cache=None):
                 if key in groups:
                     continue
                 # 只在比较字形串时消除字间白缝；不改变目标纸片位置。
-                cell_height=max(item['box'][3] for item in word)+4
-                cell_width=max(item['box'][2] for item in word)+4
                 patch=np.zeros((cell_height*count,cell_width),np.uint8)
                 for row,item in enumerate(word):
                     _,_,bw,bh=item['box']

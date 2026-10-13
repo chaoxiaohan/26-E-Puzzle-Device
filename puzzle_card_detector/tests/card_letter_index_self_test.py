@@ -6,7 +6,7 @@ import numpy as np
 from card_structure import _letter_index_evidence
 
 
-def scene(missing=False,same_direction=False,decoration=False):
+def scene(missing=False,same_direction=False,decoration=False,fragmented=False,fused=False):
     frame=np.full((300,220,3),(35,145,85),np.uint8)
     paper=np.full((240,160,3),245,np.uint8)
     words=[]
@@ -19,6 +19,10 @@ def scene(missing=False,same_direction=False,decoration=False):
                 cv2.fillConvexPoly(patch,np.array([(10,20+row*15),(16,26+row*15),(4,26+row*15)]),(20,20,20))
             else:
                 cv2.putText(patch,character,(5,25+row*15),cv2.FONT_HERSHEY_SIMPLEX,.50,(20,20,20),1,cv2.LINE_AA)
+        if fragmented and bottom:
+            patch[29:42,10:12]=245
+        if fused and bottom:
+            cv2.line(patch,(6,69),(6,76),(20,20,20),1)
         words.append(patch)
     paper[10:100,5:35]=words[0]
     paper[140:230,125:155]=words[1] if same_direction else words[1][::-1,::-1]
@@ -32,6 +36,10 @@ def main():
     for kwargs in ({'missing':True},{'same_direction':True},{'decoration':True}):
         wrong,_,_=_letter_index_evidence(scene(**kwargs))
         assert score>wrong+.15,(kwargs,score,wrong)
+    for kwargs in ({'fragmented':True},{'fused':True}):
+        repaired,reliability,evidence=_letter_index_evidence(scene(**kwargs))
+        assert repaired>.75 and reliability>.60,(kwargs,repaired,reliability,evidence)
+        assert evidence['characters']==[5,5]
     print('CARD_LETTER_INDEX_OK',round(score,3),round(confidence,3),detail['characters'])
 
 
