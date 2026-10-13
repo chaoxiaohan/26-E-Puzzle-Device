@@ -432,11 +432,62 @@ def _index_evidence(ink, components, red=None, owners=None, shape_cache=None):
 def _letter_index_evidence(ink,shape_cache=None):
     """配对两端完整的竖排字形串，不需要外部 OCR 或牌面模板。"""
     h,w=ink.shape
-    letters=[component for component in _components(ink,close=False)
+    components=_components(ink,close=False)
+    split=[]
+    for component in components:
+        x,y,bw,bh=component['box']
+        if bw>w*.14 or not h*.095<bh<h*.22:
+            continue
+        profile=component['mask'].sum(axis=1)
+        low,high=int(bh*.30),int(bh*.70)
+        if high<=low:
+            continue
+        row=low+int(np.argmin(profile[low:high]))
+        if profile[row]>max(1,profile.max()*.25):
+            continue
+        for start,stop in ((0,row),(row,bh)):
+            patch=component['mask'][start:stop]
+            yy,xx=np.nonzero(patch)
+            if len(xx)<6:
+                continue
+            left,right=int(xx.min()),int(xx.max()+1)
+            top,bottom=int(yy.min()),int(yy.max()+1)
+            split.append({'box':(x+left,y+start+top,right-left,bottom-top),'area':len(xx),
+                          'center':np.array([x+xx.mean(),y+start+yy.mean()]),
+                          'mask':patch[top:bottom,left:right]})
+    letters=[component for component in components+split
              if w*.018<=component['box'][2]<=w*.14
              and h*.018<=component['box'][3]<=h*.095
              and component['area']>=max(6,h*w*.0003)
              and .15<=component['area']/(component['box'][2]*component['box'][3])<=.90]
+    merged=[]
+    used=set()
+    for first,a in enumerate(letters):
+        if first in used:
+            continue
+        ax,ay,aw,ah=a['box']
+        for second,b in enumerate(letters):
+            if second<=first or second in used:
+                continue
+            bx,by,bw,bh=b['box']
+            gap=max(ax,bx)-min(ax+aw,bx+bw)
+            if not (0<=gap<=w*.025 and abs(ay+ah*.5-by-bh*.5)<=h*.015
+                    and min(ah,bh)>=max(ah,bh)*.6):
+                continue
+            left,top=min(ax,bx),min(ay,by)
+            right,bottom=max(ax+aw,bx+bw),max(ay+ah,by+bh)
+            if right-left>w*.14:
+                continue
+            patch=np.zeros((bottom-top,right-left),bool)
+            patch[ay-top:ay-top+ah,ax-left:ax-left+aw]|=a['mask']
+            patch[by-top:by-top+bh,bx-left:bx-left+bw]|=b['mask']
+            yy,xx=np.nonzero(patch)
+            a={'box':(left,top,right-left,bottom-top),'area':len(xx),
+               'center':np.array([left+xx.mean(),top+yy.mean()]),'mask':patch}
+            used.add(second)
+            break
+        merged.append(a)
+    letters=merged
     neutral=(.5,0.0,{'groups':0})
     if len(letters)<10:
         return neutral
