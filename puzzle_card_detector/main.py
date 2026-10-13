@@ -5650,7 +5650,10 @@ def main():
             ui_bridge.last_state_time = 0.0
 
         serial_controller.service()
-        img = cam.read()
+        # 等待求解时保留最后一帧，控制、串口和比赛计时仍继续服务。
+        vision_paused = solver_future is not None and not solver_future.done()
+        if not vision_paused:
+            img = cam.read()
         if img is None:
             if cam.last_error and cam.last_error != reported_camera_error:
                 print(
@@ -5701,6 +5704,8 @@ def main():
                 {
                     "mode": ui_mode.lower(),
                     "camera_ok": False,
+                    "vision_paused": False,
+                    "vision_processing_revision": "pause-during-solve-20261013",
                     "fps": 0.0,
                     "piece_count": 0,
                     "auto_threshold": bool(auto_threshold),
@@ -5768,11 +5773,12 @@ def main():
         camera_was_online = True
         offline_preview_published = False
         reported_camera_error = ""
-        frame_rgb = image.image2cv(
-            img,
-            ensure_bgr=False,
-            copy=False,
-        )
+        if not vision_paused:
+            frame_rgb = image.image2cv(
+                img,
+                ensure_bgr=False,
+                copy=False,
+            )
         frame_height, frame_width = frame_rgb.shape[:2]
         if (
             frame_width != camera_width
@@ -5963,29 +5969,30 @@ def main():
             os.remove("/tmp/puzzle_dataset_capture_once")
             capture_requested = True
 
-        pieces, threshold_info = detect_pieces(
-            frame_rgb,
-            (roi_x, roi_y, roi_width, roi_height),
-            min_area=min_piece_area,
-            max_area_ratio=max_piece_area_ratio,
-            max_pieces=max_piece_count,
-            polygon_epsilon=polygon_epsilon,
-            threshold=None if auto_threshold else manual_threshold,
-            polarity_mode=polarity_mode,
-            background_mode=background_mode,
-            green_method=green_method,
-            green_auto=green_auto,
-            green_auto_state=green_auto_state,
-            green_hue_min=green_hue_min,
-            green_hue_max=green_hue_max,
-            green_sat_min=green_sat_min,
-            green_val_min=green_val_min,
-            green_close_kernel=green_close_kernel,
-            green_close_iter=green_close_iter,
-            paper_close_kernel=paper_close_kernel,
-            paper_close_iter=paper_close_iter,
-        )
-        current_threshold = threshold_info["threshold"]
+        if not vision_paused:
+            pieces, threshold_info = detect_pieces(
+                frame_rgb,
+                (roi_x, roi_y, roi_width, roi_height),
+                min_area=min_piece_area,
+                max_area_ratio=max_piece_area_ratio,
+                max_pieces=max_piece_count,
+                polygon_epsilon=polygon_epsilon,
+                threshold=None if auto_threshold else manual_threshold,
+                polarity_mode=polarity_mode,
+                background_mode=background_mode,
+                green_method=green_method,
+                green_auto=green_auto,
+                green_auto_state=green_auto_state,
+                green_hue_min=green_hue_min,
+                green_hue_max=green_hue_max,
+                green_sat_min=green_sat_min,
+                green_val_min=green_val_min,
+                green_close_kernel=green_close_kernel,
+                green_close_iter=green_close_iter,
+                paper_close_kernel=paper_close_kernel,
+                paper_close_iter=paper_close_iter,
+            )
+            current_threshold = threshold_info["threshold"]
         if capture_requested:
             last_capture_name = save_capture(
                 frame_rgb,
@@ -6009,23 +6016,24 @@ def main():
                 },
             )
             last_capture_time = time.monotonic()
-        frame_time = time.monotonic()
-        recent_piece_sets = [
-            item
-            for item in recent_piece_sets
-            if frame_time - item[0] <= 0.8
-        ]
-        if 2 <= len(pieces) <= 4:
-            recent_piece_sets.append(
-                (
-                    frame_time,
-                    sum(
-                        piece["area"] * piece["solidity"]
-                        for piece in pieces
-                    ),
-                    pieces,
+        if not vision_paused:
+            frame_time = time.monotonic()
+            recent_piece_sets = [
+                item
+                for item in recent_piece_sets
+                if frame_time - item[0] <= 0.8
+            ]
+            if 2 <= len(pieces) <= 4:
+                recent_piece_sets.append(
+                    (
+                        frame_time,
+                        sum(
+                            piece["area"] * piece["solidity"]
+                            for piece in pieces
+                        ),
+                        pieces,
+                    )
                 )
-            )
 
         if (
             competition_active
@@ -6669,135 +6677,143 @@ def main():
                     competition_retry_at = 0.0
                     solver_message = "AUTO STOP NO CANDIDATE"
 
-        if tuning_open:
-            show_binary_preview(
+        if not vision_paused:
+            if tuning_open:
+                show_binary_preview(
+                    frame_rgb,
+                    threshold_info["mask"],
+                    (roi_x, roi_y, roi_width, roi_height),
+                )
+
+            draw_roi(
+                img,
+                (roi_x, roi_y, roi_width, roi_height),
+            )
+            display_pieces = build_stable_piece_set(recent_piece_sets)
+            if display_pieces is None:
+                display_pieces = pieces
+            for index, piece in enumerate(display_pieces, 1):
+                draw_piece(img, piece, index)
+            ui_bridge.publish_live(
                 frame_rgb,
                 threshold_info["mask"],
                 (roi_x, roi_y, roi_width, roi_height),
             )
 
-        draw_roi(
-            img,
-            (roi_x, roi_y, roi_width, roi_height),
-        )
-        display_pieces = build_stable_piece_set(recent_piece_sets)
-        if display_pieces is None:
-            display_pieces = pieces
-        for index, piece in enumerate(display_pieces, 1):
-            draw_piece(img, piece, index)
-        ui_bridge.publish_live(
-            frame_rgb,
-            threshold_info["mask"],
-            (roi_x, roi_y, roi_width, roi_height),
-        )
+            if not tuning_open and solved_display is not None:
+                draw_solved_rectangle(
+                    img,
+                    solved_display,
+                    solution_box,
+                    solved_score,
+                    motion_plan,
+                )
 
-        if not tuning_open and solved_display is not None:
-            draw_solved_rectangle(
-                img,
-                solved_display,
-                solution_box,
-                solved_score,
-                motion_plan,
-            )
-
-        img.draw_string(
-            4,
-            4,
-            "PIECES %d  %s  T%d"
-            % (
-                len(pieces),
-                threshold_info["polarity"],
-                threshold_info["threshold"],
-            ),
-            image.COLOR_WHITE,
-            scale=2,
-        )
-        if not tuning_open and solver_message:
             img.draw_string(
                 4,
-                42,
-                "%s %.3f R%.2f %.0fms"
+                4,
+                "PIECES %d  %s  T%d"
                 % (
-                    solver_message,
-                    solved_score,
-                    solved_ratio,
-                    solver_ms,
+                    len(pieces),
+                    threshold_info["polarity"],
+                    threshold_info["threshold"],
                 ),
-                image.COLOR_GREEN
-                if (
-                    solver_message.startswith("SOLVE")
-                    or solver_message == "CARD RECT"
-                )
-                else image.COLOR_YELLOW,
+                image.COLOR_WHITE,
                 scale=2,
             )
-        if tuning_open:
-            draw_controls(
-                img,
-                button_boxes,
-                auto_threshold,
-                manual_threshold,
-                polarity_mode,
-                min_piece_area,
-                green_method=green_method,
-                green_sat_min=green_sat_min,
-                green_close_kernel=green_close_kernel,
-                green_close_iter=green_close_iter,
-                paper_close_kernel=paper_close_kernel,
-                paper_close_iter=paper_close_iter,
-            )
-        else:
-            draw_button(
-                img,
-                button_boxes["solve"],
-                "SOLVE",
-                active=(
-                    solved_display is not None
-                    and solved_mode != "CARD"
-                ),
-            )
-            draw_button(
-                img,
-                button_boxes["card_solve"],
-                "CARD",
-                active=(
-                    solved_display is not None
-                    and solved_mode == "CARD"
-                ),
-            )
-            draw_button(
-                img,
-                button_boxes["tune"],
-                "TUNE",
-            )
-            draw_button(
-                img,
-                button_boxes["capture"],
-                "CAPTURE",
-            )
-            if (
-                last_capture_name
-                and time.monotonic() - last_capture_time < 2.5
-            ):
+            if not tuning_open and solver_message:
                 img.draw_string(
-                    20,
-                    920 if img.height() > img.width() else 175,
-                    "SAVED %s" % last_capture_name[-10:],
-                    image.COLOR_GREEN,
+                    4,
+                    42,
+                    "%s %.3f R%.2f %.0fms"
+                    % (
+                        solver_message,
+                        solved_score,
+                        solved_ratio,
+                        solver_ms,
+                    ),
+                    image.COLOR_GREEN
+                    if (
+                        solver_message.startswith("SOLVE")
+                        or solver_message == "CARD RECT"
+                    )
+                    else image.COLOR_YELLOW,
                     scale=2,
                 )
+            if tuning_open:
+                draw_controls(
+                    img,
+                    button_boxes,
+                    auto_threshold,
+                    manual_threshold,
+                    polarity_mode,
+                    min_piece_area,
+                    green_method=green_method,
+                    green_sat_min=green_sat_min,
+                    green_close_kernel=green_close_kernel,
+                    green_close_iter=green_close_iter,
+                    paper_close_kernel=paper_close_kernel,
+                    paper_close_iter=paper_close_iter,
+                )
+            else:
+                draw_button(
+                    img,
+                    button_boxes["solve"],
+                    "SOLVE",
+                    active=(
+                        solved_display is not None
+                        and solved_mode != "CARD"
+                    ),
+                )
+                draw_button(
+                    img,
+                    button_boxes["card_solve"],
+                    "CARD",
+                    active=(
+                        solved_display is not None
+                        and solved_mode == "CARD"
+                    ),
+                )
+                draw_button(
+                    img,
+                    button_boxes["tune"],
+                    "TUNE",
+                )
+                draw_button(
+                    img,
+                    button_boxes["capture"],
+                    "CAPTURE",
+                )
+                if (
+                    last_capture_name
+                    and time.monotonic() - last_capture_time < 2.5
+                ):
+                    img.draw_string(
+                        20,
+                        920 if img.height() > img.width() else 175,
+                        "SAVED %s" % last_capture_name[-10:],
+                        image.COLOR_GREEN,
+                        scale=2,
+                    )
 
         now = time.monotonic()
-        fps_frames += 1
-        elapsed = now - fps_start
-        if elapsed >= 1:
-            fps = fps_frames / elapsed
+        if vision_paused:
+            fps = 0.0
             fps_frames = 0
             fps_start = now
+        else:
+            fps_frames += 1
+            elapsed = now - fps_start
+            if elapsed >= 1:
+                fps = fps_frames / elapsed
+                fps_frames = 0
+                fps_start = now
         ui_bridge.publish_state(
             {
                 "mode": ui_mode.lower(),
                 "camera_ok": True,
+                "vision_paused": bool(solver_future is not None and not solver_future.done()),
+                "vision_processing_revision": "pause-during-solve-20261013",
                 "fps": round(float(fps), 1),
                 "piece_count": len(pieces),
                 "auto_threshold": bool(auto_threshold),
@@ -6869,19 +6885,24 @@ def main():
                 **serial_controller.state(),
             }
         )
-        img.draw_string(
-            4,
-            camera_height - 38,
-            "FPS %.1f" % fps,
-            image.COLOR_WHITE,
-            scale=2,
-        )
+        if vision_paused:
+            if os.environ.get("PUZZLE_HEADLESS", "0") != "1":
+                cv2.waitKey(1)
+            time.sleep(0.05)
+        else:
+            img.draw_string(
+                4,
+                camera_height - 38,
+                "FPS %.1f" % fps,
+                image.COLOR_WHITE,
+                scale=2,
+            )
 
-        if now - last_print_time >= 1:
-            print_detection(pieces, threshold_info)
-            last_print_time = now
+            if now - last_print_time >= 1:
+                print_detection(pieces, threshold_info)
+                last_print_time = now
 
-        disp.show(img)
+            disp.show(img)
 
     cam.close()
     serial_controller.disconnect()
