@@ -485,8 +485,9 @@ def _letter_index_evidence(ink,shape_cache=None):
             if np.linalg.norm(a['center']-b['center'])<.45:
                 continue
             shape=_shape_similarity(a['mask'],b['mask'][::-1,::-1],shape_cache)
+            same_direction=_shape_similarity(a['mask'],b['mask'],shape_cache)
             area=min(a['area'],b['area'])/max(1,a['area'],b['area'])
-            if shape<.72 or area<.50:
+            if shape<.72 or shape<same_direction+.04 or area<.50:
                 continue
             count=min(a['count'],b['count'])/max(a['count'],b['count'])
             strength=shape*math.sqrt(area)*count
@@ -499,6 +500,7 @@ def _letter_index_evidence(ink,shape_cache=None):
                 best=score
                 confidence=strength
                 detail={'groups':len(groups),'shape_match':shape,'location':location,
+                        'direction_margin':shape-same_direction,
                         'characters':[a['count'],b['count']]}
     return (best,confidence,detail) if confidence else neutral
 
