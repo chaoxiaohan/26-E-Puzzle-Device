@@ -429,6 +429,80 @@ def _index_evidence(ink, components, red=None, owners=None, shape_cache=None):
                                "color_plane": "red" if print_mask is red else "ink"}
 
 
+def _letter_index_evidence(ink,shape_cache=None):
+    """配对两端完整的竖排字形串，不需要外部 OCR 或牌面模板。"""
+    h,w=ink.shape
+    letters=[component for component in _components(ink,close=False)
+             if w*.018<=component['box'][2]<=w*.14
+             and h*.018<=component['box'][3]<=h*.095
+             and component['area']>=max(6,h*w*.0003)
+             and .15<=component['area']/(component['box'][2]*component['box'][3])<=.90]
+    neutral=(.5,0.0,{'groups':0})
+    if len(letters)<10:
+        return neutral
+    groups={}
+    for anchor in letters:
+        column=sorted([item for item in letters if abs(item['center'][0]-anchor['center'][0])<w*.04],
+                      key=lambda item:item['center'][1])
+        for start in range(len(column)):
+            for count in (5,6,7):
+                word=column[start:start+count]
+                if len(word)!=count:
+                    continue
+                if any(not -1<=b['box'][1]-a['box'][1]-a['box'][3]<=h*.08
+                       for a,b in zip(word,word[1:])):
+                    continue
+                left=min(item['box'][0] for item in word)
+                right=max(item['box'][0]+item['box'][2] for item in word)
+                top=min(item['box'][1] for item in word)
+                bottom=max(item['box'][1]+item['box'][3] for item in word)
+                if right-left>w*.18 or not h*.15<bottom-top<h*.40:
+                    continue
+                similarity=[_shape_similarity(a['mask'],b['mask'],shape_cache)
+                            for index,a in enumerate(word) for b in word[index+1:]]
+                if np.mean(similarity)>.93:
+                    continue
+                key=tuple(item['box'] for item in word)
+                if key in groups:
+                    continue
+                # 只在比较字形串时消除字间白缝；不改变目标纸片位置。
+                cell_height=max(item['box'][3] for item in word)+4
+                cell_width=max(item['box'][2] for item in word)+4
+                patch=np.zeros((cell_height*count,cell_width),np.uint8)
+                for row,item in enumerate(word):
+                    _,_,bw,bh=item['box']
+                    x=(cell_width-bw)//2
+                    y=row*cell_height+(cell_height-bh)//2
+                    patch[y:y+bh,x:x+bw]=item['mask']
+                groups[key]={'mask':patch,'center':np.array([(left+right)/(2*w),(top+bottom)/(2*h)]),
+                             'count':count,'area':int(patch.sum())}
+    best=.0
+    confidence=.0
+    detail={'groups':len(groups)}
+    values=list(groups.values())
+    for index,a in enumerate(values):
+        for b in values[index+1:]:
+            if np.linalg.norm(a['center']-b['center'])<.45:
+                continue
+            shape=_shape_similarity(a['mask'],b['mask'][::-1,::-1],shape_cache)
+            area=min(a['area'],b['area'])/max(1,a['area'],b['area'])
+            if shape<.72 or area<.50:
+                continue
+            count=min(a['count'],b['count'])/max(a['count'],b['count'])
+            strength=shape*math.sqrt(area)*count
+            location=max(math.exp(-float(np.sum(((a['center']-first)/[.11,.18])**2)
+                                      +np.sum(((b['center']-second)/[.11,.18])**2))*.5)
+                         for first,second in ((np.array([.1,.20]),np.array([.9,.80])),
+                                              (np.array([.9,.80]),np.array([.1,.20]))))
+            score=.5+.5*strength*location-.35*strength*(1-location)
+            if score>best:
+                best=score
+                confidence=strength
+                detail={'groups':len(groups),'shape_match':shape,'location':location,
+                        'characters':[a['count'],b['count']]}
+    return (best,confidence,detail) if confidence else neutral
+
+
 def _body_evidence(planes, components, shape_cache=None):
     ink, color = planes[:, :, 0], planes[:, :, 2] & ~planes[:, :, 1]
     h, w = ink.shape
@@ -492,6 +566,12 @@ def score_layout_structure(frame_rgb, pieces, layout, cache=None):
     shape_cache=cache.setdefault('card_structure_shape_scores',{})
     index, index_conf, index_detail = _index_evidence(ink, components, planes[:, :, 1], owners,shape_cache)
     body, body_conf, body_detail = _body_evidence(planes, components,shape_cache)
+    letter_score,letter_conf,letter_detail=(.5,0.0,{})
+    if body_detail.get('kind')=='unknown':
+        letter_score,letter_conf,letter_detail=_letter_index_evidence(ink,shape_cache)
+        if letter_conf>=.60:
+            index,index_conf,index_detail=letter_score,letter_conf,dict(letter_detail,kind='letter-string')
+            body,body_conf,body_detail=letter_score,letter_conf,{'kind':'lettered-card'}
     joined,join_conf,join_detail=_cut_integrity_evidence(tracks)
     weights = [0.45 * outer_conf, 0.35 * index_conf, 0.20 * body_conf,.25*join_conf]
     total = sum(weights)
@@ -506,5 +586,6 @@ def score_layout_structure(frame_rgb, pieces, layout, cache=None):
             "index_detail": index_detail, "body": body, "body_confidence": body_conf,
             "body_detail": body_detail, "ink_fraction": float(ink.sum()) / area,
             'cut_integrity':joined,'cut_integrity_confidence':join_conf,'cut_integrity_detail':join_detail,
+            'letter_index':letter_score,'letter_index_confidence':letter_conf,'letter_index_detail':letter_detail,
             "rigid_pose_error": error, "coverage": float(valid.mean()),
             "source_component_tracks": tracks, "source_cut_on_outer_fraction": moved_cut}

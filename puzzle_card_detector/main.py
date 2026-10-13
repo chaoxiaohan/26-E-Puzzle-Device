@@ -5031,6 +5031,8 @@ def build_ui_score_items(solve_info):
                 add("角标位置与朝向", structure.get("index"))
                 add("牌面图案完整度", structure.get("body"))
                 add("切口图案跨片接合", structure.get("cut_integrity"))
+                if structure.get('letter_index_confidence',0)>.0:
+                    add("两端完整字形串", structure.get("letter_index"))
             add("不同牌面分差", solve_info.get("selection_margin"))
         else:
             p = get_card_scoring_params()
