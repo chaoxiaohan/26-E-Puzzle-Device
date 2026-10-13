@@ -36,6 +36,11 @@ from card_topology_solver import (
 )
 from card_joint_solver import generate_rectangular_card_candidates, layout_pose_key, relative_texture_matches
 from card_graph_solver import generate_card_graph_candidates
+from card_structure import score_layout_structure
+from card_corner_solver import generate_corner_card_candidates
+from card_fan_solver import generate_fan_card_candidates
+from card_piece_geometry import refine_card_piece_geometry
+from card_strip_solver import generate_strip_card_candidates
 from puzzle_solver import normalize_layout, solve_camera_rectangle
 from serial_protocol import SerialController
 from solver_v2 import solve as solve_edge_layout
@@ -4144,6 +4149,20 @@ def card_layout_signature(layout):
     ).astype(int).ravel())) for piece_id in sorted(layout))
 
 
+def card_structure_enabled(frame_rgb, roi):
+    x, y, width, height = roi
+    region = frame_rgb[y:y + height, x:x + width]
+    if not region.size:
+        return False
+    scale = min(1.0, 240.0 / max(region.shape[:2]))
+    if scale < 1.0:
+        region = cv2.resize(region, None, fx=scale, fy=scale)
+    hsv = cv2.cvtColor(region, cv2.COLOR_RGB2HSV)
+    green = ((hsv[:, :, 0] >= 35) & (hsv[:, :, 0] <= 100)
+             & (hsv[:, :, 1] >= 35) & (hsv[:, :, 2] >= 30))
+    return float(np.mean(green)) >= 0.20
+
+
 def evaluate_card_candidate(
     frame_rgb,
     pieces,
@@ -4255,8 +4274,19 @@ def evaluate_card_candidate(
         texture_cache["face_source"] = (reduced, reduced_pieces, scale)
     reduced, reduced_pieces, scale = texture_cache["face_source"]
     reduced_layout = {piece_id: polygon * scale for piece_id, polygon in pattern_layout.items()}
-    global_pattern = score_layout_global_pattern(reduced, reduced_pieces, reduced_layout)
-    rank_index = score_rank_index_diagonal(reduced, reduced_pieces, reduced_layout)
+    if texture_cache.get("card_structure_enabled", False):
+        structure = score_layout_structure(frame_rgb, pieces, pattern_layout, texture_cache)
+        global_pattern = {"score": structure.get("body", 0.5),
+                          "confidence": structure.get("body_confidence", 0.0)}
+        rank_index = {"score": 0.5 + (structure.get("index", 0.5) - 0.5)
+                      * structure.get("index_confidence", 0.0),
+                      "confidence": structure.get("index_confidence", 0.0),
+                      "valid": structure.get("index", 0.5) >= 0.60,
+                      "locked": False, "pair": None}
+    else:
+        structure = {"score": 0.5, "confidence": 0.0, "valid": False}
+        global_pattern = score_layout_global_pattern(reduced, reduced_pieces, reduced_layout)
+        rank_index = score_rank_index_diagonal(reduced, reduced_pieces, reduced_layout)
     report = {
         "coverage": pattern_report["coverage"],
         "overlap": pattern_report["overlap"],
@@ -4281,9 +4311,7 @@ def evaluate_card_candidate(
     effective_global = 0.5 + (
         global_pattern["score"] - 0.5
     ) * global_pattern["confidence"]
-    effective_index = 0.5 + (
-        rank_index["score"] - 0.5
-    ) * rank_index["confidence"]
+    effective_index = rank_index["score"]
     angle_quality = max(
         0.0,
         1.0 - report["boundary_angle_error"] / 10.0,
@@ -4345,6 +4373,9 @@ def evaluate_card_candidate(
     solve_info["rank_index_valid"] = rank_index["valid"]
     solve_info["rank_index_locked"] = rank_index.get("locked", False)
     solve_info["rank_index_pair"] = rank_index["pair"]
+    solve_info["card_structure"] = structure
+    solve_info["card_structure_score"] = structure["score"]
+    solve_info["card_structure_confidence"] = structure["confidence"]
     solve_info["card_assignment"] = tuple(assignment)
     solve_info["geometry_tier"] = geometry_tier
     solve_info["card_candidate_source"] = source
@@ -4364,14 +4395,17 @@ def card_candidate_primary_score(candidate):
     if info.get("card_joint_search", False):
         texture = info.get("texture_score", 0.5)
         pattern = 0.5 + (info.get("global_pattern_score", 0.5) - 0.5) * info.get("global_pattern_confidence", 0.0)
-        index = 0.5 + (info.get("rank_index_score", 0.5) - 0.5) * info.get("rank_index_confidence", 0.0)
+        index = info.get("rank_index_score", 0.5)
         p = get_card_scoring_params()
         angle = max(0.0, 1.0 - report.get("boundary_angle_error", 10.0) / 10.0)
         boundary = (report.get("corners", 0.0) * 0.35 + report.get("outer_piece_ratio", 0.0) * 0.25
                     + report.get("boundary_min_coverage", 0.0) * 0.25 + angle * 0.15)
-        return float(texture * p["card_weight_texture"] + report.get("coverage", 0.0) * p["card_weight_coverage"]
+        rank = float(texture * p["card_weight_texture"] + report.get("coverage", 0.0) * p["card_weight_coverage"]
                      + report.get("internal_match", 0.0) * p["card_weight_internal_match"]
                      + boundary * p["card_weight_boundary"] + pattern * p["card_weight_global"] + index * p["card_weight_index"])
+        if info.get("card_structure_confidence", 0.0) >= 0.25:
+            rank = rank * 0.45 + info["card_structure_score"] * 0.55
+        return rank
     p = get_card_scoring_params()
     texture_score = info.get("texture_score", 0.5)
     texture_confidence = info.get("texture_confidence", 0.0)
@@ -4422,7 +4456,8 @@ def select_card_candidate(candidates):
     """先比较不同刚体牌面；角标只作软证据，不锁死候选。"""
     if not candidates:
         return None
-    safe = [item for item in candidates if item["info"].get("geometry_tier", 0) >= 2]
+    structured=any(item['info'].get('card_structure_mode',False) for item in candidates)
+    safe = list(candidates) if structured else [item for item in candidates if item["info"].get("geometry_tier", 0) >= 2]
     preview_only = not safe
     if not safe:
         safe = list(candidates)
@@ -4436,6 +4471,8 @@ def select_card_candidate(candidates):
     ordered = sorted(unique.values(), key=lambda item: item["primary_score"], reverse=True)
     selected = ordered[0]
     info = selected["info"]
+    if structured:
+        preview_only=info.get('geometry_tier',0)<2
     margin = selected["primary_score"] - ordered[1]["primary_score"] if len(ordered) > 1 else 0.0
     texture = info.get("texture_score", 0.5)
     confidence = info.get("texture_confidence", 0.0)
@@ -4454,12 +4491,27 @@ def select_card_candidate(candidates):
                     and report.get("internal_match", 0.0) >= 0.55
                     and report.get("outer_piece_ratio", 0.0) >= 0.999
                     and ((margin >= 0.025 and texture_margin >= 0.025) or unique_geometry))
+    if structured:
+        structure=info.get('card_structure',{})
+        printed=structure.get('ink_fraction',0.0)>=.008 and structure.get('confidence',0.0)>=.30
+        bad_outer=structure.get('outer_confidence',0.0)>=.60 and structure.get('outer',.5)<.50
+        bad_index=structure.get('index_confidence',0.0)>=.60 and structure.get('index',.5)<.40
+        strong=(structure.get('confidence',0.0)>=.65 and structure.get('outer',0.0)>=.65
+                and structure.get('index_confidence',0.0)>=.65 and structure.get('index',0.0)>=.70
+                and structure.get('body_confidence',0.0)>=.45 and structure.get('body',0.0)>=.70)
+        geometry_ok=(not preview_only and report.get('coverage',0)>=.88 and report.get('overlap',1)<=.008
+                     and report.get('internal_match',0)>=.55 and report.get('outer_piece_ratio',0)>=.999)
+        verified=bool(printed and not bad_outer and not bad_index
+                      and (verified or (geometry_ok and strong and margin>=.025)))
+        info['card_structure_reasons']=[reason for failed,reason in ((not printed,'insufficient-print'),
+                                      (bad_outer,'outer-print-cut'),(bad_index,'misplaced-indices')) if failed]
     info["selection_score"] = float(selected["primary_score"])
     info["selection_margin"] = float(margin)
     info["texture_selection_margin"] = float(texture_margin)
     info["selection_candidate_count"] = len(ordered)
     info["card_execution_ready"] = verified
     info["card_status"] = ("VERIFIED" if verified else "GEOMETRY_ONLY" if preview_only
+                           else "WEAK_TEXTURE" if structured and not printed
                            else "WEAK_TEXTURE" if confidence < 0.30 else "AMBIGUOUS")
     selected["score"] = float(selected["primary_score"])
     return selected
@@ -4601,9 +4653,25 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
         if (abs(cv2.contourArea(polygon.astype(np.float32))) < 1.0
                 or np.min(np.linalg.norm(np.roll(polygon, -1, axis=0) - polygon, axis=1)) < 1e-6):
             return empty
-    cache = {}
+    cache = {"card_structure_enabled": card_structure_enabled(frame_rgb, roi)}
+    geometry_refinement={"changed":0}
+    if cache["card_structure_enabled"]:
+        pieces,geometry_refinement=refine_card_piece_geometry(frame_rgb,pieces,roi)
+        empty["pieces"]=pieces
     classification = classify_card_pieces(pieces)
-    if classification["kind"] == "all-rectangles":
+    generated = generate_corner_card_candidates(frame_rgb, pieces, candidate_limit=24, cache=cache) if cache["card_structure_enabled"] else {"candidates": []}
+    if cache["card_structure_enabled"] and max((item.get('structure',{}).get('score',.5) for item in generated['candidates']),default=0)<.65:
+        previous=generated
+        fan=generate_fan_card_candidates(frame_rgb,pieces,candidate_limit=24,cache=cache)
+        strip=generate_strip_card_candidates(frame_rgb,pieces,candidate_limit=24,cache=cache)
+        combined=previous['candidates']+fan['candidates']+strip['candidates']
+        if combined:
+            generated=dict(previous,candidates=combined,nodes=previous.get('nodes',0)+fan['nodes']+strip['nodes'],
+                           search_complete=previous.get('search_complete',True) and fan['search_complete'] and strip['search_complete'],
+                           candidate_pool_complete=False)
+    if generated["candidates"]:
+        pass
+    elif classification["kind"] == "all-rectangles":
         generated = generate_rectangular_card_candidates(frame_rgb, pieces, candidate_limit=12, cache=cache)
         if not generated["candidates"]:
             generated = generate_card_graph_candidates(frame_rgb, pieces, time_limit_s=4.0, candidate_limit=12, cache=cache)
@@ -4613,8 +4681,44 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
     search_complete = generated["search_complete"]
     layouts = generated["candidates"]
     geometry_seed = None
-    # 没有合法候选时，C++只提供一个几何种子；仍要展开所有刚体朝向并按纹理比较。
-    if not layouts:
+    candidates = []
+    seen = set()
+
+    def add_candidates(items):
+        for item in items:
+            layout = item["layout"]
+            key = layout_pose_key(layout)
+            if key in seen:
+                continue
+            seen.add(key)
+            report = item.get("report") or evaluate_layout(layout, edge_tolerance_ratio=0.065)
+            if report["overlap"] > 0.008 or report["coverage"] < 0.80:
+                continue
+            base_info = {"ratio": report["width"] / max(1.0, report["height"]),
+                         "solve_scale": 1.0, "width": report["width"], "height": report["height"],
+                         "coverage": report["coverage"], "overlap": report["overlap"],
+                         "forced": False, "method": item["source"], "card_mode": True,
+                         "card_joint_search": True, "card_search_complete": search_complete,
+                         "card_candidate_pool_complete": generated.get("candidate_pool_complete", search_complete),
+                         "card_generated_candidate_count": len(layouts),
+                         "card_excluded_texture_bound": generated.get("excluded_texture_bound"),
+                         "card_search_nodes": nodes,
+                         "card_structure_mode": cache["card_structure_enabled"],
+                         "card_piece_geometry_refinement": geometry_refinement}
+            candidate = evaluate_card_candidate(
+                frame_rgb, pieces, layout, base_info, roi, cache, item["source"],
+                item.get("assignment", tuple(range(len(pieces)))), allow_refine=False)
+            if candidate is not None:
+                candidates.append(candidate)
+
+    add_candidates(layouts)
+    # 修复并评分后仍无可用牌面时才搜几何种子，避免正常矩形牌重复搜索。
+    weak_print = bool(cache['card_structure_enabled'] and candidates
+                      and max(item['info']['card_structure'].get('ink_fraction',0) for item in candidates)>=.008
+                      and (max(item['info']['card_structure_score'] for item in candidates)<.70
+                           or all(item['info']['card_structure'].get('index_confidence',0)>=.60
+                                  and item['info']['card_structure'].get('index',.5)<.40 for item in candidates)))
+    if not candidates or weak_print:
         base, _, tested, base_info = solve_rectangle_by_cover_cpp(pieces, fill_ratio=0.88, position_step=3)
         nodes += tested
         search_complete = False
@@ -4632,42 +4736,26 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
                                      "source": "card-joint-cpp", "assignment": assignment})
             for alternative in alternatives:
                 alternative["texture"] = relative_texture_matches(alternative["texture"], cache.get("pairs", {}))
-            alternatives.sort(key=lambda item: item["texture"]["score"], reverse=True)
-            generated["candidate_pool_complete"] = len(alternatives) <= 12
+                if cache["card_structure_enabled"]:
+                    alternative["structure"] = score_layout_structure(frame_rgb, pieces, alternative["layout"], cache)
+            alternatives.sort(key=lambda item: item["texture"]["score"] * 0.45
+                              + item.get("structure", {}).get("score", 0.5) * 0.55
+                              if cache["card_structure_enabled"] else item["texture"]["score"], reverse=True)
+            generated["candidate_pool_complete"] = False
             generated["excluded_texture_bound"] = alternatives[12]["texture"]["score"] if len(alternatives) > 12 else None
-            layouts = alternatives[:12]
-    candidates = []
-    seen = set()
-    for item in layouts:
-        layout = item["layout"]
-        key = layout_pose_key(layout)
-        if key in seen:
-            continue
-        seen.add(key)
-        report = item.get("report") or evaluate_layout(layout, edge_tolerance_ratio=0.065)
-        if report["overlap"] > 0.008 or report["coverage"] < 0.80:
-            continue
-        base_info = {"ratio": report["width"] / max(1.0, report["height"]),
-                     "solve_scale": 1.0, "width": report["width"], "height": report["height"],
-                     "coverage": report["coverage"], "overlap": report["overlap"],
-                     "forced": False, "method": item["source"], "card_mode": True,
-                     "card_joint_search": True, "card_search_complete": search_complete,
-                     "card_candidate_pool_complete": generated.get("candidate_pool_complete", search_complete),
-                     "card_generated_candidate_count": len(layouts),
-                     "card_excluded_texture_bound": generated.get("excluded_texture_bound"),
-                     "card_search_nodes": nodes}
-        candidate = evaluate_card_candidate(
-            frame_rgb, pieces, layout, base_info, roi, cache, item["source"],
-            item.get("assignment", tuple(range(len(pieces)))), allow_refine=False)
-        if candidate is not None:
-            candidates.append(candidate)
+            layouts = layouts + alternatives[:12]
+            add_candidates(alternatives[:12])
     pairs = dict(cache.get("joint_pairs", {}))
     pairs.update(cache.get("card_graph", {}).get("texture", {}).get("pairs", {}))
     pairs.update(cache.get("pairs", {}))
     for candidate in candidates:
         relative = relative_texture_matches(candidate["raw_texture"], pairs)
         candidate["info"].update(texture_score=relative["score"], texture_confidence=relative["confidence"],
-                                  raw_texture_score=candidate["raw_texture"]["score"])
+                                  raw_texture_score=candidate["raw_texture"]["score"],
+                                  card_search_complete=search_complete, card_search_nodes=nodes,
+                                  card_generated_candidate_count=len(layouts),
+                                  card_candidate_pool_complete=generated.get("candidate_pool_complete", search_complete),
+                                  card_excluded_texture_bound=generated.get("excluded_texture_bound"))
     best = select_card_candidate(candidates)
     print("CARD_JOINT kind=%s nodes=%d candidates=%d complete=%s status=%s margin=%.4f" % (
         classification["kind"], nodes, len(candidates), search_complete,
@@ -4924,14 +5012,22 @@ def build_ui_score_items(solve_info):
         ) * index_confidence
         if solve_info.get("card_joint_search", False):
             effective_texture = texture_score
+            effective_index = solve_info.get("rank_index_score", 0.5)
             p = get_card_scoring_params()
-            add("相对拼缝匹配", effective_texture, p["card_weight_texture"])
+            scale = 0.45 if solve_info.get("card_structure_confidence", 0.0) >= 0.25 else 1.0
+            add("相对拼缝匹配", effective_texture, p["card_weight_texture"] * scale)
             add("原始拼缝分", solve_info.get("raw_texture_score"))
-            add("矩形覆盖度", report.get("coverage", 0.0), p["card_weight_coverage"])
-            add("内部边匹配", report.get("internal_match", 0.0), p["card_weight_internal_match"])
-            add("外框质量", boundary_quality, p["card_weight_boundary"])
-            add("全局牌面", effective_global, p["card_weight_global"])
-            add("对角角标", effective_index, p["card_weight_index"])
+            add("矩形覆盖度", report.get("coverage", 0.0), p["card_weight_coverage"] * scale)
+            add("内部边匹配", report.get("internal_match", 0.0), p["card_weight_internal_match"] * scale)
+            add("外框质量", boundary_quality, p["card_weight_boundary"] * scale)
+            add("全局牌面", effective_global, p["card_weight_global"] * scale)
+            add("对角角标", effective_index, p["card_weight_index"] * scale)
+            if scale < 1.0:
+                structure = solve_info["card_structure"]
+                add("牌面结构", structure["score"], 0.55)
+                add("切开花色留在内部", structure.get("outer"))
+                add("角标位置与朝向", structure.get("index"))
+                add("牌面图案完整度", structure.get("body"))
             add("不同牌面分差", solve_info.get("selection_margin"))
         else:
             p = get_card_scoring_params()
@@ -5637,7 +5733,7 @@ def main():
                     "motion_plan_count": len(motion_plan),
                     "solved_display": solved_display or [],
                     "candidate_items": candidate_pool_items,
-                    "card_solver_revision": "joint-relative-20261012",
+                    "card_solver_revision": "structure-portfolio-20261013",
                     "card_scoring": get_card_scoring_params(),
                     "competition_mode": bool(competition_mode),
                     "competition_active": bool(competition_active),
@@ -6753,7 +6849,7 @@ def main():
                 "motion_plan_count": len(motion_plan),
                 "solved_display": solved_display or [],
                 "candidate_items": candidate_pool_items,
-                "card_solver_revision": "joint-relative-20261012",
+                "card_solver_revision": "structure-portfolio-20261013",
                 "card_scoring": get_card_scoring_params(),
                 "competition_mode": bool(competition_mode),
                 "competition_active": bool(competition_active),

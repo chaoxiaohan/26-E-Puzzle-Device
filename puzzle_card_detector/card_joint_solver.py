@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 
 from card_face_solver import _compare_edge_strips, _sample_edge_strip, _texture_summary
+from card_structure import score_layout_structure
 from layout_constraints import evaluate_layout
 from solver_v2 import normalize_polygon
 
@@ -250,7 +251,11 @@ def generate_rectangular_card_candidates(frame_rgb, pieces, candidate_limit=64, 
                                        "source": "card-joint-rectangle", "assignment": order}
     for candidate in unique.values():
         candidate["texture"] = relative_texture_matches(candidate["texture"], scorer.pairs)
-    ordered = sorted(unique.values(), key=lambda item: item["texture"]["score"], reverse=True)
+        if cache.get("card_structure_enabled", False):
+            candidate["structure"] = score_layout_structure(frame_rgb, pieces, candidate["layout"], cache)
+    ordered = sorted(unique.values(), key=lambda item: item["texture"]["score"] * 0.45
+                     + item.get("structure", {}).get("score", 0.5) * 0.55
+                     if cache.get("card_structure_enabled", False) else item["texture"]["score"], reverse=True)
     kept = []
     last_rank = -1
     for last_rank, candidate in enumerate(ordered):

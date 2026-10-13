@@ -229,7 +229,14 @@ def generate_card_graph_candidates(frame_rgb, pieces, time_limit_s=3.5,
                 break
     for candidate in candidates:
         candidate["texture"] = relative_texture_matches(candidate["texture"], texture_cache.get("pairs", {}))
-    candidates.sort(key=lambda item: (item["texture"]["score"], item["report"]["score"]), reverse=True)
+    if cache.get("card_structure_enabled", False):
+        from card_structure import score_layout_structure
+        for candidate in candidates:
+            candidate["structure"] = score_layout_structure(frame_rgb, pieces, candidate["layout"], cache)
+    candidates.sort(key=lambda item: (item["texture"]["score"] * 0.45
+                    + item.get("structure", {}).get("score", 0.5) * 0.55
+                    if cache.get("card_structure_enabled", False) else item["texture"]["score"],
+                    item["report"]["score"]), reverse=True)
     if len(candidates) > candidate_limit:
         excluded_texture_bound = candidates[int(candidate_limit)]["texture"]["score"]
         candidates = candidates[:int(candidate_limit)]

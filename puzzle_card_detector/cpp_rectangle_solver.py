@@ -7,11 +7,11 @@ import numpy as np
 _library = None
 
 
-def load_library():
+def load_library(path=None):
     global _library
     if _library is not None:
         return _library
-    path = os.path.join(
+    path = path or os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         "librectangle_solver.so",
     )
