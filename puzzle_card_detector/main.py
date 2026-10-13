@@ -5190,6 +5190,7 @@ def competition_retry_limit_reached(
 def main():
     global _card_scoring_params
     cv2.setLogLevel(2)
+    cv2.setNumThreads(1)
     portrait_mode = os.environ.get("PUZZLE_PORTRAIT", "0") == "1"
     capture_width = 1280
     capture_height = 720
@@ -5337,6 +5338,7 @@ def main():
     print("Puzzle detector started", flush=True)
 
     while not app.need_exit():
+        loop_started_at = time.monotonic()
         solve_requested = False
         card_requested = False
         capture_requested = False
@@ -5705,7 +5707,9 @@ def main():
                     "mode": ui_mode.lower(),
                     "camera_ok": False,
                     "vision_paused": False,
-                    "vision_processing_revision": "pause-during-solve-20261013",
+                    "vision_processing_revision": "pause-low-load-20261013",
+                    "vision_threads": int(cv2.getNumThreads()),
+                    "vision_max_fps": 10.0,
                     "fps": 0.0,
                     "piece_count": 0,
                     "auto_threshold": bool(auto_threshold),
@@ -6814,7 +6818,9 @@ def main():
                 "mode": ui_mode.lower(),
                 "camera_ok": True,
                 "vision_paused": bool(vision_paused or (solver_future is not None and not solver_future.done())),
-                "vision_processing_revision": "pause-during-solve-20261013",
+                "vision_processing_revision": "pause-low-load-20261013",
+                "vision_threads": int(cv2.getNumThreads()),
+                "vision_max_fps": 10.0,
                 "fps": round(float(fps), 1),
                 "piece_count": len(pieces),
                 "auto_threshold": bool(auto_threshold),
@@ -6904,6 +6910,7 @@ def main():
                 last_print_time = now
 
             disp.show(img)
+            time.sleep(max(0.0, 0.1 - (time.monotonic() - loop_started_at)))
 
     cam.close()
     serial_controller.disconnect()

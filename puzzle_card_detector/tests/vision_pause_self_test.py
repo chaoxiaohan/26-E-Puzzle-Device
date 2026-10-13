@@ -150,7 +150,7 @@ def run_case(mode, outcome, headless=True):
                         'polarity': 'LIGHT', 'green_auto_values': None}
 
     def sleep(seconds):
-        context.sleeps.append(seconds)
+        context.sleeps.append((context.loop, seconds))
         context.now += seconds
 
     def timer(*args):
@@ -191,12 +191,16 @@ def run_case(mode, outcome, headless=True):
     assert context.queries == 1
     assert context.services == len(context.states)
     assert paused[-1]['services'] > paused[0]['services']
-    assert context.sleeps and all(value == 0.05 for value in context.sleeps)
+    waiting_sleeps = [value for loop, value in context.sleeps if loop in {state['loop'] for state in paused[1:]}]
+    assert waiting_sleeps and all(value == 0.05 for value in waiting_sleeps)
+    assert all(0 <= value <= 0.1 for loop, value in context.sleeps)
+    assert context.states[-1]['vision_threads'] == 1
+    assert context.states[-1]['vision_max_fps'] == 10.0
     assert context.states[-1]['reads'] > paused[-1]['reads']
     assert context.states[-1]['frame_revision'] > paused[-1]['frame_revision']
     assert not context.states[-1]['vision_paused'] and not context.states[-1]['solving']
     assert hashlib.sha256(future.frame.tobytes()).hexdigest() == future.digest
-    assert wait_key.call_count == (len(context.sleeps) if not headless else 0)
+    assert wait_key.call_count == (len(waiting_sleeps) if not headless else 0)
     if outcome == 'stop':
         assert context.stop_sent and future.cancelled and future.result_calls == 0
         assert any(state['solver_message'] == 'STOPPED' for state in context.states)
