@@ -516,6 +516,16 @@ def _best_similarity_pose(source, target):
     return best
 
 
+def _boundary_fit_error(source,target):
+    """均匀边界到线段的距离；不依赖两个轮廓的顶点数和起点。"""
+    samples=_resample_polygon_boundary(source)
+    edges=np.roll(target,-1,axis=0)-target
+    relative=samples[:,None,:]-target[None,:,:]
+    amount=np.clip(np.sum(relative*edges,axis=2)/np.maximum(1e-9,np.sum(edges*edges,axis=1)),0,1)
+    distance=np.linalg.norm(relative-amount[:,:,None]*edges,axis=2).min(axis=1)
+    return float(distance.mean())
+
+
 def _rigid_similarity_poses(source, target):
     """保留近等价的顶点对应姿态；只旋转和平移，不改变碎片尺寸。"""
     source = np.asarray(source, dtype=np.float64)
@@ -526,6 +536,8 @@ def _rigid_similarity_poses(source, target):
         or not np.all(np.isfinite(target))
     ):
         return []
+    original_source=source.copy()
+    original_target=target.copy()
     if len(source) != len(target):
         source = _resample_polygon_boundary(source)
         target = _resample_polygon_boundary(target)
@@ -561,6 +573,25 @@ def _rigid_similarity_poses(source, target):
         if any(np.allclose(pose[2], old[2], atol=1e-7, rtol=0.0) for old in poses):
             continue
         poses.append(pose)
+    # 多余的圆角/缺角顶点不能消除近矩形片的半转方向。
+    if poses and max(len(original_source),len(original_target))>4:
+        source_box=cv2.minAreaRect(original_source.astype(np.float32))
+        target_box=cv2.minAreaRect(original_target.astype(np.float32))
+        source_area=source_box[1][0]*source_box[1][1]
+        target_area=target_box[1][0]*target_box[1][1]
+        near_rectangle=(source_area>1 and target_area>1
+                        and abs(cv2.contourArea(original_source.astype(np.float32)))/source_area>=.90
+                        and abs(cv2.contourArea(original_target.astype(np.float32)))/target_area>=.90)
+        if near_rectangle:
+            source_middle=np.array(source_box[0],dtype=float)
+            target_middle=np.array(target_box[0],dtype=float)
+            rotation=-poses[0][2]
+            transformed=(original_source-source_middle)@rotation.T+target_middle
+            distance=max(_boundary_fit_error(transformed,original_target),
+                         _boundary_fit_error(original_target,transformed))
+            error=distance/max(radius,target_radius)
+            if error<=.06 and not any(np.allclose(rotation,pose[2],atol=1e-7,rtol=0) for pose in poses):
+                poses.append((target_middle,source_middle,rotation,1.0,error))
     return poses
 
 

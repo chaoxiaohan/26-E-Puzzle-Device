@@ -86,6 +86,14 @@ def run():
             check_rigid(shape, (shape - source_center) @ rotation.T + target_center)
 
     assert not _rigid_similarity_poses(rectangle, rectangle * 1.5)
+    clipped=np.asarray([(0,0),(80,0),(80,25),(74,30),(0,30)],dtype=float)
+    clipped_poses=_rigid_similarity_poses(clipped,clipped+(30,100))
+    assert len(clipped_poses)==2,'extra contour vertex discarded the half turn'
+    assert any(np.allclose(pose[2],-np.eye(2),atol=1e-7) for pose in clipped_poses)
+    for target_center,source_center,rotation,scale,_ in clipped_poses:
+        assert scale==1.0
+        check_rigid(clipped,(clipped-source_center)@rotation.T+target_center)
+    assert not _rigid_similarity_poses(clipped,clipped*1.5)
     pieces = [{"points": rectangle}, {"points": rectangle * 1.5 + (150, 0)}]
     slots = {index: piece["points"] + (0, 100) for index, piece in enumerate(pieces)}
     for generate in (generate_shape_swap_layouts, generate_all_slot_layouts):
