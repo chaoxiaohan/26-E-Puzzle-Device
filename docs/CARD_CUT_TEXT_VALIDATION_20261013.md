@@ -39,6 +39,8 @@
 - 板端完整回放：`/home/cat/.cache/puzzle-migration/card-optimize-20261013/replay-board-cutfix-v3`；部署和版本清单：同任务目录的 `cut-text-activation-v3.json`、`cut-text-live-verification-v3.json`、`cut-text-board-manifest-v3.json`。
 - 可检查的逐例结果、原图哈希、运行文件哈希和自检日志：[JSON 证据](card-cut-text-validation-20261013.json)。
 
+Git 提交统一文本换行为 LF。板端 `main.py` 使用 CRLF，因此该文件的 Git blob 哈希与部署字节哈希不同；逐字节比较仅有换行差异，其余 13 个文件字节完全相同。上述 JSON 分别记录 Git blob 与部署文件的 SHA-256，避免把文本内容一致误写成全部原始字节一致。
+
 ## 各例结果
 
 | 原图编号 | 类型 | 图像复核 | 程序状态 | 板端秒数 |
