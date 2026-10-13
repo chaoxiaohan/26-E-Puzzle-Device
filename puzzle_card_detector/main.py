@@ -6322,7 +6322,8 @@ def main():
                 time.monotonic() - solve_started_at
             ) * 1000.0
 
-        if solver_future is not None and solver_future.done():
+        # 中途完成的任务留到下一轮，恢复取帧后再处理结果。
+        if not vision_paused and solver_future is not None and solver_future.done():
             result_mode = active_solver_mode
             try:
                 result = solver_future.result()
@@ -6812,7 +6813,7 @@ def main():
             {
                 "mode": ui_mode.lower(),
                 "camera_ok": True,
-                "vision_paused": bool(solver_future is not None and not solver_future.done()),
+                "vision_paused": bool(vision_paused or (solver_future is not None and not solver_future.done())),
                 "vision_processing_revision": "pause-during-solve-20261013",
                 "fps": round(float(fps), 1),
                 "piece_count": len(pieces),

@@ -76,8 +76,13 @@ def run_case(mode, outcome, headless=True):
             self.digest = hashlib.sha256(frame.tobytes()).hexdigest()
             self.cancelled = False
             self.result_calls = 0
+            self.first_completion_check = False
+            self.reads_when_result = None
 
         def done(self):
+            if outcome == 'complete_mid_poll' and context.loop == self.submitted + 6 and not self.first_completion_check:
+                self.first_completion_check = True
+                return False
             return self.cancelled or context.loop >= self.submitted + 6
 
         def cancel(self):
@@ -85,6 +90,7 @@ def run_case(mode, outcome, headless=True):
 
         def result(self):
             self.result_calls += 1
+            self.reads_when_result = context.reads
             if outcome == 'error':
                 raise RuntimeError('simulated worker failure')
             layout = {}
@@ -196,6 +202,7 @@ def run_case(mode, outcome, headless=True):
         assert any(state['solver_message'] == 'STOPPED' for state in context.states)
     else:
         assert future.result_calls == 1 and not future.cancelled
+        assert future.reads_when_result > paused[-1]['reads']
         if outcome == 'error':
             assert any(state['solver_message'] == ('CARD ERROR' if mode == 'CARD' else 'SOLVE ERROR') for state in context.states)
         else:
@@ -209,7 +216,7 @@ def run_case(mode, outcome, headless=True):
 
 def main():
     for mode in ['CARD', 'NORMAL']:
-        for outcome in ['complete', 'stop', 'error']:
+        for outcome in ['complete', 'complete_mid_poll', 'stop', 'error']:
             run_case(mode, outcome)
     run_case('CARD', 'complete', headless=False)
 
