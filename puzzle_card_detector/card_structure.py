@@ -50,6 +50,7 @@ def _piece_features(rgb, piece):
                        red & inside, color & ~green & inside,
                        frame & inside), axis=2).astype(np.uint8) * 255
     border = (mask > 0) & (cv2.erode(mask, np.ones((13, 13), np.uint8)) == 0)
+    contact_border=(mask>0)&(cv2.distanceTransform(mask,cv2.DIST_L2,5)<=3.2)
     tracked = []
     for component_id, component in enumerate(_components(planes[:, :, 0] > 0)):
         x, y, bw, bh = component["box"]
@@ -58,7 +59,12 @@ def _piece_features(rgb, piece):
         cut_points = np.column_stack((xx + x, yy + y)).astype(np.float64)
         if len(cut_points) > 96:
             cut_points = cut_points[np.linspace(0, len(cut_points) - 1, 96).astype(int)]
-        tracked.append((component_id, component["center"], component["area"], cut_points))
+        contact=component['mask']&contact_border[y:y+bh,x:x+bw]
+        yy,xx=np.nonzero(contact)
+        join_points=np.column_stack((xx+x,yy+y)).astype(float)
+        if len(join_points)>48:
+            join_points=join_points[np.linspace(0,len(join_points)-1,48).astype(int)]
+        tracked.append((component_id, component["center"], component["area"], cut_points,join_points))
     return polygon, lo, planes, mask, tracked
 
 
@@ -97,6 +103,7 @@ def _assemble(rgb, pieces, layout, cache):
     owners = np.zeros(canvas.shape[:2], np.int32)
     errors = []
     tracks = []
+    contacts=[]
     features = cache.setdefault("card_structure_pieces", {})
     for key, target in targets.items():
         if key not in features:
@@ -114,7 +121,7 @@ def _assemble(rgb, pieces, layout, cache):
         canvas = np.maximum(canvas, warped)
         valid = np.maximum(valid, covered)
         owners[covered > 0] = key + 1
-        for component_id, center, area, cut_points in source_tracks:
+        for component_id, center, area, cut_points,join_points in source_tracks:
             moved = matrix[:, :2] @ center + matrix[:, 2]
             exterior = 0.0
             if len(cut_points):
@@ -125,6 +132,24 @@ def _assemble(rgb, pieces, layout, cache):
                            "center": [float(moved[0] / shape[0]), float(moved[1] / shape[1])],
                            "source_area": area, "source_cut_samples": len(cut_points),
                            "cut_on_outer_fraction": exterior})
+            if area>=20 and len(join_points)>=8:
+                contacts.append((key,tracks[-1],join_points@matrix[:,:2].T+matrix[:,2]))
+    join_radius=max(5.0,min(shape)*.06)
+    distances={}
+    for key,track,points in contacts:
+        outer=np.minimum(points,np.array(shape)-1-points).min(axis=1)
+        points=points[outer>join_radius]
+        if not len(points):
+            continue
+        if key not in distances:
+            other=(canvas[:,:,0]>0)&(owners>0)&(owners!=key+1)
+            distances[key]=cv2.distanceTransform((~other).astype(np.uint8),cv2.DIST_L2,5)
+        xy=np.rint(points).astype(int)
+        xy[:,0]=np.clip(xy[:,0],0,shape[0]-1)
+        xy[:,1]=np.clip(xy[:,1],0,shape[1]-1)
+        measured=distances[key][xy[:,1],xy[:,0]]
+        track['join_samples']=len(points)
+        track['join_fraction']=float(np.mean(measured<=join_radius))
     return canvas > 0, valid > 0, float(max(errors)), scale, tracks, owners
 
 
@@ -194,6 +219,15 @@ def _outer_evidence(ink, valid):
     score = math.exp(-cut * 14.0)
     confidence = min(1.0, float(ink.sum()) / max(1, h * w * 0.035))
     return score, confidence, cuts
+
+
+def _cut_integrity_evidence(tracks):
+    contacts=[track for track in tracks if track.get('join_samples',0)>=8]
+    samples=sum(track['join_samples'] for track in contacts)
+    if not samples:
+        return .5,0.0,{'samples':0}
+    matched=sum(track['join_samples']*track['join_fraction'] for track in contacts)/samples
+    return matched,min(1.0,samples/40.0),{'samples':samples,'matched_fraction':matched}
 
 
 def _index_evidence(ink, components, red=None, owners=None, shape_cache=None):
@@ -449,9 +483,10 @@ def score_layout_structure(frame_rgb, pieces, layout, cache=None):
     shape_cache=cache.setdefault('card_structure_shape_scores',{})
     index, index_conf, index_detail = _index_evidence(ink, components, planes[:, :, 1], owners,shape_cache)
     body, body_conf, body_detail = _body_evidence(planes, components,shape_cache)
-    weights = [0.45 * outer_conf, 0.35 * index_conf, 0.20 * body_conf]
+    joined,join_conf,join_detail=_cut_integrity_evidence(tracks)
+    weights = [0.45 * outer_conf, 0.35 * index_conf, 0.20 * body_conf,.25*join_conf]
     total = sum(weights)
-    raw = sum(value * weight for value, weight in zip((outer, index, body), weights)) / max(1e-6, total)
+    raw = sum(value * weight for value, weight in zip((outer, index, body,joined), weights)) / max(1e-6, total)
     # A pose with large polygon drift has unreliable print placement, even though
     # the render always uses rotation + translation without fitting scale/shear.
     pose_conf = math.exp(-error / max(2.0, min(ink.shape) / scale * 0.025))
@@ -461,5 +496,6 @@ def score_layout_structure(frame_rgb, pieces, layout, cache=None):
             "outer_cut_fractions": cuts, "index": index, "index_confidence": index_conf,
             "index_detail": index_detail, "body": body, "body_confidence": body_conf,
             "body_detail": body_detail, "ink_fraction": float(ink.sum()) / area,
+            'cut_integrity':joined,'cut_integrity_confidence':join_conf,'cut_integrity_detail':join_detail,
             "rigid_pose_error": error, "coverage": float(valid.mean()),
             "source_component_tracks": tracks, "source_cut_on_outer_fraction": moved_cut}
