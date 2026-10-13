@@ -4715,9 +4715,16 @@ def solve_card_piece_set_worker(frame_rgb, pieces, roi):
 
     add_candidates(layouts)
     # 修复并评分后仍无可用牌面时才搜几何种子，避免正常矩形牌重复搜索。
+    missing_print_structure=bool(candidates and all(
+        item['info']['card_structure'].get('body_detail',{}).get('kind')=='unknown'
+        and not (item['info']['card_structure'].get('index_confidence',0)>=.65
+                 and item['info']['card_structure'].get('index',.5)>=.70)
+        and not (item['info']['card_structure'].get('letter_index_confidence',0)>=.45
+                 and item['info']['card_structure'].get('letter_index',.5)>=.70)
+        for item in candidates))
     weak_print = bool(cache['card_structure_enabled'] and candidates
                       and max(item['info']['card_structure'].get('ink_fraction',0) for item in candidates)>=.008
-                      and (max(item['info']['card_structure_score'] for item in candidates)<.70
+                      and (missing_print_structure or max(item['info']['card_structure_score'] for item in candidates)<.70
                            or all(item['info']['card_structure'].get('index_confidence',0)>=.60
                                   and item['info']['card_structure'].get('index',.5)<.40 for item in candidates)))
     if not candidates or weak_print:
