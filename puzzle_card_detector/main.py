@@ -4496,15 +4496,17 @@ def select_card_candidate(candidates):
         printed=structure.get('ink_fraction',0.0)>=.008 and structure.get('confidence',0.0)>=.30
         bad_outer=structure.get('outer_confidence',0.0)>=.60 and structure.get('outer',.5)<.50
         bad_index=structure.get('index_confidence',0.0)>=.60 and structure.get('index',.5)<.40
+        bad_cut=structure.get('cut_integrity_confidence',0.0)>=.65 and structure.get('cut_integrity',.5)<.35
         strong=(structure.get('confidence',0.0)>=.65 and structure.get('outer',0.0)>=.65
                 and structure.get('index_confidence',0.0)>=.65 and structure.get('index',0.0)>=.70
                 and structure.get('body_confidence',0.0)>=.45 and structure.get('body',0.0)>=.70)
         geometry_ok=(not preview_only and report.get('coverage',0)>=.88 and report.get('overlap',1)<=.008
                      and report.get('internal_match',0)>=.55 and report.get('outer_piece_ratio',0)>=.999)
-        verified=bool(printed and not bad_outer and not bad_index
+        verified=bool(printed and not bad_outer and not bad_index and not bad_cut
                       and (verified or (geometry_ok and strong and margin>=.025)))
         info['card_structure_reasons']=[reason for failed,reason in ((not printed,'insufficient-print'),
-                                      (bad_outer,'outer-print-cut'),(bad_index,'misplaced-indices')) if failed]
+                                      (bad_outer,'outer-print-cut'),(bad_index,'misplaced-indices'),
+                                      (bad_cut,'unmatched-print-cut')) if failed]
     info["selection_score"] = float(selected["primary_score"])
     info["selection_margin"] = float(margin)
     info["texture_selection_margin"] = float(texture_margin)
@@ -5028,6 +5030,7 @@ def build_ui_score_items(solve_info):
                 add("切开花色留在内部", structure.get("outer"))
                 add("角标位置与朝向", structure.get("index"))
                 add("牌面图案完整度", structure.get("body"))
+                add("切口图案跨片接合", structure.get("cut_integrity"))
             add("不同牌面分差", solve_info.get("selection_margin"))
         else:
             p = get_card_scoring_params()

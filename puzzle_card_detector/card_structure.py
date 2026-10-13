@@ -142,14 +142,23 @@ def _assemble(rgb, pieces, layout, cache):
         if not len(points):
             continue
         if key not in distances:
-            other=(canvas[:,:,0]>0)&(owners>0)&(owners!=key+1)
-            distances[key]=cv2.distanceTransform((~other).astype(np.uint8),cv2.DIST_L2,5)
+            other_paper=(owners>0)&(owners!=key+1)
+            other_ink=(canvas[:,:,0]>0)&other_paper
+            distances[key]=(cv2.distanceTransform((~other_ink).astype(np.uint8),cv2.DIST_L2,5),
+                            cv2.distanceTransform((~other_paper).astype(np.uint8),cv2.DIST_L2,5))
         xy=np.rint(points).astype(int)
         xy[:,0]=np.clip(xy[:,0],0,shape[0]-1)
         xy[:,1]=np.clip(xy[:,1],0,shape[1]-1)
-        measured=distances[key][xy[:,1],xy[:,0]]
+        ink_distance,paper_distance=distances[key]
+        measured=ink_distance[xy[:,1],xy[:,0]]
+        gap=paper_distance[xy[:,1],xy[:,0]]
+        excess=np.maximum(0,measured-gap)
+        quality=np.clip(1-(excess-3.0)/join_radius,0,1)
+        quality*=gap<=max(6.0,min(shape)*.10)
         track['join_samples']=len(points)
-        track['join_fraction']=float(np.mean(measured<=join_radius))
+        track['join_distance_median']=float(np.median(measured))
+        track['join_gap_median']=float(np.median(gap))
+        track['join_fraction']=float(np.mean(quality))
     return canvas > 0, valid > 0, float(max(errors)), scale, tracks, owners
 
 
