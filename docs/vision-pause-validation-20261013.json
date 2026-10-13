@@ -1,0 +1,198 @@
+{
+  "revision": "pause-low-load-20261013",
+  "board_tests": {
+    "stage": "/home/cat/.cache/puzzle-migration/vision-pause-20261013-v3/backend-98f9f377585d",
+    "tests": [
+      {
+        "module": "tests.vision_pause_self_test",
+        "exit_code": 0
+      },
+      {
+        "module": "tests.camera_reconnect_self_test",
+        "exit_code": 0
+      },
+      {
+        "module": "tests.ui_bridge_self_test",
+        "exit_code": 0
+      },
+      {
+        "module": "tests.competition_mode_self_test",
+        "exit_code": 0
+      }
+    ],
+    "passed": true
+  },
+  "live_verification": {
+    "old_backend_pid": 58687,
+    "backup": "/home/cat/.cache/puzzle-migration/vision-pause-20261013-v3/before-vision-pause-1791898398202951398.tar.gz",
+    "old": {
+      "main.py": "417d66be3a9d0b2735a4639a9f88f4cb5756bfd280b830a524cc07f831128efe",
+      "tests/vision_pause_self_test.py": "86f3bf65c3dd73729ac38996f70f38f8c964803797f5d175c81b81666d0da260"
+    },
+    "installed": {
+      "main.py": "98f9f377585d745e32e817fc9002dfa06d096364baea9ba1e27e9e93e4995c27",
+      "tests/vision_pause_self_test.py": "b2a2819a79cfb05c6a61d5ab40a9bbb807e6f473870cae07f0a6b0235a283f76"
+    },
+    "settings": {
+      "vision_settings.json": "075de1a1fab941a2f3d4c0659421467fba1b4b42873e08ff6f89abfee15cea87",
+      "serial_settings.json": "0b4d5e69d671fa72175719ac6ec325642a22d0b712080ceb4afc743ac0b70a2a",
+      "templates.json": "c0595c6a0cedc886221b23695a2aad5ed8e9209e843cf1ac17616a16f35db5bb",
+      "roi_settings.json": "0e0e3c9ea3072636f74602216ba7bd24906148aefd671ae333947d53c1c2c432",
+      "card_scoring_settings.json": "5e912a635c71b7faba92f81a0a048095aa33eaec55f10c1a519bb2c783835c18"
+    },
+    "backend_pids": [
+      99063
+    ],
+    "ui_pids": [
+      5134
+    ],
+    "revision": "pause-low-load-20261013",
+    "state_age_ms": 253.925537109375,
+    "camera_ok": true,
+    "serial_connected": true,
+    "vision_paused": false,
+    "solving": false,
+    "settings_preserved": true,
+    "vision_threads": 1,
+    "vision_max_fps": 10.0
+  },
+  "camera_probe": {
+    "phase": "passed",
+    "before": {
+      "fps": 1.7,
+      "piece_count": 4,
+      "frame_revision": 75,
+      "vision_threads": 1,
+      "vision_max_fps": 10.0
+    },
+    "paused_samples": [
+      {
+        "frame_revision": 82,
+        "updated_at_ms": 1791898448641,
+        "fps": 0.0,
+        "vision_paused": true,
+        "solver_ms": 277.5,
+        "serial_connected": true,
+        "jpeg_sha256": "8a43e2f89289bd78b8a4a3d3ec81b99fbf1f1a6a2e468a9615ef78420d55f456"
+      },
+      {
+        "frame_revision": 82,
+        "updated_at_ms": 1791898448873,
+        "fps": 0.0,
+        "vision_paused": true,
+        "solver_ms": 505.6,
+        "serial_connected": true,
+        "jpeg_sha256": "8a43e2f89289bd78b8a4a3d3ec81b99fbf1f1a6a2e468a9615ef78420d55f456"
+      },
+      {
+        "frame_revision": 82,
+        "updated_at_ms": 1791898449112,
+        "fps": 0.0,
+        "vision_paused": true,
+        "solver_ms": 743.3,
+        "serial_connected": true,
+        "jpeg_sha256": "8a43e2f89289bd78b8a4a3d3ec81b99fbf1f1a6a2e468a9615ef78420d55f456"
+      },
+      {
+        "frame_revision": 82,
+        "updated_at_ms": 1791898449343,
+        "fps": 0.0,
+        "vision_paused": true,
+        "solver_ms": 978.7,
+        "serial_connected": true,
+        "jpeg_sha256": "8a43e2f89289bd78b8a4a3d3ec81b99fbf1f1a6a2e468a9615ef78420d55f456"
+      },
+      {
+        "frame_revision": 82,
+        "updated_at_ms": 1791898449692,
+        "fps": 0.0,
+        "vision_paused": true,
+        "solver_ms": 1328.9,
+        "serial_connected": true,
+        "jpeg_sha256": "8a43e2f89289bd78b8a4a3d3ec81b99fbf1f1a6a2e468a9615ef78420d55f456"
+      },
+      {
+        "frame_revision": 82,
+        "updated_at_ms": 1791898449918,
+        "fps": 0.0,
+        "vision_paused": true,
+        "solver_ms": 1554.4,
+        "serial_connected": true,
+        "jpeg_sha256": "8a43e2f89289bd78b8a4a3d3ec81b99fbf1f1a6a2e468a9615ef78420d55f456"
+      },
+      {
+        "frame_revision": 82,
+        "updated_at_ms": 1791898450141,
+        "fps": 0.0,
+        "vision_paused": true,
+        "solver_ms": 1777.8,
+        "serial_connected": true,
+        "jpeg_sha256": "8a43e2f89289bd78b8a4a3d3ec81b99fbf1f1a6a2e468a9615ef78420d55f456"
+      },
+      {
+        "frame_revision": 82,
+        "updated_at_ms": 1791898450367,
+        "fps": 0.0,
+        "vision_paused": true,
+        "solver_ms": 2004.0,
+        "serial_connected": true,
+        "jpeg_sha256": "8a43e2f89289bd78b8a4a3d3ec81b99fbf1f1a6a2e468a9615ef78420d55f456"
+      },
+      {
+        "frame_revision": 82,
+        "updated_at_ms": 1791898450715,
+        "fps": 0.0,
+        "vision_paused": true,
+        "solver_ms": 2352.3,
+        "serial_connected": true,
+        "jpeg_sha256": "8a43e2f89289bd78b8a4a3d3ec81b99fbf1f1a6a2e468a9615ef78420d55f456"
+      },
+      {
+        "frame_revision": 82,
+        "updated_at_ms": 1791898450938,
+        "fps": 0.0,
+        "vision_paused": true,
+        "solver_ms": 2573.5,
+        "serial_connected": true,
+        "jpeg_sha256": "8a43e2f89289bd78b8a4a3d3ec81b99fbf1f1a6a2e468a9615ef78420d55f456"
+      },
+      {
+        "frame_revision": 82,
+        "updated_at_ms": 1791898451166,
+        "fps": 0.0,
+        "vision_paused": true,
+        "solver_ms": 2802.9,
+        "serial_connected": true,
+        "jpeg_sha256": "8a43e2f89289bd78b8a4a3d3ec81b99fbf1f1a6a2e468a9615ef78420d55f456"
+      },
+      {
+        "frame_revision": 82,
+        "updated_at_ms": 1791898451504,
+        "fps": 0.0,
+        "vision_paused": true,
+        "solver_ms": 3139.9,
+        "serial_connected": true,
+        "jpeg_sha256": "8a43e2f89289bd78b8a4a3d3ec81b99fbf1f1a6a2e468a9615ef78420d55f456"
+      }
+    ],
+    "idle_cpu": {
+      "system_percent": 65.44991511035654,
+      "backend_percent_one_core": 99.48323702032846
+    },
+    "paused_cpu": {
+      "system_percent": 88.04616652926629,
+      "backend_percent_one_core": 10.722555986904778
+    },
+    "after": {
+      "solving": false,
+      "vision_paused": false,
+      "frame_revision": 83,
+      "solver_message": "STOPPED",
+      "serial_connected": true
+    },
+    "stopped_own_test_solve": true,
+    "sent_motion_commands": false
+  },
+  "solver_code_unchanged": true,
+  "boundary": "Real green-background camera pause and manual-stop recovery verified; no new full-solve speed comparison or mechanical movement test."
+}
