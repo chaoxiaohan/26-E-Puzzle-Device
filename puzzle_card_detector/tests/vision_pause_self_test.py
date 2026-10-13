@@ -14,11 +14,12 @@ from maix import _ImageFrame
 from ui_bridge import UiBridge
 
 
-def run_case(mode, outcome, headless=True):
+def run_case(mode, outcome, headless=True, slow_frames=False):
     context = SimpleNamespace(loop=0, now=100.0, reads=0, detections=0,
                               displays=0, services=0, queries=0, futures=[],
                               states=[], sleeps=[], timer_calls=0, stop_sent=False)
     pieces = []
+    stability_builder = backend.build_stable_piece_set if slow_frames else lambda entries: pieces if entries else None
     for index in range(4):
         x, y = 400 + index % 2 * 120, 80 + index // 2 * 160
         points = [(x, y), (x + 100, y), (x + 100, y + 140), (x, y + 140)]
@@ -141,7 +142,7 @@ def run_case(mode, outcome, headless=True):
 
     def need_exit():
         context.loop += 1
-        context.now += 0.25
+        context.now += 0.5 if slow_frames else 0.25
         return context.loop > 22
 
     def detect(*args, **kwargs):
@@ -166,7 +167,7 @@ def run_case(mode, outcome, headless=True):
         load_roi=lambda *args: (380, 10, 520, 700), load_vision_settings=lambda: {},
         save_vision_settings=lambda *args: None, load_templates=lambda: [],
         load_card_scoring_settings=lambda: {},
-        build_stable_piece_set=lambda entries: pieces if entries else None,
+        build_stable_piece_set=stability_builder,
         build_last_resort_layout=lambda *args: (None, 0.0, None),
         print_motion_plan=lambda *args: None, show_card_assembly_preview=lambda *args: None,
         print_detection=lambda *args: None, competition_timeout_reached=timer,
@@ -179,6 +180,9 @@ def run_case(mode, outcome, headless=True):
 
     assert len(context.futures) == 1, len(context.futures)
     future = context.futures[0]
+    if slow_frames:
+        submitted_state = next(state for state in context.states if state['loop'] == future.submitted)
+        assert submitted_state['solver_message'] == 'CARD SOLVING', submitted_state['solver_message']
     paused = [state for state in context.states if state.get('vision_paused')]
     assert len(paused) >= 3, len(paused)
     # 提交当轮发布最后一帧；随后的等待循环不再读相机、检测或更新 JPEG。
@@ -214,6 +218,7 @@ def run_case(mode, outcome, headless=True):
             assert len(context.states[-1]['solved_display']) == 4
             assert context.states[-1]['motion_plan_count'] == 4
     print('VISION_PAUSE_OK', mode, outcome, 'headless' if headless else 'native',
+          'low-fps-stability' if slow_frames else 'standard',
           'paused_states', len(paused), 'camera_reads', context.reads,
           'serial_services', context.services)
 
@@ -223,6 +228,7 @@ def main():
         for outcome in ['complete', 'complete_mid_poll', 'stop', 'error']:
             run_case(mode, outcome)
     run_case('CARD', 'complete', headless=False)
+    run_case('CARD', 'complete', slow_frames=True)
 
 
 if __name__ == '__main__':

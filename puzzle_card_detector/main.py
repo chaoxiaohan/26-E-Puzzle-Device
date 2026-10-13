@@ -6025,7 +6025,7 @@ def main():
             recent_piece_sets = [
                 item
                 for item in recent_piece_sets
-                if frame_time - item[0] <= 0.8
+                if frame_time - item[0] <= 2.0
             ]
             if 2 <= len(pieces) <= 4:
                 recent_piece_sets.append(
