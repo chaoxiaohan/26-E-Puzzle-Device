@@ -331,6 +331,11 @@ def _index_evidence(ink, components, red=None, owners=None, shape_cache=None):
                           "center": np.array([(x + right) * 0.5, (y + bottom) * 0.5]),
                           "members": (a, b)})
     groups = []
+    small_centers=np.asarray([c['center'] for c in small],dtype=float).reshape(-1,2)
+    small_boxes=np.asarray([c['box'] for c in small],dtype=float).reshape(-1,4)
+    small_areas=np.asarray([c['area'] for c in small],dtype=float)
+    suit_shape=(small_boxes[:,3]<=h*.095)&(np.minimum(small_boxes[:,2],small_boxes[:,3])
+                >=np.maximum(small_boxes[:,2],small_boxes[:,3])*.50)
     for a in ranks:
         hierarchy=None
         contours=[]
@@ -347,14 +352,20 @@ def _index_evidence(ink, components, red=None, owners=None, shape_cache=None):
         if (a['box'][3]<a['box'][2]*(.65 if wide_rank else .80)
                 or (not wide_rank and solidity>.86)):
             continue
-        for b in small:
+        ax,ay=a['center']
+        vertical=np.abs(small_centers[:,1]-ay)
+        eligible=(suit_shape
+                  &(np.abs(small_centers[:,0]-ax)<max(w*.035,a['box'][2]*.45))
+                  &(vertical>h*.022)&(vertical<h*.16)
+                  &(a['area']<=small_areas*(7.5 if wide_rank else 4.5))
+                  &(a['box'][3]>=small_boxes[:,3]*1.10)
+                  &(small_areas<=a['area']*1.8))
+        for small_id in np.flatnonzero(eligible):
+            b=small[small_id]
             if a is b or any(b is member for member in a.get("members", ())):
                 continue
             ax, ay = a["center"]
             bx, by = b["center"]
-            if not (abs(ax - bx) < max(w * 0.035, a["box"][2] * 0.45)
-                    and h * 0.022 < abs(ay - by) < h * 0.16):
-                continue
             if 'mask' in a:
                 ax0,ay0,aw,ah=a['box']
                 bx0,by0,bw,bh=b['box']
@@ -363,13 +374,6 @@ def _index_evidence(ink, components, red=None, owners=None, shape_cache=None):
                 if right>left and bottom>top and np.any(a['mask'][top-ay0:bottom-ay0,left-ax0:right-ax0]
                                                        &b['mask'][top-by0:bottom-by0,left-bx0:right-bx0]):
                     continue
-            # Rank above suit, a smaller suit below; bottom index is inverse.
-            if (a['area']>b['area']*(7.5 if wide_rank else 4.5)
-                    or a["box"][3] < b["box"][3] * 1.10
-                    or b["area"] > a["area"] * 1.8
-                    or b["box"][3] > h * 0.095
-                    or min(b["box"][2:])<max(b["box"][2:])*.50):
-                continue
             x = min(a["box"][0], b["box"][0])
             y = min(a["box"][1], b["box"][1])
             right = max(a["box"][0] + a["box"][2], b["box"][0] + b["box"][2])
@@ -412,20 +416,30 @@ def _index_evidence(ink, components, red=None, owners=None, shape_cache=None):
         for second_id in np.flatnonzero(eligible):
             b=groups[second_id]
             if a[1]==b[1]:
-                matched=_shape_similarity(a[2],b[2],shape_cache)
                 ratio=min(a[5],b[5])/max(1,a[5],b[5])
-                same_direction_strength=max(same_direction_strength,matched*ratio*math.sqrt(a[4]*b[4]))
+                adjacency=math.sqrt(a[4]*b[4])
+                if ratio*adjacency<=same_direction_strength:
+                    continue
+                matched=_shape_similarity(a[2],b[2],shape_cache)
+                same_direction_strength=max(same_direction_strength,matched*ratio*adjacency)
                 continue
             if not a[1] or b[1]:
                 continue
-            matched = _shape_similarity(a[2], b[2][::-1, ::-1],shape_cache)
             # Comparable shape area and opposite reading directions are required
             # before an interior pair can supply negative placement evidence.
             area_ratio = min(a[5], b[5]) / max(1, a[5], b[5])
             location=math.sqrt(a[0]*b[0])
+            adjacency = math.sqrt(a[4] * b[4])
+            # Shape similarity is at most one. Skip only pairs that cannot
+            # pass the existing threshold or improve either tracked maximum.
+            if area_ratio < (0.40 if location>.35 else 0.65):
+                continue
+            if (location*math.sqrt(area_ratio)*adjacency<=best
+                    and area_ratio*adjacency<=matched_strength):
+                continue
+            matched = _shape_similarity(a[2], b[2][::-1, ::-1],shape_cache)
             if matched<.55 or matched * area_ratio < (0.40 if location>.35 else 0.65):
                 continue
-            adjacency = math.sqrt(a[4] * b[4])
             strength = matched * area_ratio * adjacency
             value = location * matched * math.sqrt(area_ratio) * adjacency
             if value > best:
