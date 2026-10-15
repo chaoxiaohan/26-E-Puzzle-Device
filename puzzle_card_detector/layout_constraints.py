@@ -129,46 +129,35 @@ def _outer_side(start, end, width, height, tolerance):
 def _edge_match(first, second, tolerance):
     first_start, first_end = first
     second_start, second_end = second
-    first_vector = first_end - first_start
-    second_vector = second_end - second_start
-    first_length = float(np.linalg.norm(first_vector))
-    second_length = float(np.linalg.norm(second_vector))
+    ax, ay = float(first_end[0]-first_start[0]), float(first_end[1]-first_start[1])
+    bx, by = float(second_end[0]-second_start[0]), float(second_end[1]-second_start[1])
+    first_length = math.sqrt(ax*ax+ay*ay)
+    second_length = math.sqrt(bx*bx+by*by)
     if min(first_length, second_length) < 1e-6:
         return None
 
-    first_unit = first_vector / first_length
-    second_unit = second_vector / second_length
-    if abs(float(np.cross(first_unit, second_unit))) > math.sin(
+    ax, ay = ax/first_length, ay/first_length
+    bx, by = bx/second_length, by/second_length
+    if abs(ax*by-ay*bx) > math.sin(
         math.radians(6.0)
     ):
         return None
 
-    normal = np.array([-first_unit[1], first_unit[0]])
-    distances = [
-        abs(float(np.dot(second_start - first_start, normal))),
-        abs(float(np.dot(second_end - first_start, normal))),
-    ]
+    sx, sy = float(second_start[0]-first_start[0]), float(second_start[1]-first_start[1])
+    ex, ey = float(second_end[0]-first_start[0]), float(second_end[1]-first_start[1])
+    distances = [abs(-sx*ay+sy*ax), abs(-ex*ay+ey*ax)]
     if max(distances) > tolerance:
         return None
 
-    projected = sorted(
-        [
-            float(np.dot(second_start - first_start, first_unit)),
-            float(np.dot(second_end - first_start, first_unit)),
-        ]
-    )
+    projected = sorted([sx*ax+sy*ay, ex*ax+ey*ay])
     overlap_start = max(0.0, projected[0])
     overlap_end = min(first_length, projected[1])
     overlap = overlap_end - overlap_start
     if overlap < max(tolerance, min(first_length, second_length) * 0.18):
         return None
 
-    second_projected = sorted(
-        [
-            float(np.dot(first_start - second_start, second_unit)),
-            float(np.dot(first_end - second_start, second_unit)),
-        ]
-    )
+    dx, dy = float(first_end[0]-second_start[0]), float(first_end[1]-second_start[1])
+    second_projected = sorted([-sx*bx-sy*by, dx*bx+dy*by])
     second_overlap_start = max(0.0, second_projected[0])
     second_overlap_end = min(second_length, second_projected[1])
     return {
@@ -181,7 +170,7 @@ def _edge_match(first, second, tolerance):
             overlap,
             second_overlap_end - second_overlap_start,
         ),
-        "normal": normal,
+        "normal": np.array([-ay, ax]),
     }
 
 
@@ -191,18 +180,19 @@ def _raster_metrics(layout, width, height):
     maximum = np.ceil(np.max(all_points, axis=0)) + 3.0
     mask_width = int((maximum[0] - minimum[0]) * 2.0) + 1
     mask_height = int((maximum[1] - minimum[1]) * 2.0) + 1
-    masks = []
     union = np.zeros((mask_height, mask_width), dtype=np.uint8)
     total = np.zeros((mask_height, mask_width), dtype=np.uint8)
+    core_union = np.zeros_like(union)
+    kernel = np.ones((3, 3), dtype=np.uint8)
     for polygon in layout.values():
         mask = np.zeros_like(union)
         points = np.rint(
             (polygon - minimum) * 2.0
         ).astype(np.int32)
         cv2.fillPoly(mask, [points], 1)
-        masks.append(mask)
         cv2.bitwise_or(union, mask, dst=union)
         total += mask
+        cv2.bitwise_or(core_union, cv2.erode(mask, kernel), dst=core_union)
 
     rectangle = np.zeros_like(union)
     rectangle_points = np.rint(
@@ -223,19 +213,9 @@ def _raster_metrics(layout, width, height):
     rectangle_area = max(1, cv2.countNonZero(rectangle))
     inside = cv2.countNonZero(cv2.bitwise_and(union, rectangle))
 
-    core_overlap = np.zeros_like(union)
-    kernel = np.ones((3, 3), dtype=np.uint8)
-    cores = [
-        cv2.erode(mask, kernel, iterations=1)
-        for mask in masks
-    ]
-    for first_id in range(len(masks)):
-        for second_id in range(first_id + 1, len(masks)):
-            overlap = cv2.bitwise_or(
-                cv2.bitwise_and(cores[first_id], masks[second_id]),
-                cv2.bitwise_and(masks[first_id], cores[second_id]),
-            )
-            cv2.bitwise_or(core_overlap, overlap, dst=core_overlap)
+    # A pixel overlaps exactly when at least two pieces cover it and one
+    # piece covers it with its eroded interior. This is the same pairwise union.
+    core_overlap = cv2.bitwise_and(core_union, cv2.compare(total, 1, cv2.CMP_GT))
 
     contour_list, _ = cv2.findContours(
         union,
