@@ -1,0 +1,289 @@
+{
+  "date": "2026-10-15",
+  "runtime_code_commit": "f3517fa793561348df8f72c5eb3a7ee749b53f65",
+  "installed_package_commit": "b70f038cf72a567cb1ec8e936d2e544fe0b9f362",
+  "backup_tag": "backup/card-speed-before-20261015",
+  "branch": "lubancat-card-speed-20261015",
+  "changes": [
+    "Local component dilation with original full-image area cutoff",
+    "Vectorized rank/suit and group-pair filters with unchanged thresholds",
+    "Exact upper bounds for comparisons and retained-candidate ranking",
+    "Interned shape features and symmetric pair-score cache",
+    "Scalar two-dimensional edge matching"
+  ],
+  "reverted": "Raster overlap batching withdrawn after a board test process fault; original raster path retained",
+  "local": {
+    "all_green": {
+      "count": 41,
+      "before_seconds": 56.21699999998236,
+      "after_seconds": 46.53100000000995,
+      "speedup": 1.2081623004012452,
+      "time_reduction_percent": 17.229663624838476
+    },
+    "poker": {
+      "count": 31,
+      "before_seconds": 42.029999999984284,
+      "after_seconds": 32.00000000002183,
+      "speedup": 1.313437499998613,
+      "time_reduction_percent": 23.863906733205344
+    },
+    "decisions_identical": true,
+    "images_identical": true
+  },
+  "board": {
+    "all_green": {
+      "count": 41,
+      "before_seconds": 743.9716734999997,
+      "after_seconds": 386.504610067,
+      "speedup": 1.9248714093501584,
+      "time_reduction_percent": 48.04847767271879
+    },
+    "poker": {
+      "count": 31,
+      "before_seconds": 665.7070444099998,
+      "after_seconds": 328.21612180999995,
+      "speedup": 2.028258212116006,
+      "time_reduction_percent": 50.696612786951945
+    },
+    "primary_images_identical": true,
+    "recognition_passed": true,
+    "poker_detail": "All 31 poker cases retain poses, scores, statuses and candidate images; search work counters may vary",
+    "negative_control_note": "One plain-paper case has bounded-search score and candidate score-label variation; primary image/pose and WEAK_TEXTURE non-execution status unchanged",
+    "timing_note": "Full before/after runs cross reboots; paired same-boot measurements below are the fairer speed estimate"
+  },
+  "paired_same_boot": {
+    "cases": [
+      {
+        "capture": "20260801_032800_758",
+        "kind": "plain",
+        "baseline_seconds": 6.985747594000031,
+        "updated_seconds": 6.799682931000007,
+        "status": "WEAK_TEXTURE",
+        "speedup": 1.0273637263513786,
+        "differences": [
+          "/candidates/0/info/card_search_nodes",
+          "/candidates/1/info/card_search_nodes",
+          "/info/card_search_nodes",
+          "/nodes"
+        ],
+        "images_identical": true,
+        "primary_image_identical": true,
+        "candidate_image_identical": true,
+        "recognition_differences": [],
+        "time_limited_negative_score_variation": false,
+        "recognition_passed": true
+      },
+      {
+        "capture": "20260801_185703_491",
+        "kind": "joker",
+        "baseline_seconds": 58.97532673899991,
+        "updated_seconds": 31.808557437000218,
+        "status": "VERIFIED",
+        "speedup": 1.8540710893854897,
+        "differences": [],
+        "images_identical": true,
+        "primary_image_identical": true,
+        "candidate_image_identical": true,
+        "recognition_differences": [],
+        "time_limited_negative_score_variation": false,
+        "recognition_passed": true
+      },
+      {
+        "capture": "20260801_215755_916",
+        "kind": "poker",
+        "baseline_seconds": 45.88045718700005,
+        "updated_seconds": 26.773575579999942,
+        "status": "VERIFIED",
+        "speedup": 1.7136469893574127,
+        "differences": [],
+        "images_identical": true,
+        "primary_image_identical": true,
+        "candidate_image_identical": true,
+        "recognition_differences": [],
+        "time_limited_negative_score_variation": false,
+        "recognition_passed": true
+      },
+      {
+        "capture": "20260801_224437_055",
+        "kind": "joker",
+        "baseline_seconds": 10.88816934700003,
+        "updated_seconds": 8.92547616999991,
+        "status": "VERIFIED",
+        "speedup": 1.2198978675890788,
+        "differences": [
+          "/candidates/0/info/card_search_nodes",
+          "/candidates/1/info/card_search_nodes",
+          "/info/card_search_nodes",
+          "/nodes"
+        ],
+        "images_identical": true,
+        "primary_image_identical": true,
+        "candidate_image_identical": true,
+        "recognition_differences": [],
+        "time_limited_negative_score_variation": false,
+        "recognition_passed": true
+      }
+    ],
+    "count": 4,
+    "decisions_identical": false,
+    "images_identical": true,
+    "primary_images_identical": true,
+    "recognition_passed": true,
+    "baseline_total_seconds": 122.72970086700002,
+    "updated_total_seconds": 74.30729211800008,
+    "median_case_speedup": 1.4667724284732457,
+    "total_speedup": 1.65165083222391
+  },
+  "unchanged_baseline_negative_repeat": {
+    "capture": "20260801_032800_758",
+    "texture_scores": [
+      0.6936061953021455,
+      0.6911823899525015
+    ],
+    "search_nodes": [
+      969748,
+      970101
+    ],
+    "explanation": "Unmodified baseline itself produces slightly different bounded-search scores across repeats, while pose and non-execution status remain unchanged"
+  },
+  "validation": {
+    "passed": true,
+    "stage": "/home/cat/.cache/puzzle-migration/card-speed-20261015/stage-f3517fa79356",
+    "tests": [
+      {
+        "command": [
+          "/home/cat/puzzle-device/puzzle_card_detector/.venv/bin/python",
+          "-m",
+          "tests.card_performance_equivalence_self_test",
+          "/home/cat/.cache/puzzle-migration/card-speed-20261015/baseline"
+        ],
+        "exit_code": 0,
+        "seconds": 14.61392976099998,
+        "log": "/home/cat/.cache/puzzle-migration/card-speed-20261015/card_performance_equivalence_self_test.log"
+      },
+      {
+        "command": [
+          "/home/cat/puzzle-device/puzzle_card_detector/.venv/bin/python",
+          "-m",
+          "tests.card_cut_integrity_self_test"
+        ],
+        "exit_code": 0,
+        "seconds": 2.8870393620000243,
+        "log": "/home/cat/.cache/puzzle-migration/card-speed-20261015/card_cut_integrity_self_test.log"
+      },
+      {
+        "command": [
+          "/home/cat/puzzle-device/puzzle_card_detector/.venv/bin/python",
+          "-m",
+          "tests.card_letter_index_self_test"
+        ],
+        "exit_code": 0,
+        "seconds": 1.1780236430000173,
+        "log": "/home/cat/.cache/puzzle-migration/card-speed-20261015/card_letter_index_self_test.log"
+      },
+      {
+        "command": [
+          "/home/cat/puzzle-device/puzzle_card_detector/.venv/bin/python",
+          "-m",
+          "tests.layout_constraints_self_test"
+        ],
+        "exit_code": 0,
+        "seconds": 1.177891905000024,
+        "log": "/home/cat/.cache/puzzle-migration/card-speed-20261015/layout_constraints_self_test.log"
+      },
+      {
+        "command": [
+          "/home/cat/puzzle-device/puzzle_card_detector/.venv/bin/python",
+          "-m",
+          "tests.vision_pause_self_test"
+        ],
+        "exit_code": 0,
+        "seconds": 26.455408465000005,
+        "log": "/home/cat/.cache/puzzle-migration/card-speed-20261015/vision_pause_self_test.log"
+      },
+      {
+        "command": [
+          "/home/cat/puzzle-device/puzzle_card_detector/.venv/bin/python",
+          "/home/cat/.cache/puzzle-migration/card-optimize-20261013/card_speed_replay.py",
+          "--all-green",
+          "--fresh-detection",
+          "--round",
+          "speed-board-final-20261015",
+          "--backend",
+          "/home/cat/.cache/puzzle-migration/card-speed-20261015/stage-f3517fa79356"
+        ],
+        "exit_code": 0,
+        "seconds": 459.60317385100007,
+        "log": "/home/cat/.cache/puzzle-migration/card-speed-20261015/updated.log"
+      }
+    ],
+    "comparison_mode": "recognition; raw differences retained",
+    "source_hashes": {
+      "card_corner_solver.py": "60d1d897eb41b6802dd342e07a89d2f2a8300599497b7ee2eb574a62dd6c8b39",
+      "card_piece_geometry.py": "882e967c4161df6f48fe84ad4ac0e2b3b6974eb1599395c672b5fcb06f7bb3fe",
+      "ui_bridge.py": "3bed77dc63e31e8638ef09e84dc66be286f6f2a539f1e53cc928ff939dfd6746",
+      "layout_constraints.py": "56c1de7b780f26b7923f603268c184ac6f7b7db2aa3e9f682a4d76b8fe531012",
+      "solver_boundary.py": "c9248aa29af800f455ffaf9a8f8dff1efd7838daf42123cbd342d956ab6ac3a9",
+      "puzzle_solver.py": "74d2037024cf0fec5dee188d24510c3b008b97172a28c9732854e39e4a5038e0",
+      "card_joint_solver.py": "2705a0a78075d1abb0c85e276b2b493e14ee239914963a35f9bcbc3ced5abeab",
+      "solver_hybrid.py": "9883161425e77e53aa39a6ba7c788e39a4479e720d8c3b5e9361e82e0d6988b5",
+      "cpp_rectangle_solver.py": "40888972ff3e7dbc5f59123cb850fd93360669192dae4db70d5b7c577284ebf0",
+      "card_structure.py": "1963a5d8738bfb99a832b87cc5d0258077106cceace010ffaefa17e4507f3c46",
+      "main.py": "98f9f377585d745e32e817fc9002dfa06d096364baea9ba1e27e9e93e4995c27",
+      "card_strip_solver.py": "2ff0bbbb6e7bac93062d2b234f5699a7d5121a69f6ed1cd50f8358489358981c",
+      "maix.py": "2a1c00b2ff22c69376edf483a4bc99dcece2d54fb3d594266fd082a72039ff66",
+      "card_topology_solver.py": "e4c52046a34fa8c9c9bcd9a61579c3a1ce38bd3601fb88ee5caea3732ff22185",
+      "solver_v2.py": "a6ad320e7ab967a36cd09f2596fdb053c9123d0bd84b74a1e3f2810da77aa253",
+      "template_matcher.py": "4b706b22ad2be7961c9332f34074117ec4e26625fcadc5a787f009885d1114c5",
+      "card_face_solver.py": "c83c1fe5815e5ff324b245d4196ada5f73dff9bb1c652f8568a47c25377179ec",
+      "hard_frame_replay.py": "39b199854cab1d56bc95a6616cf84109a9f64ea9ec9af538cf425c2863948387",
+      "real_capture_replay.py": "f1685cbfa15a42e2f0d27a050437f896af66d5c70c4c0db15b7132c9ed65258b",
+      "serial_protocol.py": "a22d67cd95ee91dea70afa44401fc946428c174d94a896a7082cfe0932e59879",
+      "card_graph_solver.py": "3b1ba3c8599c48d3daf2b91efe9df11924c6aa4df1d444fc5472e1d4d6dd39ac",
+      "card_face_replay.py": "146f92c829a05f406cba99db885ae25243d19aea02196a7867fa7c7b4c72d66b",
+      "hardware_devices.py": "02f6cacff53f9ef6a76b3148419d537a744e429b5ae66f6a5728a406997908aa",
+      "card_fan_solver.py": "9da9e563003c70bd270243d9f108da560f3832aca9a88d84d8bf0a776af24050"
+    }
+  },
+  "live_verification": {
+    "processes": {
+      "backend": [
+        78523
+      ],
+      "ui": [
+        78518
+      ]
+    },
+    "state_age_seconds": 0.026688098907470703,
+    "source_hashes": {
+      "card_structure.py": "1963a5d8738bfb99a832b87cc5d0258077106cceace010ffaefa17e4507f3c46",
+      "card_corner_solver.py": "60d1d897eb41b6802dd342e07a89d2f2a8300599497b7ee2eb574a62dd6c8b39",
+      "layout_constraints.py": "56c1de7b780f26b7923f603268c184ac6f7b7db2aa3e9f682a4d76b8fe531012",
+      "tests/compare_card_replays.py": "0ea0b6b4c18aa821b444efbcf23e9cbf54a20a6d6a5e795d51f7b1908271a07d",
+      "tests/card_performance_equivalence_self_test.py": "41c92867a8634139090371ca1e8653b064c4f0fbc7155aa05fa387197fb6f53e",
+      "tests/card_structure_bound_self_test.py": "0cfdac8810986b62bcf5dbdf0d767be47f52a49180cf758d8c7a7523fd8e1d4f",
+      "tests/layout_constraints_self_test.py": "909693c6dc74b46ab7fab3b05d05672bd61414a372f37e992f575770c5419432"
+    },
+    "settings_preserved": true,
+    "state": {
+      "mode": "card",
+      "camera_ok": true,
+      "serial_connected": true,
+      "piece_count": 4,
+      "fps": 1.4,
+      "solving": false,
+      "competition_active": false,
+      "vision_paused": false,
+      "vision_threads": 1,
+      "vision_processing_revision": "pause-low-load-20261013"
+    }
+  },
+  "device_backup": "/home/cat/.cache/puzzle-migration/card-speed-20261015/before-speed-1792073627044506338.tar.gz",
+  "boundaries": [
+    "Only the saved 41 green-background images were replayed (31 poker, 10 plain-paper negative controls)",
+    "No robot movement or physical placement test was performed",
+    "The reported live 3-4 minute capture was not available for a matched benchmark",
+    "Earlier desktop/system freezes remain unexplained; no hardware-fault fix is claimed",
+    "Standalone default-thread geometry test once exited with signal 11; final original raster path and production single-thread configuration pass"
+  ]
+}
