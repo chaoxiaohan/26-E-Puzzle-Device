@@ -46,10 +46,13 @@ def main():
         changed = list(differences(first, second))
         recognition_changes=[key for key in changed if key.rsplit('/',1)[-1] not in {'nodes','card_search_nodes'}]
         a_info,b_info=first.get('info') or {},second.get('info') or {}
-        negative=(first['kind']=='plain' and not a_info.get('card_execution_ready',False)
+        negative=(first['kind']=='plain' and first['status']!='VERIFIED' and second['status']!='VERIFIED'
+                  and not a_info.get('card_execution_ready',False)
                   and not b_info.get('card_execution_ready',False))
         timed_negative=(negative and a_info.get('card_search_complete') is False
                         and b_info.get('card_search_complete') is False)
+        score_changes=[key for key in recognition_changes if key.rsplit('/',1)[-1]
+                       in {'score','selection_score','selection_margin','texture_score','texture_selection_margin'}]
         if timed_negative:
             recognition_changes=[key for key in recognition_changes if key.rsplit('/',1)[-1]
                 not in {'score','selection_score','selection_margin','texture_score','texture_selection_margin'}]
@@ -70,9 +73,9 @@ def main():
                         'primary_image_identical':image_checks['.png'],
                         'candidate_image_identical':image_checks['-candidates.jpg'],
                         'recognition_differences':recognition_changes,
-                        'time_limited_negative_score_variation':timed_negative and bool(changed),
+                        'time_limited_negative_score_variation':timed_negative and bool(score_changes),
                         'recognition_passed':not recognition_changes and image_checks['.png']
-                            and (image_checks['-candidates.jpg'] or timed_negative)})
+                            and (image_checks['-candidates.jpg'] or (timed_negative and bool(score_changes)))})
     assert records, 'No replay records'
     result = {'cases': records, 'count': len(records),
               'decisions_identical': all(not r['differences'] for r in records),
