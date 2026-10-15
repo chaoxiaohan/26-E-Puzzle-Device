@@ -250,10 +250,20 @@ def _index_evidence(ink, components, red=None, owners=None, shape_cache=None):
     eroded=cv2.erode(print_mask.astype(np.uint8),cv2.getStructuringElement(cv2.MORPH_CROSS,(3,3)))
     for component in _components(eroded,close=False):
         x,y,bw,bh=component['box']
-        padded=np.zeros(print_mask.shape,np.uint8)
-        padded[y:y+bh,x:x+bw]=component['mask']
-        restored=(cv2.dilate(padded,np.ones((3,3),np.uint8))>0)&print_mask
-        detected.extend(_components(restored,close=False))
+        # A 3x3 dilation can only reach one pixel beyond this component.
+        left,top=max(0,x-1),max(0,y-1)
+        right,bottom=min(w,x+bw+1),min(h,y+bh+1)
+        padded=np.zeros((bottom-top,right-left),np.uint8)
+        padded[y-top:y-top+bh,x-left:x-left+bw]=component['mask']
+        restored=(cv2.dilate(padded,np.ones((3,3),np.uint8))>0)&print_mask[top:bottom,left:right]
+        for restored_component in _components(restored,close=False):
+            # Keep the original full-card area threshold after cropping.
+            if restored_component['area']<max(5,w*h*.00025):
+                continue
+            cx,cy,cw,ch=restored_component['box']
+            restored_component['box']=(cx+left,cy+top,cw,ch)
+            restored_component['center']+=np.array([left,top])
+            detected.append(restored_component)
     detected=_unique_components(detected)
     split=[]
     for component in detected:
@@ -391,10 +401,16 @@ def _index_evidence(ink, components, red=None, owners=None, shape_cache=None):
     matched_strength = 0.0
     matched_location = 0.0
     same_direction_strength=0.0
-    for a in groups:
-        for b in groups:
-            if a is b or np.linalg.norm(a[3]-b[3])<.25:
-                continue
+    centers=np.array([group[3] for group in groups])
+    directions=np.array([group[1] for group in groups])
+    for first_id,a in enumerate(groups):
+        # Select the same ordered pairs in bulk, without thousands of tiny norms.
+        distance=np.linalg.norm(centers-a[3],axis=1)
+        eligible=(distance>=.25)&((directions==a[1])|a[1])
+        # A same-direction pair contributes only a symmetric maximum.
+        eligible&=(directions!=a[1])|(np.arange(len(groups))>first_id)
+        for second_id in np.flatnonzero(eligible):
+            b=groups[second_id]
             if a[1]==b[1]:
                 matched=_shape_similarity(a[2],b[2],shape_cache)
                 ratio=min(a[5],b[5])/max(1,a[5],b[5])
