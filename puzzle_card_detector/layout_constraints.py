@@ -180,19 +180,18 @@ def _raster_metrics(layout, width, height):
     maximum = np.ceil(np.max(all_points, axis=0)) + 3.0
     mask_width = int((maximum[0] - minimum[0]) * 2.0) + 1
     mask_height = int((maximum[1] - minimum[1]) * 2.0) + 1
+    masks = []
     union = np.zeros((mask_height, mask_width), dtype=np.uint8)
     total = np.zeros((mask_height, mask_width), dtype=np.uint8)
-    core_union = np.zeros_like(union)
-    kernel = np.ones((3, 3), dtype=np.uint8)
     for polygon in layout.values():
         mask = np.zeros_like(union)
         points = np.rint(
             (polygon - minimum) * 2.0
         ).astype(np.int32)
         cv2.fillPoly(mask, [points], 1)
+        masks.append(mask)
         cv2.bitwise_or(union, mask, dst=union)
         total += mask
-        cv2.bitwise_or(core_union, cv2.erode(mask, kernel), dst=core_union)
 
     rectangle = np.zeros_like(union)
     rectangle_points = np.rint(
@@ -213,9 +212,19 @@ def _raster_metrics(layout, width, height):
     rectangle_area = max(1, cv2.countNonZero(rectangle))
     inside = cv2.countNonZero(cv2.bitwise_and(union, rectangle))
 
-    # A pixel overlaps exactly when at least two pieces cover it and one
-    # piece covers it with its eroded interior. This is the same pairwise union.
-    core_overlap = cv2.bitwise_and(core_union, cv2.compare(total, 1, cv2.CMP_GT))
+    core_overlap = np.zeros_like(union)
+    kernel = np.ones((3, 3), dtype=np.uint8)
+    cores = [
+        cv2.erode(mask, kernel, iterations=1)
+        for mask in masks
+    ]
+    for first_id in range(len(masks)):
+        for second_id in range(first_id + 1, len(masks)):
+            overlap = cv2.bitwise_or(
+                cv2.bitwise_and(cores[first_id], masks[second_id]),
+                cv2.bitwise_and(masks[first_id], cores[second_id]),
+            )
+            cv2.bitwise_or(core_overlap, overlap, dst=core_overlap)
 
     contour_list, _ = cv2.findContours(
         union,

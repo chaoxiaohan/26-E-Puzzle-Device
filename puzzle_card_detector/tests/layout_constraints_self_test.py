@@ -1,6 +1,10 @@
 import math
 
+import cv2
 import numpy as np
+
+# Match both production solver workers, including on the RK3566 OpenCV build.
+cv2.setNumThreads(1)
 
 from layout_constraints import (
     add_adjacency_gap,
