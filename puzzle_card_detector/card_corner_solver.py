@@ -1,6 +1,7 @@
 """用四个真实纸角构建整牌，保留每片旋转和平移的顶点对应。"""
 
 import itertools
+import heapq
 import math
 import time
 
@@ -76,6 +77,8 @@ def generate_corner_card_candidates(frame_rgb,pieces,candidate_limit=24,cache=No
     turns=(np.eye(2),np.array([[0.,-1.],[1.,0.]]),-np.eye(2),np.array([[0.,1.],[-1.,0.]]))
     area=sum(abs(cv2.contourArea(np.asarray(piece['points'],np.float32))) for piece in pieces)
     candidates=[]
+    best_scores=[]
+    ranking_limit=max(64,candidate_limit*3)
     seen=set()
     nodes=0
     for order in itertools.permutations((1,2,3)):
@@ -109,9 +112,17 @@ def generate_corner_card_candidates(frame_rgb,pieces,candidate_limit=24,cache=No
             if key in seen:
                 continue
             seen.add(key)
-            structure=score_layout_structure(frame_rgb,pieces,layout,cache)
+            span_error=abs(top-bottom)+abs(left-right)
+            cutoff=best_scores[0]+.002*span_error if len(best_scores)==ranking_limit else None
+            structure=score_layout_structure(frame_rgb,pieces,layout,cache,minimum_score=cutoff)
+            if not structure.get('pruned'):
+                rank=structure['score']-.002*span_error
+                if len(best_scores)<ranking_limit:
+                    heapq.heappush(best_scores,rank)
+                elif rank>best_scores[0]:
+                    heapq.heapreplace(best_scores,rank)
             candidates.append({'layout':layout,'structure':structure,'source':'card-corners',
-                               'assignment':ids,'span_error':abs(top-bottom)+abs(left-right)})
+                               'assignment':ids,'span_error':span_error})
     candidates.sort(key=lambda item:item['structure']['score']-.002*item['span_error'],reverse=True)
     kept=[]
     # 外角和外边缘先筛选，完整拼缝仅计算有结构依据的候选。

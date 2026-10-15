@@ -607,7 +607,7 @@ def _body_evidence(planes, components, shape_cache=None):
                                "repeat_shape": float(np.mean(repeat)), "column_fit": float(np.mean(grid))}
 
 
-def score_layout_structure(frame_rgb, pieces, layout, cache=None):
+def score_layout_structure(frame_rgb, pieces, layout, cache=None, minimum_score=None):
     """Return score/confidence and explainable terms for a candidate rectangle.
 
     layout maps piece IDs to polygons in source vertex order. Reuse a cache only
@@ -633,6 +633,18 @@ def score_layout_structure(frame_rgb, pieces, layout, cache=None):
                     for track in cut_tracks) / max(1, cut_weight)
     if cut_weight:
         outer = min(outer, math.exp(-moved_cut * 4.0))
+    joined,join_conf,join_detail=_cut_integrity_evidence(tracks)
+    pose_conf = math.exp(-error / max(2.0, min(ink.shape) / scale * 0.025))
+    if minimum_score is not None:
+        # Unknown index/body scores and confidences are at most one. The
+        # resulting bound includes every existing positive/negative term.
+        # Increasing either unknown weight cannot decrease this upper bound.
+        known_weight = .45*outer_conf + .25*join_conf
+        total_bound = known_weight + .35 + .20
+        centered_bound = .45*outer_conf*(outer-.5) + .25*join_conf*(joined-.5) + .55*.5
+        upper = .5 + centered_bound / max(1.0, total_bound) * evidence * pose_conf
+        if upper < minimum_score - 1e-12:
+            return dict(neutral, score=upper, valid=True, pruned=True)
     components = _components(ink)
     shape_cache=cache.setdefault('card_structure_shape_scores',{})
     index, index_conf, index_detail = _index_evidence(ink, components, planes[:, :, 1], owners,shape_cache)
@@ -643,13 +655,11 @@ def score_layout_structure(frame_rgb, pieces, layout, cache=None):
         if letter_conf>=.60:
             index,index_conf,index_detail=letter_score,letter_conf,dict(letter_detail,kind='letter-string')
             body,body_conf,body_detail=letter_score,letter_conf,{'kind':'lettered-card'}
-    joined,join_conf,join_detail=_cut_integrity_evidence(tracks)
     weights = [0.45 * outer_conf, 0.35 * index_conf, 0.20 * body_conf,.25*join_conf]
     total = sum(weights)
     raw = sum(value * weight for value, weight in zip((outer, index, body,joined), weights)) / max(1e-6, total)
     # A pose with large polygon drift has unreliable print placement, even though
     # the render always uses rotation + translation without fitting scale/shear.
-    pose_conf = math.exp(-error / max(2.0, min(ink.shape) / scale * 0.025))
     confidence = min(1.0, total) * evidence * pose_conf
     return {"score": 0.5 + (raw - 0.5) * confidence, "confidence": confidence,
             "valid": True, "raw_score": raw, "outer": outer, "outer_confidence": outer_conf,
