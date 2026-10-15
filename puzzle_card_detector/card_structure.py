@@ -179,27 +179,42 @@ def _components(ink, close=True):
     return result
 
 
+def _shape_features(mask, features):
+    key=(mask.shape,mask.tobytes())
+    if key not in features:
+        value=mask.astype(np.uint8)
+        padded=cv2.copyMakeBorder(value,1,1,1,1,cv2.BORDER_CONSTANT,value=0)
+        dilated=cv2.dilate(padded,np.ones((3,3),np.uint8))
+        features[key]=(len(features),value,dilated,cv2.countNonZero(value))
+    return features[key]
+
+
 def _shape_similarity(first, second, cache=None):
-    # Only center translation and 180-degree rotation, with a one-pixel tolerance.
-    key=None
-    if cache is not None:
-        key=(first.shape,first.tobytes(),second.shape,second.tobytes())
-        saved=cache.get(key)
-        if saved is not None:
-            return saved
-    h = max(first.shape[0], second.shape[0]) + 4
-    w = max(first.shape[1], second.shape[1]) + 4
-    def padded(value):
-        out = np.zeros((h, w), np.uint8)
-        y, x = (h - value.shape[0]) // 2, (w - value.shape[1]) // 2
-        out[y:y + value.shape[0], x:x + value.shape[1]] = value
-        return out
-    a, b = padded(first), padded(second)
-    kernel = np.ones((3, 3), np.uint8)
-    da, db = cv2.dilate(a, kernel), cv2.dilate(b, kernel)
-    score=float(((a & db).sum() + (b & da).sum()) / max(1, a.sum() + b.sum()))
-    if cache is not None:
-        cache[key]=score
+    # Preserve the original center rounding and one-pixel shape tolerance.
+    # Intern masks once; pair keys contain IDs rather than duplicate image bytes.
+    cache={} if cache is None else cache
+    features=cache.setdefault('features',{})
+    pairs=cache.setdefault('pairs',{})
+    a,b=_shape_features(first,features),_shape_features(second,features)
+    key=tuple(sorted((a[0],b[0])))
+    if key in pairs:
+        return pairs[key]
+    h=max(first.shape[0],second.shape[0])+4
+    w=max(first.shape[1],second.shape[1])+4
+
+    def covered(source, target):
+        mask,dilated=source[1],target[2]
+        sy,sx=(h-mask.shape[0])//2,(w-mask.shape[1])//2
+        ty,tx=(h-target[1].shape[0])//2-1,(w-target[1].shape[1])//2-1
+        top,left=max(sy,ty),max(sx,tx)
+        bottom,right=min(sy+mask.shape[0],ty+dilated.shape[0]),min(sx+mask.shape[1],tx+dilated.shape[1])
+        if bottom<=top or right<=left:
+            return 0
+        return cv2.countNonZero(cv2.bitwise_and(mask[top-sy:bottom-sy,left-sx:right-sx],
+                                              dilated[top-ty:bottom-ty,left-tx:right-tx]))
+
+    score=(covered(a,b)+covered(b,a))/max(1,a[3]+b[3])
+    pairs[key]=score
     return score
 
 

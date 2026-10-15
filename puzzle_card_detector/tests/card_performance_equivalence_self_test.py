@@ -40,6 +40,14 @@ def main():
     structure = load_reference(args.baseline, 'card_structure')
     rng = np.random.default_rng(815)
     cv2.setNumThreads(1)
+    shape_cache={}
+    for index in range(1000):
+        a=rng.integers(0,2,tuple(rng.integers(1,45,2)),dtype=np.uint8)
+        b=rng.integers(0,2,tuple(rng.integers(1,45,2)),dtype=np.uint8)
+        if index%10==0:
+            a[:]=0
+        for first,second in ((a,b),(b,a),(a[::-1,::-1],b),(a.T,b)):
+            same(structure._shape_similarity(first,second),card_structure._shape_similarity(first,second,shape_cache))
     for index in range(3000):
         first = rng.uniform(-100, 200, (2, 2))
         second = first + rng.uniform(-20, 20, (2, 2)) if index % 2 else rng.uniform(-100, 200, (2, 2))
@@ -60,7 +68,7 @@ def main():
             cv2.putText(ink, str(rng.integers(0, 10)), (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, .4, 1, 1)
         ink = ink > 0
         same(structure._index_evidence(ink, [], shape_cache={}), card_structure._index_evidence(ink, [], shape_cache={}))
-    print('CARD_PERFORMANCE_EQUIVALENCE_OK edges=3000 rasters=100 index_masks=30')
+    print('CARD_PERFORMANCE_EQUIVALENCE_OK shapes=4000 edges=3000 rasters=100 index_masks=30')
 
 
 if __name__ == '__main__':
