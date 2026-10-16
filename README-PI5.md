@@ -1,8 +1,8 @@
-# 树莓派 5：当前扑克牌版本的本地适配
+# 树莓派 5：构建、部署和回滚
 
-分支：`raspberry-pi5-adapt-20261016`。算法基线为鲁班猫已验证的 `6de9e25`，包含相同形状碎片、断口/角标识别、10 月 15 日提速，以及求解期间暂停视觉处理。
+正式分支：`raspberry-pi5`；开发分支：`raspberry-pi5-adapt-20261016`。算法基线为鲁班猫已验证的 `6de9e25`，包含相同形状碎片、断口/角标识别、10 月 15 日提速，以及求解期间暂停视觉处理。
 
-**这是离线适配版本，尚未连接树莓派进行 ARM64 编译、桌面显示、摄像头、串口或机械臂验证。鲁班猫的耗时不代表树莓派耗时。**
+**2026-10-16 已在 Raspberry Pi 5 / Debian 13 / Python 3.13.5 / Flutter 3.44.8 原生编译并部署。** 41 张绿底回放通过，31 张扑克主图与参考一致；真实画面、只读位置查询与求解暂停/恢复已验证。机械臂实际抓取放置尚未测试。详见 [板端记录](docs/pi5-board-validation-20261016.json)。
 
 ## 运行环境
 
@@ -17,7 +17,7 @@
 以下命令在树莓派终端执行，不在 Windows 或鲁班猫上执行。安装时会通过 `sudo` 安装系统依赖，首次构建需要 apt、PyPI 和 Flutter 依赖网络；不要对整个安装脚本使用 sudo。
 
 ```bash
-git clone --branch raspberry-pi5-adapt-20261016 https://github.com/chaoxiaohan/26-E-Puzzle-Device.git puzzle-pi5-source
+git clone --branch raspberry-pi5 https://github.com/chaoxiaohan/26-E-Puzzle-Device.git puzzle-pi5-source
 cd puzzle-pi5-source
 bash deploy_pi5.sh --check
 bash deploy_pi5.sh --prepare-only
@@ -61,6 +61,8 @@ cd puzzle_card_detector
 python3 -m tests.camera_device_self_test
 ```
 
-识别回归只使用已有绿色背景实拍图。完整记录见 `docs/pi5-local-adaptation-20261016.json`。
+识别回归只使用绿色背景实拍图。本地测试见 `docs/pi5-local-adaptation-20261016.json`，板端测试见 `docs/pi5-board-validation-20261016.json`。
 
-原树莓派已部署快照分支 `raspberry-pi5` 暂时保留；回滚标签为 `backup/pi5-before-adapt-20261016`。鲁班猫分支和设备不受此次本地适配影响。
+原树莓派快照保留在 `backup/pi5-before-adapt-20261016`，升级前完整压缩备份位于板端 `~/.local/share/puzzle-device/upgrade-20261016/original-programs.tar.gz`，并已下载本地校验。原目录备份位于 `~/.local/share/puzzle-device/backups/20261016-211831-bf4e15a1/`。
+
+切换时五份参数均原样保留；之后用户在界面调整了 ROI 为 `(86,277,549,729)`，该调整已确认并保留。回滚会恢复升级前的旧配置，新配置仍在新版发布目录中。

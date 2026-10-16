@@ -1,0 +1,613 @@
+{
+  "date": "2026-10-16",
+  "status": "compiled, validated and deployed on Raspberry Pi 5",
+  "runtime_source_commit": "02505cf664dbfa3dc331b585af2628ee79ef9a4b",
+  "algorithm_source_commit": "6de9e25df89320899acc6a62ff977f8edce59665",
+  "device": {
+    "host": "192.168.100.182",
+    "user": "pi5",
+    "model": "Raspberry Pi 5 Model B Rev 1.1",
+    "os": "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION=\"13 (trixie)\"\nVERSION_CODENAME=trixie\nDEBIAN_VERSION_FULL=13.4\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+    "python": "3.13.5 (main, Jun 25 2025, 18:55:22) [GCC 14.2.0]\n4.10.0 2.2.4 3.5",
+    "flutter": "3.44.8"
+  },
+  "backup": {
+    "passed": true,
+    "archive_sha256": "c428fa1d49077fed8f699abc2d455372789e6ad2f4d01add5913d9a9bf053c83",
+    "files_verified": 832,
+    "settings_verified": 5,
+    "board_archive": "/home/pi5/.local/share/puzzle-device/upgrade-20261016/original-programs.tar.gz",
+    "directory_backup": "/home/pi5/.local/share/puzzle-device/backups/20261016-211831-bf4e15a1",
+    "local_archive": "outputs/pi5-board-20261016/original-programs.tar.gz"
+  },
+  "build": {
+    "exit_code": 0,
+    "elapsed_seconds": 62.015739751999945,
+    "release": "/home/pi5/.local/share/puzzle-device/releases/20261016-211831-bf4e15a1",
+    "source": "/home/pi5/.local/share/puzzle-device/upgrade-20261016/source/puzzle-pi5"
+  },
+  "native_binaries": {
+    "puzzle_card_detector/librectangle_solver.so": {
+      "sha256": "a79518a3f38bbd613e4fb8b6a29706780940d0a30e719b8c976a2c93cc92d1de",
+      "elf_machine": "AArch64"
+    },
+    "puzzle_flutter_ui/build/linux/arm64/release/bundle/puzzle_flutter_ui": {
+      "sha256": "79526eb5fb58fd65c75f3308233a6401515279c5fd92b1843c99aa87e27a907e",
+      "elf_machine": "AArch64"
+    }
+  },
+  "tests": [
+    {
+      "name": "flutter-tests",
+      "exit_code": 0,
+      "seconds": 17.34932216499999
+    },
+    {
+      "name": "camera_device_self_test",
+      "exit_code": 0,
+      "seconds": 0.06382082999994054
+    },
+    {
+      "name": "camera_reconnect_self_test",
+      "exit_code": 0,
+      "seconds": 0.3167634449999923
+    },
+    {
+      "name": "serial_protocol_self_test",
+      "exit_code": 0,
+      "seconds": 0.1638963860000331
+    },
+    {
+      "name": "card_pose_self_test",
+      "exit_code": 0,
+      "seconds": 8.278406709000024
+    },
+    {
+      "name": "card_structure_self_test",
+      "exit_code": 0,
+      "seconds": 9.432390368999904
+    },
+    {
+      "name": "card_cut_integrity_self_test",
+      "exit_code": 0,
+      "seconds": 0.4164616460000161
+    },
+    {
+      "name": "card_letter_index_self_test",
+      "exit_code": 0,
+      "seconds": 0.21537443499983056
+    },
+    {
+      "name": "layout_constraints_self_test",
+      "exit_code": 0,
+      "seconds": 0.21405351699991115
+    },
+    {
+      "name": "vision_pause_self_test",
+      "exit_code": 0,
+      "seconds": 6.228698044000112
+    },
+    {
+      "name": "ui_bridge_self_test",
+      "exit_code": 0,
+      "seconds": 0.16754932300000291
+    },
+    {
+      "name": "competition_mode_self_test",
+      "exit_code": 0,
+      "seconds": 0.6257721839999704
+    },
+    {
+      "name": "cpp-raster-build",
+      "exit_code": 0,
+      "seconds": 4.722344941999836
+    },
+    {
+      "name": "cpp-raster-test",
+      "exit_code": 0,
+      "seconds": 6.025208212000052
+    },
+    {
+      "name": "green-replay",
+      "exit_code": 0,
+      "seconds": 92.15855837000004
+    },
+    {
+      "name": "green-pose-comparison",
+      "exit_code": 0,
+      "seconds": 0.3666331719998652
+    }
+  ],
+  "flutter_tests_passed": 3,
+  "cpp_raster_result": "In file included from /usr/include/c++/14/bits/stl_algo.h:61,\n                 from /usr/include/c++/14/algorithm:61,\n                 from /home/pi5/.local/share/puzzle-device/releases/20261016-211831-bf4e15a1/puzzle_card_detector/tests/../rectangle_solver.cpp:1,\n                 from /home/pi5/.local/share/puzzle-device/releases/20261016-211831-bf4e15a1/puzzle_card_detector/tests/cpp_raster_test.cpp:4:\n/usr/include/c++/14/bits/stl_heap.h: In function ‘void std::__adjust_heap(_RandomAccessIterator, _Distance, _Distance, _Tp, _Compare) [with _RandomAccessIterator = __gnu_cxx::__normal_iterator<pair<double, double>*, vector<pair<double, double> > >; _Distance = long int; _Tp = pair<double, double>; _Compare = __gnu_cxx::__ops::_Iter_less_iter]’:\n/usr/include/c++/14/bits/stl_heap.h:224:5: note: parameter passing for argument of type ‘std::pair<double, double>’ when C++17 is enabled changed to match C++14 in GCC 10.1\n  224 |     __adjust_heap(_RandomAccessIterator __first, _Distance __holeIndex,\n      |     ^~~~~~~~~~~~~\nRASTER_REFERENCE_OK cases=2909",
+  "green_replay": {
+    "total": 41,
+    "poker": 31,
+    "plain_negative_controls": 10,
+    "poker_primary_images_identical": 31,
+    "max_equivalent_pose_error_pixels": 1.103058955909832e-13,
+    "poker_statuses_unchanged": true,
+    "median_poker_seconds": 0.7692659990000266,
+    "maximum_poker_seconds": 4.710638657000118,
+    "comparison": {
+      "count": 41,
+      "poker_count": 31,
+      "passed": true,
+      "pose_tolerance_pixels": 0.05,
+      "cases": [
+        {
+          "capture": "20260730_225714_149",
+          "kind": "plain",
+          "status": "WEAK_TEXTURE",
+          "reference_status": "WEAK_TEXTURE",
+          "seconds": 0.467213509000203,
+          "passed": true
+        },
+        {
+          "capture": "20260730_231817_179",
+          "kind": "plain",
+          "status": "GEOMETRY_ONLY",
+          "reference_status": "NO_LAYOUT",
+          "seconds": 1.393980006999982,
+          "passed": true
+        },
+        {
+          "capture": "20260730_231827_144",
+          "kind": "plain",
+          "status": "GEOMETRY_ONLY",
+          "reference_status": "NO_LAYOUT",
+          "seconds": 1.644563140999935,
+          "passed": true
+        },
+        {
+          "capture": "20260731_222527_772",
+          "kind": "poker",
+          "status": "AMBIGUOUS",
+          "reference_status": "AMBIGUOUS",
+          "seconds": 1.4867489679998016,
+          "pose_error_pixels": 5.684341886080802e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260731_224744_511",
+          "kind": "poker",
+          "status": "AMBIGUOUS",
+          "reference_status": "AMBIGUOUS",
+          "seconds": 1.598662554999919,
+          "pose_error_pixels": 1.103058955909832e-13,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260731_230438_607",
+          "kind": "plain",
+          "status": "NO_LAYOUT",
+          "reference_status": "NO_LAYOUT",
+          "seconds": 0.8929302330000155,
+          "passed": true
+        },
+        {
+          "capture": "20260731_230559_738",
+          "kind": "plain",
+          "status": "NO_LAYOUT",
+          "reference_status": "NO_LAYOUT",
+          "seconds": 0.8408986540000569,
+          "passed": true
+        },
+        {
+          "capture": "20260801_013943_516",
+          "kind": "poker",
+          "status": "AMBIGUOUS",
+          "reference_status": "AMBIGUOUS",
+          "seconds": 1.683054439999978,
+          "pose_error_pixels": 8.038873388460929e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_013955_116",
+          "kind": "poker",
+          "status": "AMBIGUOUS",
+          "reference_status": "AMBIGUOUS",
+          "seconds": 0.7692659990000266,
+          "pose_error_pixels": 5.859285502108464e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_014022_101",
+          "kind": "poker",
+          "status": "AMBIGUOUS",
+          "reference_status": "AMBIGUOUS",
+          "seconds": 0.8958759770000597,
+          "pose_error_pixels": 3.1776437161565096e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_014027_873",
+          "kind": "poker",
+          "status": "VERIFIED",
+          "reference_status": "VERIFIED",
+          "seconds": 0.4044868830001178,
+          "pose_error_pixels": 5.859285502108464e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_014047_329",
+          "kind": "poker",
+          "status": "VERIFIED",
+          "reference_status": "VERIFIED",
+          "seconds": 0.7631648290000612,
+          "pose_error_pixels": 3.1776437161565096e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_014107_758",
+          "kind": "poker",
+          "status": "VERIFIED",
+          "reference_status": "VERIFIED",
+          "seconds": 0.7421894780000002,
+          "pose_error_pixels": 7.553172887309252e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_014147_961",
+          "kind": "poker",
+          "status": "AMBIGUOUS",
+          "reference_status": "AMBIGUOUS",
+          "seconds": 0.9417925249999826,
+          "pose_error_pixels": 7.246142549764705e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_032606_145",
+          "kind": "poker",
+          "status": "VERIFIED",
+          "reference_status": "VERIFIED",
+          "seconds": 3.6794885750000503,
+          "pose_error_pixels": 5.728578676879116e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_032800_758",
+          "kind": "plain",
+          "status": "WEAK_TEXTURE",
+          "reference_status": "WEAK_TEXTURE",
+          "seconds": 4.507025089000081,
+          "passed": true
+        },
+        {
+          "capture": "20260801_045442_457",
+          "kind": "poker",
+          "status": "AMBIGUOUS",
+          "reference_status": "AMBIGUOUS",
+          "seconds": 0.6780378410001049,
+          "pose_error_pixels": 6.355287432313019e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_060309_056",
+          "kind": "poker",
+          "status": "VERIFIED",
+          "reference_status": "VERIFIED",
+          "seconds": 0.26680114600003435,
+          "pose_error_pixels": 5.859285502108464e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_062401_006",
+          "kind": "poker",
+          "status": "VERIFIED",
+          "reference_status": "VERIFIED",
+          "seconds": 0.4010235229998216,
+          "pose_error_pixels": 3.552713678800501e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_062529_588",
+          "kind": "poker",
+          "status": "VERIFIED",
+          "reference_status": "VERIFIED",
+          "seconds": 0.1912434650000705,
+          "pose_error_pixels": 2.842170943040401e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_065112_551",
+          "kind": "poker",
+          "status": "VERIFIED",
+          "reference_status": "VERIFIED",
+          "seconds": 0.492068867999933,
+          "pose_error_pixels": 3.552713678800501e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_115637_683",
+          "kind": "poker",
+          "status": "AMBIGUOUS",
+          "reference_status": "AMBIGUOUS",
+          "seconds": 4.224234054999897,
+          "pose_error_pixels": 4.5496934130773415e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_115701_361",
+          "kind": "poker",
+          "status": "AMBIGUOUS",
+          "reference_status": "AMBIGUOUS",
+          "seconds": 4.011877414000082,
+          "pose_error_pixels": 2.842170943040401e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_115722_048",
+          "kind": "plain",
+          "status": "NO_LAYOUT",
+          "reference_status": "NO_LAYOUT",
+          "seconds": 4.053659560000142,
+          "passed": true
+        },
+        {
+          "capture": "20260801_121207_250",
+          "kind": "plain",
+          "status": "NO_LAYOUT",
+          "reference_status": "NO_LAYOUT",
+          "seconds": 0.0206412590000582,
+          "passed": true
+        },
+        {
+          "capture": "20260801_184457_395",
+          "kind": "plain",
+          "status": "NO_LAYOUT",
+          "reference_status": "NO_LAYOUT",
+          "seconds": 4.191972416999988,
+          "passed": true
+        },
+        {
+          "capture": "20260801_185703_491",
+          "kind": "joker",
+          "status": "VERIFIED",
+          "reference_status": "VERIFIED",
+          "seconds": 4.336867474999963,
+          "pose_error_pixels": 8.644125458514252e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_192239_246",
+          "kind": "poker",
+          "status": "GEOMETRY_ONLY",
+          "reference_status": "GEOMETRY_ONLY",
+          "seconds": 0.3702987450001274,
+          "pose_error_pixels": 4.263256414560601e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_192916_754",
+          "kind": "poker",
+          "status": "AMBIGUOUS",
+          "reference_status": "AMBIGUOUS",
+          "seconds": 0.42841523699985373,
+          "pose_error_pixels": 6.355287432313019e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_214215_813",
+          "kind": "plain",
+          "status": "WEAK_TEXTURE",
+          "reference_status": "WEAK_TEXTURE",
+          "seconds": 6.149207036000007,
+          "passed": true
+        },
+        {
+          "capture": "20260801_215755_916",
+          "kind": "poker",
+          "status": "VERIFIED",
+          "reference_status": "VERIFIED",
+          "seconds": 3.9847186120000515,
+          "pose_error_pixels": 2.2748467065386707e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_215940_303",
+          "kind": "poker",
+          "status": "VERIFIED",
+          "reference_status": "VERIFIED",
+          "seconds": 0.5022151820001,
+          "pose_error_pixels": 7.553172887309252e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_224410_692",
+          "kind": "joker",
+          "status": "AMBIGUOUS",
+          "reference_status": "AMBIGUOUS",
+          "seconds": 3.7016030909999245,
+          "pose_error_pixels": 7.105427357601002e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_224437_055",
+          "kind": "joker",
+          "status": "VERIFIED",
+          "reference_status": "VERIFIED",
+          "seconds": 4.710638657000118,
+          "pose_error_pixels": 1.0247593068766006e-13,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_225239_323",
+          "kind": "poker",
+          "status": "VERIFIED",
+          "reference_status": "VERIFIED",
+          "seconds": 0.19996504000005189,
+          "pose_error_pixels": 2.842170943040401e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_225517_181",
+          "kind": "poker",
+          "status": "VERIFIED",
+          "reference_status": "VERIFIED",
+          "seconds": 0.4649780380000266,
+          "pose_error_pixels": 4.0194366942304644e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260801_225637_008",
+          "kind": "joker",
+          "status": "AMBIGUOUS",
+          "reference_status": "AMBIGUOUS",
+          "seconds": 4.3772216049999315,
+          "pose_error_pixels": 4.0194366942304644e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260802_013324_510",
+          "kind": "poker",
+          "status": "VERIFIED",
+          "reference_status": "VERIFIED",
+          "seconds": 0.5377399340000011,
+          "pose_error_pixels": 4.973799150320701e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260802_014532_605",
+          "kind": "poker",
+          "status": "VERIFIED",
+          "reference_status": "VERIFIED",
+          "seconds": 0.45042570300006446,
+          "pose_error_pixels": 8.881784197001252e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260802_014544_004",
+          "kind": "poker",
+          "status": "VERIFIED",
+          "reference_status": "VERIFIED",
+          "seconds": 3.791915478999954,
+          "pose_error_pixels": 4.0194366942304644e-14,
+          "passed": true,
+          "primary_image_identical": true
+        },
+        {
+          "capture": "20260802_014700_604",
+          "kind": "poker",
+          "status": "VERIFIED",
+          "reference_status": "VERIFIED",
+          "seconds": 3.782764823999969,
+          "pose_error_pixels": 4.263256414560601e-14,
+          "passed": true,
+          "primary_image_identical": true
+        }
+      ]
+    }
+  },
+  "live_test": {
+    "green_scene": "four nearly rectangular pieces of a ten of clubs",
+    "first_solver_ms": 6927.4,
+    "first_message": "CARD VERIFIED",
+    "second_solver_ms": 7278.5,
+    "second_message": "CARD AMBIGUOUS",
+    "second_wall_seconds": 7.722686725999893,
+    "paused_samples": 73,
+    "frame_revision_frozen": true,
+    "jpeg_frozen": true,
+    "preview_resumed": true,
+    "position_query_reply": "当前位置已更新",
+    "agent_sent_motion_commands": false,
+    "sampling_note": "Initial probe included the submission-transition state with stale FPS; its 74 sampled JPEGs were identical. The repeated settled-loop probe passed."
+  },
+  "live_verification": {
+    "passed": true,
+    "release": "/home/pi5/.local/share/puzzle-device/releases/20261016-211831-bf4e15a1",
+    "processes": {
+      "backend": [
+        2829
+      ],
+      "ui": [
+        2824
+      ]
+    },
+    "binaries": {
+      "puzzle_card_detector/librectangle_solver.so": {
+        "sha256": "a79518a3f38bbd613e4fb8b6a29706780940d0a30e719b8c976a2c93cc92d1de",
+        "elf_machine": "AArch64"
+      },
+      "puzzle_flutter_ui/build/linux/arm64/release/bundle/puzzle_flutter_ui": {
+        "sha256": "79526eb5fb58fd65c75f3308233a6401515279c5fd92b1843c99aa87e27a907e",
+        "elf_machine": "AArch64"
+      }
+    },
+    "settings_preserved_at_switch": true,
+    "other_settings_unchanged": true,
+    "user_confirmed_roi_adjustment": {
+      "x": 86,
+      "y": 277,
+      "width": 549,
+      "height": 729
+    },
+    "capture_target": "/home/pi5/.local/share/puzzle-device/backups/20261016-211831-bf4e15a1/puzzle_card_detector/captures",
+    "state_age_seconds": 0.03554081916809082,
+    "state": {
+      "mode": "card",
+      "camera_ok": true,
+      "piece_count": 4,
+      "fps": 9.7,
+      "frame_revision": 9734,
+      "serial_connected": true,
+      "serial_active_port": "/dev/ttyUSB0",
+      "serial_last_reply": "当前位置已更新",
+      "serial_error": "",
+      "vision_threads": 1,
+      "vision_paused": false,
+      "solving": false,
+      "solver_message": "CARD AMBIGUOUS",
+      "solver_ms": 8553.9,
+      "competition_active": false
+    }
+  },
+  "settings_preserved_at_activation": {
+    "serial_settings.json": "4b16e9d3b3922d1e9d4f44649a633ea0402bb4dded64b0d6916d5bb3a054d7b6",
+    "vision_settings.json": "075de1a1fab941a2f3d4c0659421467fba1b4b42873e08ff6f89abfee15cea87",
+    "templates.json": "c0595c6a0cedc886221b23695a2aad5ed8e9209e843cf1ac17616a16f35db5bb",
+    "card_scoring_settings.json": "5e912a635c71b7faba92f81a0a048095aa33eaec55f10c1a519bb2c783835c18",
+    "roi_settings.json": "b2ba2d65cc0ef98d3dd8caed9f3e48cfdbcbc4d211ea3d951e59d60c3b23d57b"
+  },
+  "user_confirmed_roi_adjustment": {
+    "x": 86,
+    "y": 277,
+    "width": 549,
+    "height": 729
+  },
+  "boundaries": [
+    "No physical arm movement/placement test was sent by the agent",
+    "The second live scene returned AMBIGUOUS and still requires confirmation; automatic-execution thresholds were not relaxed",
+    "Offline replay timings do not guarantee identical timing for other live frames"
+  ]
+}

@@ -1,5 +1,5 @@
 {
-  "kind": "local-only Pi 5 adaptation",
+  "kind": "Pi 5 native validated deployment",
   "prepared_locally_on": "2026-10-16",
   "algorithm_source": {
     "branch": "lubancat-1",
@@ -17,7 +17,13 @@
       "card_scoring_settings.json": "5e912a635c71b7faba92f81a0a048095aa33eaec55f10c1a519bb2c783835c18"
     }
   },
-  "current_pi5_hardware_observation": null,
-  "deployed_to_pi5": false,
-  "configuration_policy": "Existing device JSON overrides these historical defaults when activating a release."
+  "current_pi5_hardware_observation": {
+    "model": "Raspberry Pi 5 Model B Rev 1.1",
+    "host": "192.168.100.182",
+    "validation": "docs/pi5-board-validation-20261016.json"
+  },
+  "deployed_to_pi5": true,
+  "configuration_policy": "Existing device JSON overrides these historical defaults when activating a release.",
+  "deployed_on": "2026-10-16",
+  "runtime_source_commit": "02505cf664dbfa3dc331b585af2628ee79ef9a4b"
 }
