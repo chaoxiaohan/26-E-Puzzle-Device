@@ -1,0 +1,446 @@
+{
+  "observed_at": "2026-10-12T09:58:19.458117+00:00",
+  "source_commit": "fb130304d64e9bb15da61c6965a8b63956676122",
+  "files": [
+    {
+      "path": ".gitattributes",
+      "bytes": 88,
+      "sha256": "37336c48154a1b27a6fdecd2754c00d47fe2811336d2a980545fd99e274e8fbc"
+    },
+    {
+      "path": ".gitignore",
+      "bytes": 74,
+      "sha256": "b7fbcdd1fe2eb0497459a7c14a43a8f04255b9c40cf077df7a37d8587e013564"
+    },
+    {
+      "path": "OPTIMIZATION-20261012.md",
+      "bytes": 3071,
+      "sha256": "e2a5e31634f4abdafb8afdda3954b303bfbff1ba950af6a078218a730b9a0940"
+    },
+    {
+      "path": "README-LUBANCAT.md",
+      "bytes": 6374,
+      "sha256": "9677272ea2a9563fa740eb91fe4d05f57e88c17ab1cb7175d5036e0d5bb8fbd7"
+    },
+    {
+      "path": "puzzle_card_detector/.gitignore",
+      "bytes": 134,
+      "sha256": "30160cd0dc5d055d70b5400c5b6f3e6f97a2e9106e39cde0e3307fa4b118fdcd"
+    },
+    {
+      "path": "puzzle_card_detector/99-puzzle-ch340.rules",
+      "bytes": 329,
+      "sha256": "75fa689aa8939f97d71f4f6cc49fabce444b4f62668e12386a44078e26a96b8f"
+    },
+    {
+      "path": "puzzle_card_detector/README.md",
+      "bytes": 2330,
+      "sha256": "02a2a594cbc65155701fab04ce397e17b1d8b02ff004a02c02315d6fc5e60f65"
+    },
+    {
+      "path": "puzzle_card_detector/SERIAL_PROTOCOL.md",
+      "bytes": 2364,
+      "sha256": "9cae69ce158468354ed08e451fa6f5e86047ccf6f98996e02b13f5e6aa3df6b1"
+    },
+    {
+      "path": "puzzle_card_detector/build_cpp_solver.sh",
+      "bytes": 265,
+      "sha256": "30461e04a91b922ad8b8d19179cfa83c6d5ed4a494b1c31de522bcd78998d6f5"
+    },
+    {
+      "path": "puzzle_card_detector/card_face_replay.py",
+      "bytes": 14410,
+      "sha256": "146f92c829a05f406cba99db885ae25243d19aea02196a7867fa7c7b4c72d66b"
+    },
+    {
+      "path": "puzzle_card_detector/card_face_solver.py",
+      "bytes": 76542,
+      "sha256": "0ad6ef924b0630a916b4dbadaa2147104676fe3c0e9ebd691b2e03378f492ab1"
+    },
+    {
+      "path": "puzzle_card_detector/card_scoring_settings.json",
+      "bytes": 349,
+      "sha256": "5e912a635c71b7faba92f81a0a048095aa33eaec55f10c1a519bb2c783835c18"
+    },
+    {
+      "path": "puzzle_card_detector/card_topology_solver.py",
+      "bytes": 20639,
+      "sha256": "e4c52046a34fa8c9c9bcd9a61579c3a1ce38bd3601fb88ee5caea3732ff22185"
+    },
+    {
+      "path": "puzzle_card_detector/cpp_rectangle_solver.py",
+      "bytes": 3249,
+      "sha256": "c5a4973c23bd5ace544b3afd88869bcc3676ff33bb32113e4cdf9e56220a16bb"
+    },
+    {
+      "path": "puzzle_card_detector/hard_frame_replay.py",
+      "bytes": 2216,
+      "sha256": "39b199854cab1d56bc95a6616cf84109a9f64ea9ec9af538cf425c2863948387"
+    },
+    {
+      "path": "puzzle_card_detector/hardware_devices.py",
+      "bytes": 1026,
+      "sha256": "02f6cacff53f9ef6a76b3148419d537a744e429b5ae66f6a5728a406997908aa"
+    },
+    {
+      "path": "puzzle_card_detector/layout_constraints.py",
+      "bytes": 27887,
+      "sha256": "1d399b43389091ac88c98a2b1734a03cd50d053c2e0b7a936658b36776514b5a"
+    },
+    {
+      "path": "puzzle_card_detector/main.py",
+      "bytes": 248576,
+      "sha256": "c6ed1d8325199695509d63a96e4cd200f1211b987452543fcc3c187ea1c0bb85"
+    },
+    {
+      "path": "puzzle_card_detector/maix.py",
+      "bytes": 8446,
+      "sha256": "2a1c00b2ff22c69376edf483a4bc99dcece2d54fb3d594266fd082a72039ff66"
+    },
+    {
+      "path": "puzzle_card_detector/puzzle_solver.py",
+      "bytes": 3193,
+      "sha256": "74d2037024cf0fec5dee188d24510c3b008b97172a28c9732854e39e4a5038e0"
+    },
+    {
+      "path": "puzzle_card_detector/real_capture_replay.py",
+      "bytes": 3744,
+      "sha256": "f1685cbfa15a42e2f0d27a050437f896af66d5c70c4c0db15b7132c9ed65258b"
+    },
+    {
+      "path": "puzzle_card_detector/rectangle_solver.cpp",
+      "bytes": 51264,
+      "sha256": "e2eab20b24c85ea15a1abe726afb4106af468503399f0a960a10215466d60179"
+    },
+    {
+      "path": "puzzle_card_detector/requirements-lubancat.txt",
+      "bytes": 52,
+      "sha256": "5ac1d06edd37a2a77a68a7a1d84288c300a085ee2909b99d799d6e5f4c34d381"
+    },
+    {
+      "path": "puzzle_card_detector/roi_settings.json",
+      "bytes": 58,
+      "sha256": "b2ba2d65cc0ef98d3dd8caed9f3e48cfdbcbc4d211ea3d951e59d60c3b23d57b"
+    },
+    {
+      "path": "puzzle_card_detector/serial_protocol.py",
+      "bytes": 26173,
+      "sha256": "a22d67cd95ee91dea70afa44401fc946428c174d94a896a7082cfe0932e59879"
+    },
+    {
+      "path": "puzzle_card_detector/serial_settings.json",
+      "bytes": 614,
+      "sha256": "bb6f1cd36ba1bf9b7b08098807d3f8a8efe07fa1822da3f81557c598c4da9b6d"
+    },
+    {
+      "path": "puzzle_card_detector/solver_boundary.py",
+      "bytes": 11265,
+      "sha256": "c9248aa29af800f455ffaf9a8f8dff1efd7838daf42123cbd342d956ab6ac3a9"
+    },
+    {
+      "path": "puzzle_card_detector/solver_hybrid.py",
+      "bytes": 2536,
+      "sha256": "9883161425e77e53aa39a6ba7c788e39a4479e720d8c3b5e9361e82e0d6988b5"
+    },
+    {
+      "path": "puzzle_card_detector/solver_v2.py",
+      "bytes": 22444,
+      "sha256": "a6ad320e7ab967a36cd09f2596fdb053c9123d0bd84b74a1e3f2810da77aa253"
+    },
+    {
+      "path": "puzzle_card_detector/start.sh",
+      "bytes": 645,
+      "sha256": "9a094581a371a9ee349bf464725e8467fbfc4c28d97d1e6383906f8f0f3a7e3e"
+    },
+    {
+      "path": "puzzle_card_detector/template_matcher.py",
+      "bytes": 16037,
+      "sha256": "4b706b22ad2be7961c9332f34074117ec4e26625fcadc5a787f009885d1114c5"
+    },
+    {
+      "path": "puzzle_card_detector/templates.json",
+      "bytes": 70742,
+      "sha256": "c0595c6a0cedc886221b23695a2aad5ed8e9209e843cf1ac17616a16f35db5bb"
+    },
+    {
+      "path": "puzzle_card_detector/tests/__init__.py",
+      "bytes": 43,
+      "sha256": "8df479dc3bf991cae411513fe63ef4cb5f063a09abdfaf2467daeb416a908e34"
+    },
+    {
+      "path": "puzzle_card_detector/tests/async_solver_self_test.py",
+      "bytes": 2538,
+      "sha256": "f039fb577afdda7af191dd5130967c9bb999377956ef86c7238778d49a96fdc5"
+    },
+    {
+      "path": "puzzle_card_detector/tests/best_effort_self_test.py",
+      "bytes": 1627,
+      "sha256": "11644e14e3024b8d2702b557474c99116335859e0fefb3b7dd314a8bc3220aa0"
+    },
+    {
+      "path": "puzzle_card_detector/tests/camera_device_self_test.py",
+      "bytes": 1531,
+      "sha256": "813ccf78a443a8fd63176a775268a8e583b6a80cf287ee8f1fd9113c167b37e6"
+    },
+    {
+      "path": "puzzle_card_detector/tests/camera_reconnect_self_test.py",
+      "bytes": 2146,
+      "sha256": "6fd2c385fb32136f201f30e86e1e4e4378c5666e14c33e0b63030ca7d5fa8350"
+    },
+    {
+      "path": "puzzle_card_detector/tests/card_candidate_self_test.py",
+      "bytes": 3357,
+      "sha256": "9bfc8fcc23809e970516b307f7c081e1ea173b6761159ad0f8904e288e1f682f"
+    },
+    {
+      "path": "puzzle_card_detector/tests/card_face_solver_self_test.py",
+      "bytes": 8323,
+      "sha256": "3dc0eaf8f735bc88b7e1987c0dfefda8dc2aab739675cc23873f25d956c1fde4"
+    },
+    {
+      "path": "puzzle_card_detector/tests/card_score_regression_self_test.py",
+      "bytes": 2456,
+      "sha256": "dd7de38245339fa52d2852f7d18061511a9a88df5d8178d362bf084e9bc53695"
+    },
+    {
+      "path": "puzzle_card_detector/tests/card_shape_recovery_self_test.py",
+      "bytes": 1052,
+      "sha256": "f5b830d2f2bc5ad0293c7cca43815d179e2daab58a1c8b0173fc0b86e3408565"
+    },
+    {
+      "path": "puzzle_card_detector/tests/card_texture_band_self_test.py",
+      "bytes": 1044,
+      "sha256": "5dc6bdb6d8edc35dc1b198d31d20778ee69bd080d39ec19ef580dc920d0caa40"
+    },
+    {
+      "path": "puzzle_card_detector/tests/card_topology_solver_self_test.py",
+      "bytes": 3088,
+      "sha256": "2bbbc142c026c9eaddbc7ac2a0c9e0824dbcf7c950e1cc8be4c3d134fe98fd46"
+    },
+    {
+      "path": "puzzle_card_detector/tests/competition_mode_self_test.py",
+      "bytes": 3948,
+      "sha256": "0221da5972cc11e98d39c5ffc1598c28beb9f92a57f748cfec2de3f4f9913522"
+    },
+    {
+      "path": "puzzle_card_detector/tests/cpp_raster_self_test.py",
+      "bytes": 505,
+      "sha256": "33c2d6aac748b2e7a41d62772407ce91c949e077b5ad5d1cab3225843bca3d6b"
+    },
+    {
+      "path": "puzzle_card_detector/tests/cpp_raster_test.cpp",
+      "bytes": 3824,
+      "sha256": "76eaf39ad8caedc6a0aa112774bd8a0f39035fd551381a0fd4fddb1fd9731a9a"
+    },
+    {
+      "path": "puzzle_card_detector/tests/execution_gap_self_test.py",
+      "bytes": 967,
+      "sha256": "5c318ada55e7e873a20c7ed3602b06f6993fd12cad0b4cdc3cd5c2ca31a8fa05"
+    },
+    {
+      "path": "puzzle_card_detector/tests/export_card_candidate_pool.py",
+      "bytes": 3210,
+      "sha256": "1c9dbde25519d9db09fccd3721ea42672520fcdbe6f6d0454576e1a99a9657f8"
+    },
+    {
+      "path": "puzzle_card_detector/tests/feature_extraction_self_test.py",
+      "bytes": 8030,
+      "sha256": "7a6ac78598d1349c2f6d8475a2a55784679e0ddaab0677db340b2e3e43224ada"
+    },
+    {
+      "path": "puzzle_card_detector/tests/hybrid_self_test.py",
+      "bytes": 2579,
+      "sha256": "0f77af96833754d00de18901b77be446cea8139089f99f0cf98ea1953fe1cf1a"
+    },
+    {
+      "path": "puzzle_card_detector/tests/layout_constraints_self_test.py",
+      "bytes": 7232,
+      "sha256": "c1a9b3c335f0871bc5c8a7163e1c506281e84293c7dc92ba0bf4acd690aeff53"
+    },
+    {
+      "path": "puzzle_card_detector/tests/portrait_frame_self_test.py",
+      "bytes": 688,
+      "sha256": "286072f8ab61f78ce03b6434115d919af4f15aad48aa2bd5ea0da66f12dfdd00"
+    },
+    {
+      "path": "puzzle_card_detector/tests/self_test.py",
+      "bytes": 3876,
+      "sha256": "dfb5bca5f48fcf39dfe7a87edc2644233e651ee90ba304607ebfce58fdaedb2e"
+    },
+    {
+      "path": "puzzle_card_detector/tests/serial_protocol_self_test.py",
+      "bytes": 5124,
+      "sha256": "37b10ce4361e91841114dffeb8ca621fab68e3dcc1d518b7ff4f59dda3bd30b3"
+    },
+    {
+      "path": "puzzle_card_detector/tests/short_edge_protection_self_test.py",
+      "bytes": 1158,
+      "sha256": "31d74d50722549026218657c717e2a461106d76273174c8ad43dde07a070c1fe"
+    },
+    {
+      "path": "puzzle_card_detector/tests/stability_self_test.py",
+      "bytes": 1463,
+      "sha256": "84f951afcdf7b6e8a3fe77f8fbbf54cba1a3fda68644f6a5584049264e84873b"
+    },
+    {
+      "path": "puzzle_card_detector/tests/template_matcher_self_test.py",
+      "bytes": 6319,
+      "sha256": "ac976703f48c44de717c92a091b4e077208152299eb462fcb5f6d6b4c8d09e0f"
+    },
+    {
+      "path": "puzzle_card_detector/tests/topology_refinement_self_test.py",
+      "bytes": 1903,
+      "sha256": "7625c67b809b921e5e49812afe2d3ac8aafd0d53426babf3aec931c66f373c7a"
+    },
+    {
+      "path": "puzzle_card_detector/tests/ui_bridge_self_test.py",
+      "bytes": 1902,
+      "sha256": "5f794823953da02a8eff30990bcb97f1e3a3319c35eae17781e20e0ff133219f"
+    },
+    {
+      "path": "puzzle_card_detector/ui_bridge.py",
+      "bytes": 8228,
+      "sha256": "3bed77dc63e31e8638ef09e84dc66be286f6f2a539f1e53cc928ff939dfd6746"
+    },
+    {
+      "path": "puzzle_card_detector/vision_settings.json",
+      "bytes": 445,
+      "sha256": "075de1a1fab941a2f3d4c0659421467fba1b4b42873e08ff6f89abfee15cea87"
+    },
+    {
+      "path": "puzzle_flutter_ui/.gitignore",
+      "bytes": 703,
+      "sha256": "4a8d984279954e0461e0ffef9b9e7455340a0a762f227c01065a53482a83a4f1"
+    },
+    {
+      "path": "puzzle_flutter_ui/.metadata",
+      "bytes": 966,
+      "sha256": "189913e3f2c7c24768c768cddebdff9ee5802e93ca7d196f5fe720b826a5c25a"
+    },
+    {
+      "path": "puzzle_flutter_ui/E题_拼图装置.pdf",
+      "bytes": 585722,
+      "sha256": "1230aa018fa86a98ba3b2e73d55935e4065a990e2e9c230a560da1514d5d3f8e"
+    },
+    {
+      "path": "puzzle_flutter_ui/README.md",
+      "bytes": 1258,
+      "sha256": "50b80dd6a8baf5b0cbc9c5afd394c07b7a21d06afc6899a90e4d337e16ff4d60"
+    },
+    {
+      "path": "puzzle_flutter_ui/analysis_options.yaml",
+      "bytes": 1420,
+      "sha256": "e0ea485cfdbc3e12b93efb8679a5ea73ebfe20ea4ca0c473dc594fc2fb274ed5"
+    },
+    {
+      "path": "puzzle_flutter_ui/assets/fonts/DejaVuSans.ttf",
+      "bytes": 759720,
+      "sha256": "57f73e11f51999432bf7ab22ce55b6f945d5eca1bf824404cfa9ec2e3718c84e"
+    },
+    {
+      "path": "puzzle_flutter_ui/assets/fonts/DroidSansFallbackFull.ttf",
+      "bytes": 4033420,
+      "sha256": "acb6440a713d880a13a21b468ba7cd43f5a2b2934972e51be791c880730777b8"
+    },
+    {
+      "path": "puzzle_flutter_ui/build_lubancat_runner.sh",
+      "bytes": 587,
+      "sha256": "29b56d3a73e02380d3e2d1c2b5fe8ca2bc371aa5c8baef4c2b595d5fadfc8f72"
+    },
+    {
+      "path": "puzzle_flutter_ui/lib/backend_bridge.dart",
+      "bytes": 24822,
+      "sha256": "b1844b8f344a50efdd12e2b2fe43106a4f54e357103471636c6151ced0a1c1c0"
+    },
+    {
+      "path": "puzzle_flutter_ui/lib/main.dart",
+      "bytes": 172924,
+      "sha256": "300bd7e74451d11c2d1e0158fdb23f7b683933613b73eae545e509619d139c44"
+    },
+    {
+      "path": "puzzle_flutter_ui/linux/.gitignore",
+      "bytes": 18,
+      "sha256": "5ded4f1a9d10d34bf6ee5beb0711d88ee2ef07b0f07ace9ed77935a246e8eb82"
+    },
+    {
+      "path": "puzzle_flutter_ui/linux/CMakeLists.txt",
+      "bytes": 4770,
+      "sha256": "20bbd497e7916b2428bdfce6f80f5bb851c04ba52e4e50855f69071e9016dfb1"
+    },
+    {
+      "path": "puzzle_flutter_ui/linux/flutter/CMakeLists.txt",
+      "bytes": 2815,
+      "sha256": "787189e2623313cfee590a0b553338eb9fc68b3af922ddd77c5d39c75f989aeb"
+    },
+    {
+      "path": "puzzle_flutter_ui/linux/flutter/generated_plugin_registrant.cc",
+      "bytes": 161,
+      "sha256": "7861b227b10a10cc1d7643f82a246b7db35b503f2d9ff1d3c906136e6c260dce"
+    },
+    {
+      "path": "puzzle_flutter_ui/linux/flutter/generated_plugin_registrant.h",
+      "bytes": 303,
+      "sha256": "00f93bb5b1faefdede8f6065df327522900fb0b8efee86bacf424fd947ed14bb"
+    },
+    {
+      "path": "puzzle_flutter_ui/linux/flutter/generated_plugins.cmake",
+      "bytes": 739,
+      "sha256": "d5aaa52ef8594d3128b35b6619c6a353e1be5f3c5a63a9c29c0a32b424e91952"
+    },
+    {
+      "path": "puzzle_flutter_ui/linux/runner/CMakeLists.txt",
+      "bytes": 864,
+      "sha256": "c83492a1427cb22da6900302d0ac0f7261d10724b28f65e2210fddc4288886c7"
+    },
+    {
+      "path": "puzzle_flutter_ui/linux/runner/main.cc",
+      "bytes": 180,
+      "sha256": "ea23f7cdf74091d63bba29ef60486370b766157b848f0cfe62bd8b1c1695a0c1"
+    },
+    {
+      "path": "puzzle_flutter_ui/linux/runner/my_application.cc",
+      "bytes": 5524,
+      "sha256": "8902ae190658b0cfef9ed17f07c719ab2f575ea99f86ca34f173192c7aa80a56"
+    },
+    {
+      "path": "puzzle_flutter_ui/linux/runner/my_application.h",
+      "bytes": 451,
+      "sha256": "a4218d7ac0db8a9a6716daf216b2d4fc6bdc7ac647e3183078b2c962ebdfcf70"
+    },
+    {
+      "path": "puzzle_flutter_ui/pubspec.lock",
+      "bytes": 6084,
+      "sha256": "712660f9eaf1b9b986139388c1d9d988f0da39e279d5ad9b02d576b7db02f72d"
+    },
+    {
+      "path": "puzzle_flutter_ui/pubspec.yaml",
+      "bytes": 4035,
+      "sha256": "ec76831ab756eccc2ca26e942b600ebd1c37d08fec2e0727421198513ff7a529"
+    },
+    {
+      "path": "puzzle_flutter_ui/start_all.sh",
+      "bytes": 60,
+      "sha256": "d12e7b2b40697404a6c208ba933b1d71c31262f55a1c5ca20fd65c78cca0f17a"
+    },
+    {
+      "path": "puzzle_flutter_ui/start_ui.sh",
+      "bytes": 848,
+      "sha256": "7536ec20b01d39c4a75bd15f9dd6c9f261134f1b280cd67a21357aa71788b7b5"
+    },
+    {
+      "path": "puzzle_flutter_ui/test/backend_bridge_test.dart",
+      "bytes": 1826,
+      "sha256": "6f5827a0e14a8cd5cdfbf442916998b5c39d3e46aed362501e35724ac856b04c"
+    },
+    {
+      "path": "puzzle_flutter_ui/test/widget_test.dart",
+      "bytes": 2982,
+      "sha256": "eb13fba00cc49d5406cfd716fa098948e1952ccc2735a7c73ad59ad10c852d64"
+    },
+    {
+      "path": "setup_lubancat.sh",
+      "bytes": 2277,
+      "sha256": "0849abdf2da2d727684cdabdadf84c17ac58098ccf21f10c5dd9d5b57e3c37aa"
+    }
+  ]
+}

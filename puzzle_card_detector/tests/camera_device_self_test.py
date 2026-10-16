@@ -22,9 +22,12 @@ with tempfile.TemporaryDirectory() as directory:
 
     add_video("video0", "rkisp", 0)
     add_video("video1", "rkvdec", 0)
+    add_video("video2", "bcm2835-isp", 0)
+    add_video("video3", "rp1-cfe", 0)
+    add_video("video4", "pispbe", 0)
     try:
         camera_device(str(sysfs), str(devices))
-        raise AssertionError("Rockchip internal nodes must not be selected")
+        raise AssertionError("SoC ISP/codec/CSI nodes must not be selected as USB cameras")
     except RuntimeError:
         pass
 

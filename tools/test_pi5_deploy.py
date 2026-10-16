@@ -2,6 +2,8 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -12,6 +14,7 @@ import pi5_deploy as deploy
 class DeploymentTests(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp(prefix='puzzle-pi5-test-')).resolve()
+        self.detect_processes = deploy.project_processes
         self.patch = patch.object(deploy, 'project_processes', return_value=[])
         self.patch.start()
         for name in ('puzzle_card_detector', 'puzzle_flutter_ui'):
@@ -94,6 +97,29 @@ class DeploymentTests(unittest.TestCase):
     def test_refuse_wrong_host_before_installing(self):
         with patch.object(deploy.platform, 'machine', return_value='x86_64'), self.assertRaises(RuntimeError):
             deploy.preflight(Path('/missing/flutter'))
+
+    def test_detect_legacy_relative_and_current_process_paths(self):
+        proc = self.home / 'proc'
+        examples = [('123', 'python3', b'python3\0main.py\0', 'puzzle_card_detector'),
+                    ('124', 'puzzle_flutter_', b'build/linux/arm64/release/bundle/puzzle_flutter_ui\0', 'puzzle_flutter_ui'),
+                    ('125', 'python3', b'python3\0unrelated.py\0', 'puzzle_card_detector')]
+        for pid, name, args, cwd in examples:
+            path = proc / pid
+            path.mkdir(parents=True)
+            (path / 'comm').write_text(name)
+            (path / 'cmdline').write_bytes(args)
+            (path / 'cwd').symlink_to(self.home / cwd, target_is_directory=True)
+        self.assertEqual(sorted(self.detect_processes(self.home, proc)), [123, 124])
+
+    def test_venv_still_works_through_activated_launch_path(self):
+        release = self.release('venv')
+        venv = release / 'puzzle_card_detector/.venv'
+        (venv / 'bin/python').unlink()
+        subprocess.run([sys.executable, '-m', 'venv', '--without-pip', str(venv)], check=True)
+        deploy.activate(release, self.home)
+        result = subprocess.check_output([str(self.home / 'puzzle_card_detector/.venv/bin/python'),
+                                          '-c', 'import sys; print(sys.prefix)'], text=True).strip()
+        self.assertEqual(Path(result).resolve(), venv)
 
 
 if __name__ == '__main__':

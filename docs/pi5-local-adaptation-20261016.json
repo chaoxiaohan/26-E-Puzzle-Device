@@ -1,0 +1,86 @@
+{
+  "date": "2026-10-16",
+  "status": "local adaptation complete; Pi 5 hardware verification pending",
+  "branch": "raspberry-pi5-adapt-20261016",
+  "backup_tag": "backup/pi5-before-adapt-20261016",
+  "algorithm_source_commit": "6de9e25df89320899acc6a62ff977f8edce59665",
+  "pi_settings_source": {
+    "branch": "raspberry-pi5",
+    "commit": "a5369b9de24d07efd09201c3a270d10aace0da09",
+    "observed_at": "2026-10-12",
+    "sha256": {
+      "vision_settings.json": "075de1a1fab941a2f3d4c0659421467fba1b4b42873e08ff6f89abfee15cea87",
+      "serial_settings.json": "4b16e9d3b3922d1e9d4f44649a633ea0402bb4dded64b0d6916d5bb3a054d7b6",
+      "roi_settings.json": "b2ba2d65cc0ef98d3dd8caed9f3e48cfdbcbc4d211ea3d951e59d60c3b23d57b",
+      "templates.json": "c0595c6a0cedc886221b23695a2aad5ed8e9209e843cf1ac17616a16f35db5bb",
+      "card_scoring_settings.json": "5e912a635c71b7faba92f81a0a048095aa33eaec55f10c1a519bb2c783835c18"
+    }
+  },
+  "unchanged_algorithm_and_dart_sources": {
+    "puzzle_card_detector/card_corner_solver.py": "60d1d897eb41b6802dd342e07a89d2f2a8300599497b7ee2eb574a62dd6c8b39",
+    "puzzle_card_detector/card_face_replay.py": "146f92c829a05f406cba99db885ae25243d19aea02196a7867fa7c7b4c72d66b",
+    "puzzle_card_detector/card_face_solver.py": "c83c1fe5815e5ff324b245d4196ada5f73dff9bb1c652f8568a47c25377179ec",
+    "puzzle_card_detector/card_fan_solver.py": "9da9e563003c70bd270243d9f108da560f3832aca9a88d84d8bf0a776af24050",
+    "puzzle_card_detector/card_graph_solver.py": "3b1ba3c8599c48d3daf2b91efe9df11924c6aa4df1d444fc5472e1d4d6dd39ac",
+    "puzzle_card_detector/card_joint_solver.py": "2705a0a78075d1abb0c85e276b2b493e14ee239914963a35f9bcbc3ced5abeab",
+    "puzzle_card_detector/card_piece_geometry.py": "882e967c4161df6f48fe84ad4ac0e2b3b6974eb1599395c672b5fcb06f7bb3fe",
+    "puzzle_card_detector/card_strip_solver.py": "2ff0bbbb6e7bac93062d2b234f5699a7d5121a69f6ed1cd50f8358489358981c",
+    "puzzle_card_detector/card_structure.py": "1963a5d8738bfb99a832b87cc5d0258077106cceace010ffaefa17e4507f3c46",
+    "puzzle_card_detector/card_topology_solver.py": "994844bb273bc47c08b258b6e27873042bbe279faa4ecc6d4ee79cd2a084bb97",
+    "puzzle_card_detector/cpp_rectangle_solver.py": "40888972ff3e7dbc5f59123cb850fd93360669192dae4db70d5b7c577284ebf0",
+    "puzzle_card_detector/hardware_devices.py": "02f6cacff53f9ef6a76b3148419d537a744e429b5ae66f6a5728a406997908aa",
+    "puzzle_card_detector/hard_frame_replay.py": "39b199854cab1d56bc95a6616cf84109a9f64ea9ec9af538cf425c2863948387",
+    "puzzle_card_detector/layout_constraints.py": "af9325017d1366b3f1e30334bac987e4a6396977d532ae044a5c02c41329a3e7",
+    "puzzle_card_detector/main.py": "98f9f377585d745e32e817fc9002dfa06d096364baea9ba1e27e9e93e4995c27",
+    "puzzle_card_detector/maix.py": "2a1c00b2ff22c69376edf483a4bc99dcece2d54fb3d594266fd082a72039ff66",
+    "puzzle_card_detector/puzzle_solver.py": "74d2037024cf0fec5dee188d24510c3b008b97172a28c9732854e39e4a5038e0",
+    "puzzle_card_detector/real_capture_replay.py": "f1685cbfa15a42e2f0d27a050437f896af66d5c70c4c0db15b7132c9ed65258b",
+    "puzzle_card_detector/serial_protocol.py": "a22d67cd95ee91dea70afa44401fc946428c174d94a896a7082cfe0932e59879",
+    "puzzle_card_detector/solver_boundary.py": "c9248aa29af800f455ffaf9a8f8dff1efd7838daf42123cbd342d956ab6ac3a9",
+    "puzzle_card_detector/solver_hybrid.py": "9883161425e77e53aa39a6ba7c788e39a4479e720d8c3b5e9361e82e0d6988b5",
+    "puzzle_card_detector/solver_v2.py": "a6ad320e7ab967a36cd09f2596fdb053c9123d0bd84b74a1e3f2810da77aa253",
+    "puzzle_card_detector/template_matcher.py": "4b706b22ad2be7961c9332f34074117ec4e26625fcadc5a787f009885d1114c5",
+    "puzzle_card_detector/ui_bridge.py": "3bed77dc63e31e8638ef09e84dc66be286f6f2a539f1e53cc928ff939dfd6746",
+    "puzzle_card_detector/rectangle_solver.cpp": "e2eab20b24c85ea15a1abe726afb4106af468503399f0a960a10215466d60179",
+    "puzzle_flutter_ui/lib/backend_bridge.dart": "b1844b8f344a50efdd12e2b2fe43106a4f54e357103471636c6151ced0a1c1c0",
+    "puzzle_flutter_ui/lib/main.dart": "300bd7e74451d11c2d1e0158fdb23f7b683933613b73eae545e509619d139c44"
+  },
+  "adaptation_sha256": {
+    "deploy_pi5.sh": "f46609fe03767dcd3d63df38470296b64bf6cfa7fafdcfd1bd58ccfbdccc5a94",
+    "tools/pi5_deploy.py": "363b27cf6857fd9f6e323b9c6c2d2e48ef24b014fdef04cc974a6eb2e6825be0",
+    "tools/test_pi5_deploy.py": "2ea47be435831a7bffc9409143e73f3ba8175a7d503fa57273acc93b40647290",
+    "tools/test_pi5_startup.py": "605de8d638b2224c39bc5e6053b44f525e90ec5f1c5a45ccb7715256d997e6cc",
+    "puzzle_card_detector/start.sh": "a08c96fb001320a400021ae02aae9e62449317c02c1c5287262a73037967e963",
+    "puzzle_flutter_ui/start_ui.sh": "fa61ad7d573fa3554a1e24a172908c074f3da65d021d4fded5bf1f2f777b5be8",
+    "puzzle_card_detector/requirements-pi5.txt": "c16978698cf2a670cba0bdbcb646f28a72324f4e9811e9b706e45658413f00fa"
+  },
+  "host_tests": {
+    "linux_deployment_tests": 7,
+    "linux_launcher_tests": 4,
+    "camera_selection": "mock sysfs includes Pi ISP/CSI and UVC nodes",
+    "serial_protocol": "Linux pseudo-terminal: 10 protocol frames, calibration, fallback and disconnect recovery",
+    "vision_pause_scenarios": 10,
+    "shell_syntax": "passed"
+  },
+  "green_replay": {
+    "count": 41,
+    "poker_cases": 31,
+    "plain_negative_controls": 10,
+    "decisions_identical": true,
+    "images_identical": true,
+    "numeric_tolerance": 1e-09,
+    "baseline": "Windows replay-speed-v6-20261015",
+    "current": "Windows replay-pi5-local-20261016",
+    "native_solver": "existing Windows x86-64 DLL; C++ source unchanged",
+    "performance_claim": "No Pi 5 timing is inferred from these host runs"
+  },
+  "not_executed": [
+    "Pi 5 connection or deployment",
+    "ARM64 native C++ build",
+    "Flutter Linux ARM64 build/GTK rendering",
+    "physical camera/serial/robot tests"
+  ],
+  "configuration_policy": "Copy current Pi JSON at activation; retain old directories and captures; preserve existing CH340 rule",
+  "history_policy": "Original raspberry-pi5 and deployed lubancat-1 branches retained",
+  "initial_host_constraint": "The serial test uses POSIX termios and was run successfully in Linux/WSL after Windows could not import it"
+}

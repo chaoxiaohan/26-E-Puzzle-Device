@@ -132,8 +132,11 @@ def prepare(root, home, flutter, skip_apt=False, wheelhouse=None):
 def configure_access(release):
     import pwd
     user = pwd.getpwuid(os.getuid()).pw_name
-    run(['sudo', 'install', '-m', '0644', release / 'puzzle_card_detector/99-puzzle-ch340.rules',
-         '/etc/udev/rules.d/99-puzzle-ch340.rules'])
+    rule = Path('/etc/udev/rules.d/99-puzzle-ch340.rules')
+    if not rule.exists() and not rule.is_symlink():
+        run(['sudo', 'install', '-m', '0644', release / 'puzzle_card_detector/99-puzzle-ch340.rules', rule])
+    else:
+        print('Preserved the existing CH340 udev rule.')
     for group in ('dialout', 'video', 'render'):
         if subprocess.run(['getent', 'group', group], stdout=subprocess.DEVNULL).returncode == 0:
             run(['sudo', 'usermod', '-aG', group, user])
@@ -216,11 +219,12 @@ def rollback(backup, home):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--check', action='store_true', help='Read-only Pi/SDK preflight')
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument('--check', action='store_true', help='Read-only Pi/SDK preflight')
     parser.add_argument('--skip-apt', action='store_true', help='System build dependencies are already installed')
-    parser.add_argument('--prepare-only', action='store_true', help='Build a release without changing launch paths')
-    parser.add_argument('--activate', type=Path, help='Activate a previously prepared release')
-    parser.add_argument('--rollback', type=Path, help='Restore an installation backup')
+    action.add_argument('--prepare-only', action='store_true', help='Build a release without changing launch paths')
+    action.add_argument('--activate', type=Path, help='Activate a previously prepared release')
+    action.add_argument('--rollback', type=Path, help='Restore an installation backup')
     parser.add_argument('--flutter-bin', type=Path, default=Path(os.environ.get('FLUTTER_BIN', str(Path.home() / 'flutter/bin/flutter'))))
     parser.add_argument('--wheelhouse', type=Path)
     args = parser.parse_args()
@@ -231,6 +235,7 @@ def main():
         return
     if args.activate:
         check_pi()
+        contained(args.activate, home / '.local/share/puzzle-device/releases')
         verify_release(args.activate.resolve())
         configure_access(args.activate.resolve())
         print('BACKUP=' + str(activate(args.activate, home)))
@@ -249,4 +254,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except (RuntimeError, OSError) as error:
+        raise SystemExit(str(error))
