@@ -1,0 +1,4 @@
+# Same numerical dependencies as the validated card solver.
+numpy==2.2.4
+opencv-python==4.10.0.84
+pyserial==3.5

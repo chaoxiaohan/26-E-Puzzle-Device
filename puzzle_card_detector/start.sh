@@ -7,7 +7,7 @@ export PUZZLE_ROTATION="${PUZZLE_ROTATION:-CW}"
 export PUZZLE_CAMERA="${PUZZLE_CAMERA:-auto}"
 python="${PUZZLE_PYTHON:-$directory/.venv/bin/python}"
 if [ ! -x "$python" ]; then
-    echo "Python environment missing. Run the parent setup_lubancat.sh first." >&2
+    echo "Python environment missing. Run deploy_pi5.sh on the Pi first." >&2
     exit 1
 fi
 exec 9>"${XDG_RUNTIME_DIR:-/tmp}/puzzle-backend-$UID.lock"
