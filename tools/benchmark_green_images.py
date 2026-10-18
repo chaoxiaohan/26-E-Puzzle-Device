@@ -65,7 +65,7 @@ def run_one(args):
     if args.mode == 'CARD':
         result = backend.solve_card_piece_set_worker(frame, pieces, tuple(data['roi']))
     else:
-        result = backend.solve_piece_set_worker(pieces, tuple(data['roi']))
+        result = backend.solve_piece_set_worker(pieces, tuple(data['roi']), short_edge_protection=True)
     solved_at = time.perf_counter()
     info = result.get('info') or {}
     layout = result.get('layout')
@@ -94,7 +94,8 @@ def run_one(args):
               'source_pieces': result.get('pieces', pieces), 'pattern_layout': pattern,
               'candidate_count': len(result.get('candidate_pool', [])),
               'source_sha256': data['raw_sha256'], 'roi': data['roi'],
-              'environment': platform.platform(), 'detection': 'fresh'}
+              'environment': platform.platform(), 'detection': 'fresh',
+              'short_edge_protection': args.mode == 'NORMAL'}
     (destination / (args.one + '.json')).write_text(json.dumps(record, ensure_ascii=False, indent=2, default=plain))
     print(json.dumps({k: record[k] for k in ('capture', 'mode', 'repeat', 'status', 'timings_ms')}), flush=True)
 
@@ -109,6 +110,7 @@ def main():
     parser.add_argument('--repeat', type=int, default=1)
     parser.add_argument('--repeats', type=int, default=3)
     parser.add_argument('--timeout', type=float, default=120)
+    parser.add_argument('--only-normal', action='store_true', help='Rerun NORMAL rows and merge into existing results')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     if args.one:
@@ -119,6 +121,10 @@ def main():
     jobs = [(case, 'NORMAL' if case['kind'] == 'plain' else 'CARD', repeat)
             for repeat in range(1, args.repeats + 1) for case in cases]
     jobs += [(case, 'CARD', 1) for case in cases if case['kind'] == 'plain']
+    previous = None
+    if args.only_normal:
+        jobs = [job for job in jobs if job[1] == 'NORMAL']
+        previous = json.loads((args.output / 'results.json').read_text())
     records = []
     for case, mode, repeat in jobs:
         path = args.output / mode.lower() / ('run-%d' % repeat) / (case['capture'] + '.json')
@@ -142,9 +148,14 @@ def main():
         records.append({k: v for k, v in record.items() if k not in ('source_pieces', 'pattern_layout')})
         summary = {'completed': len(records), 'total': len(jobs), 'cases': records}
         (args.output / 'progress.tmp').write_text(json.dumps(summary, ensure_ascii=False, indent=2, default=plain))
-        (args.output / 'progress.tmp').replace(args.output / 'results.json')
+        (args.output / 'progress.tmp').replace(args.output / ('results-normal.json' if args.only_normal else 'results.json'))
         print('%d/%d %s %s %d %s %.3fs' % (len(records), len(jobs), case['capture'], mode, repeat,
                                           record['status'], record['process_wall_seconds']), flush=True)
+    if previous is not None:
+        replacements = {(r['capture'], r['mode'], r['repeat']): r for r in records}
+        previous['cases'] = [replacements.get((r['capture'], r['mode'], r['repeat']), r) for r in previous['cases']]
+        previous['normal_short_edge_protection'] = True
+        (args.output / 'results.json').write_text(json.dumps(previous, ensure_ascii=False, indent=2, default=plain))
     if any(r['exit_code'] for r in records):
         raise SystemExit('Some runs failed; inspect results.json')
 
