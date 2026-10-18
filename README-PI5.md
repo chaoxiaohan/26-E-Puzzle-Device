@@ -4,6 +4,8 @@
 
 **2026-10-16 已在 Raspberry Pi 5 / Debian 13 / Python 3.13.5 / Flutter 3.44.8 原生编译并部署。** 41 张绿底回放通过，31 张扑克主图与参考一致；真实画面、只读位置查询与求解暂停/恢复已验证。机械臂实际抓取放置尚未测试。详见 [板端记录](docs/pi5-board-validation-20261016.json)。
 
+**2026-10-18 全量图片复测：** 43 张绿色实拍图，每图三次并加 10 次负样本，共 139 次有效运行。全部扑克总分析中位数 0.973 秒；自动准入状态及普通模式漏检问题见[完整图集与数据](docs/benchmarks/2026-10-18/README.md)。[算法全过程](docs/VISION_ALGORITHM.md)与 [35 页设计报告](docs/reports/pi5-design-20261018.pdf)已同步更新。
+
 ## 运行环境
 
 - 树莓派 5，64 位 Raspberry Pi OS / Debian 系 Linux，普通桌面用户运行安装命令。

@@ -1,0 +1,318 @@
+{
+  "capture": "20260801_032800_758",
+  "kind": "plain",
+  "mode": "NORMAL",
+  "repeat": 1,
+  "status": "BEST",
+  "method": "cpp-best-effort",
+  "layout_found": true,
+  "piece_count": 4,
+  "seconds": 0.42154611199998726,
+  "timings_ms": {
+    "image_decode": 19.101880999869536,
+    "detect": 72.10392100000718,
+    "solve": 421.54611199998726,
+    "post_preview": 82.66755999989073,
+    "analysis": 576.3175929998852
+  },
+  "cpu_seconds": 0.9658982970000001,
+  "max_rss_kib": 112928,
+  "telemetry_before": {
+    "temperature_c": 45.75,
+    "frequency_khz": 2400000.0,
+    "throttled": "throttled=0x0"
+  },
+  "telemetry_after": {
+    "temperature_c": 46.3,
+    "frequency_khz": 2400000.0,
+    "throttled": "throttled=0x0"
+  },
+  "score": 0.677262328839928,
+  "nodes": 8594909,
+  "info": {
+    "ratio": 1.1669587161946595,
+    "solve_scale": 0.3034412882537218,
+    "width": 81.68711013362616,
+    "height": 70.0,
+    "coverage": 0.7958574979287489,
+    "overlap": 0.0,
+    "internal_quality": 0.7317655345600814,
+    "boundary_quality": 0.8949985284933698,
+    "connected": true,
+    "forced": true,
+    "boundary_safe": true,
+    "method": "cpp-best-effort",
+    "short_edge_protection": true,
+    "best_effort_score": 0.677262328839928,
+    "best_effort_report": {
+      "coverage": 0.8536152914720636,
+      "internal_match": 0.6637443627929269,
+      "boundary_min_coverage": 0.393604479293323,
+      "boundary_max_gap_ratio": 0.4239303662006348,
+      "boundary_angle_error": 1.7828804512858902
+    },
+    "execution_mode": "BEST",
+    "constraint_report": {
+      "coverage": 0.8536152914720636,
+      "overlap": 0.0,
+      "outer_piece_ratio": 1.0,
+      "internal_match": 0.6637443627929269,
+      "boundary_min_coverage": 0.393604479293323,
+      "boundary_max_gap_ratio": 0.4239303662006348,
+      "boundary_angle_error": 1.7828804512858902
+    },
+    "repair": {
+      "valid": true,
+      "forced": true,
+      "stage": "best-effort",
+      "reasons": [
+        "coverage",
+        "perimeter",
+        "disconnected",
+        "rectangle-boundary"
+      ],
+      "maximum_move": 0.0,
+      "gap": {
+        "applied": false,
+        "reason": "preserve-best-candidate"
+      }
+    }
+  },
+  "source_pieces": [
+    {
+      "points": [
+        [
+          391,
+          647
+        ],
+        [
+          354,
+          785
+        ],
+        [
+          588,
+          791
+        ],
+        [
+          600,
+          745
+        ]
+      ],
+      "center": [
+        464,
+        737
+      ],
+      "area": 21681.5,
+      "angle": 1.4688007143858246,
+      "longest_edge": [
+        [
+          354,
+          785
+        ],
+        [
+          588,
+          791
+        ]
+      ],
+      "solidity": 0.9752603288127207
+    },
+    {
+      "points": [
+        [
+          186,
+          710
+        ],
+        [
+          205,
+          938
+        ],
+        [
+          253,
+          947
+        ],
+        [
+          291,
+          730
+        ]
+      ],
+      "center": [
+        234,
+        817
+      ],
+      "area": 17164.0,
+      "angle": 85.23635830927383,
+      "longest_edge": [
+        [
+          186,
+          710
+        ],
+        [
+          205,
+          938
+        ]
+      ],
+      "solidity": 0.9782565330141632
+    },
+    {
+      "points": [
+        [
+          471,
+          831
+        ],
+        [
+          467,
+          874
+        ],
+        [
+          579,
+          905
+        ],
+        [
+          586,
+          847
+        ]
+      ],
+      "center": [
+        528,
+        864
+      ],
+      "area": 5810.5,
+      "angle": 15.471328165520145,
+      "longest_edge": [
+        [
+          467,
+          874
+        ],
+        [
+          579,
+          905
+        ]
+      ],
+      "solidity": 0.9725500041844506
+    },
+    {
+      "points": [
+        [
+          302,
+          818
+        ],
+        [
+          278,
+          871
+        ],
+        [
+          374,
+          931
+        ],
+        [
+          403,
+          860
+        ]
+      ],
+      "center": [
+        341,
+        871
+      ],
+      "area": 7483.5,
+      "angle": 32.005383208083494,
+      "longest_edge": [
+        [
+          278,
+          871
+        ],
+        [
+          374,
+          931
+        ]
+      ],
+      "solidity": 0.9665482725217953
+    }
+  ],
+  "pattern_layout": {
+    "0": [
+      [
+        61.35389198801903,
+        7.105427357601002e-15
+      ],
+      [
+        18.000000000000004,
+        7.105427357601002e-15
+      ],
+      [
+        34.629646512819726,
+        69.05444785668202
+      ],
+      [
+        49.05474984807788,
+        68.95675133821592
+      ]
+    ],
+    "1": [
+      [
+        33.23556603885736,
+        66.9371383317653
+      ],
+      [
+        14.818998878795131,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.8015307569661019,
+        66.8439370809552
+      ]
+    ],
+    "2": [
+      [
+        81.36617785719996,
+        34.7739201845221
+      ],
+      [
+        68.26677159140297,
+        35.13230996736903
+      ],
+      [
+        63.000000000000014,
+        70.0
+      ],
+      [
+        80.72730911386411,
+        70.0
+      ]
+    ],
+    "3": [
+      [
+        80.65444259065714,
+        7.105427357601002e-15
+      ],
+      [
+        62.99999999999997,
+        7.105427357601002e-15
+      ],
+      [
+        58.43122844625829,
+        34.04673596212999
+      ],
+      [
+        81.68711013362616,
+        33.17574869103997
+      ]
+    ]
+  },
+  "candidate_count": 0,
+  "source_sha256": "00d167a62d332078af708a1bb67d8e1dfd5741c21f963f4f9a81996768f6ee3a",
+  "roi": [
+    154,
+    290,
+    520,
+    742
+  ],
+  "environment": "Linux-6.12.75+rpt-rpi-2712-aarch64-with-glibc2.41",
+  "detection": "fresh",
+  "short_edge_protection": true,
+  "exit_code": 0,
+  "process_wall_seconds": 0.8169087290000334
+}

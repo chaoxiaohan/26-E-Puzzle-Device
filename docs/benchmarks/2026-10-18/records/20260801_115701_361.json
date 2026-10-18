@@ -1,0 +1,686 @@
+{
+  "capture": "20260801_115701_361",
+  "kind": "poker",
+  "mode": "CARD",
+  "repeat": 3,
+  "status": "AMBIGUOUS",
+  "method": "card-opposite-boundaries",
+  "layout_found": true,
+  "piece_count": 4,
+  "seconds": 4.009078187,
+  "timings_ms": {
+    "image_decode": 19.849532999955954,
+    "detect": 71.30356199991184,
+    "solve": 4009.078187,
+    "post_preview": 0.06218400005764124,
+    "analysis": 4080.4439329999695
+  },
+  "cpu_seconds": 4.078970877,
+  "max_rss_kib": 95744,
+  "telemetry_before": {
+    "temperature_c": 47.4,
+    "frequency_khz": 2400000.0,
+    "throttled": "throttled=0x0"
+  },
+  "telemetry_after": {
+    "temperature_c": 47.95,
+    "frequency_khz": 2400000.0,
+    "throttled": "throttled=0x0"
+  },
+  "score": 0.8374185217968682,
+  "nodes": 2937,
+  "info": {
+    "ratio": 1.47166412475579,
+    "solve_scale": 1.0,
+    "width": 216.44774442652437,
+    "height": 147.07686406532605,
+    "coverage": 0.9619263255933456,
+    "overlap": 0.005427626296688827,
+    "forced": false,
+    "method": "card-opposite-boundaries",
+    "card_mode": true,
+    "card_joint_search": true,
+    "card_search_complete": true,
+    "card_candidate_pool_complete": false,
+    "card_generated_candidate_count": 24,
+    "card_excluded_texture_bound": null,
+    "card_search_nodes": 2937,
+    "card_structure_mode": true,
+    "card_piece_geometry_refinement": {
+      "changed": 0,
+      "details": []
+    },
+    "boundary_safe": false,
+    "execution_mode": "EXEC",
+    "constraint_report": {
+      "coverage": 0.9619263255933456,
+      "overlap": 0.005427626296688827,
+      "corners": 1.0,
+      "outer_piece_ratio": 1.0,
+      "internal_match": 0.9655550541256975,
+      "perimeter_error": 0.6981436123599961,
+      "boundary_min_coverage": 0.972617986785422,
+      "boundary_max_gap_ratio": 0.02738201321457796,
+      "boundary_angle_error": 1.1223977242224208e-14
+    },
+    "repair": {
+      "valid": true,
+      "forced": false,
+      "stage": "execution",
+      "reasons": [],
+      "maximum_move": 0.0,
+      "gap": {
+        "applied": true,
+        "anchor": 0,
+        "gap_pixels": 2.4983164983164983,
+        "metric": "normal",
+        "maximum_error": 8.881784197001252e-16,
+        "minimum_gap": 2.4983164983164974,
+        "maximum_gap": 2.498316498316499,
+        "translations": {
+          "0": [
+            0.0,
+            0.0
+          ],
+          "1": [
+            -0.7691338214316301,
+            -1.1834058123224445
+          ],
+          "2": [
+            2.0785169721544685,
+            -2.7767687674876105
+          ],
+          "3": [
+            0.7995290721427315,
+            -4.767451547344589
+          ]
+        }
+      },
+      "before": {
+        "coverage": 0.9619263255933456,
+        "overlap": 0.005427626296688827,
+        "internal_match": 0.9655550541256975
+      },
+      "after": {
+        "coverage": 0.9440756072795439,
+        "overlap": 0.0,
+        "internal_match": 0.9671701028441648
+      }
+    },
+    "texture_score": 0.6588380696760695,
+    "texture_confidence": 1.0,
+    "global_pattern_score": 0.9696537548622911,
+    "global_pattern_confidence": 1.0,
+    "corner_diagonal_score": 0.5,
+    "rank_index_score": 0.8342797588169402,
+    "rank_index_confidence": 0.8475468487543885,
+    "rank_index_valid": true,
+    "rank_index_locked": false,
+    "rank_index_pair": null,
+    "card_structure": {
+      "score": 0.932512040186072,
+      "confidence": 0.999999999999987,
+      "valid": true,
+      "raw_score": 0.9325120401860777,
+      "outer": 1.0,
+      "outer_confidence": 1.0,
+      "outer_cut_fractions": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "index": 0.8944085914639646,
+      "index_confidence": 0.8475468487543885,
+      "index_detail": {
+        "pair_count": 19,
+        "diagonal_match": 0.8475468487543885,
+        "shape_match": 0.9801324503311258,
+        "misplaced_index": 0.08389952260922776,
+        "matched_pair_strength": 0.7610440202571095,
+        "same_direction_strength": 0.550329868052779,
+        "color_plane": "ink"
+      },
+      "body": 0.9696537548622911,
+      "body_confidence": 1.0,
+      "body_detail": {
+        "kind": "number",
+        "pip_count": 7,
+        "repeat_shape": 0.9745727778825312,
+        "column_fit": 0.9548966858015709
+      },
+      "ink_fraction": 0.2225308335813246,
+      "cut_integrity": 0.8265325818275886,
+      "cut_integrity_confidence": 1.0,
+      "cut_integrity_detail": {
+        "samples": 537,
+        "matched_fraction": 0.8265325818275886
+      },
+      "letter_index": 0.5,
+      "letter_index_confidence": 0.0,
+      "letter_index_detail": {},
+      "rigid_pose_error": 4.77776151149734e-14,
+      "coverage": 0.9569055529188419,
+      "source_component_tracks": [
+        {
+          "piece_id": 0,
+          "component_id": 0,
+          "center": [
+            0.10125793258163554,
+            0.10902537945587043
+          ],
+          "source_area": 43,
+          "source_cut_samples": 43,
+          "cut_on_outer_fraction": 0.0,
+          "join_samples": 16,
+          "join_distance_median": 4.1984405517578125,
+          "join_gap_median": 2.498443603515625,
+          "join_fraction": 0.9873546245687402
+        },
+        {
+          "piece_id": 0,
+          "component_id": 1,
+          "center": [
+            0.1300571696184917,
+            0.21025277980894683
+          ],
+          "source_area": 242,
+          "source_cut_samples": 43,
+          "cut_on_outer_fraction": 0.0
+        },
+        {
+          "piece_id": 0,
+          "component_id": 2,
+          "center": [
+            0.28235318263985293,
+            0.3909978600324923
+          ],
+          "source_area": 687,
+          "source_cut_samples": 96,
+          "cut_on_outer_fraction": 0.0,
+          "join_samples": 33,
+          "join_distance_median": 4.199981689453125,
+          "join_gap_median": 2.79998779296875,
+          "join_fraction": 0.969754926463562
+        },
+        {
+          "piece_id": 0,
+          "component_id": 3,
+          "center": [
+            0.4550890844101345,
+            0.5353517791381959
+          ],
+          "source_area": 255,
+          "source_cut_samples": 96,
+          "cut_on_outer_fraction": 0.0,
+          "join_samples": 44,
+          "join_distance_median": 4.1968994140625,
+          "join_gap_median": 2.79998779296875,
+          "join_fraction": 0.9979705275812976
+        },
+        {
+          "piece_id": 0,
+          "component_id": 4,
+          "center": [
+            0.29148540063869904,
+            0.6274324013838348
+          ],
+          "source_area": 724,
+          "source_cut_samples": 78,
+          "cut_on_outer_fraction": 0.0,
+          "join_samples": 28,
+          "join_distance_median": 1.0,
+          "join_gap_median": 1.0,
+          "join_fraction": 1.0
+        },
+        {
+          "piece_id": 1,
+          "component_id": 0,
+          "center": [
+            0.4941959071172993,
+            0.43691134850412194
+          ],
+          "source_area": 53,
+          "source_cut_samples": 53,
+          "cut_on_outer_fraction": 0.0,
+          "join_samples": 27,
+          "join_distance_median": 6.396881103515625,
+          "join_gap_median": 4.199981689453125,
+          "join_fraction": 0.9723372135433072
+        },
+        {
+          "piece_id": 1,
+          "component_id": 1,
+          "center": [
+            0.6281790735195549,
+            0.325840462259132
+          ],
+          "source_area": 15,
+          "source_cut_samples": 15,
+          "cut_on_outer_fraction": 0.0
+        },
+        {
+          "piece_id": 1,
+          "component_id": 2,
+          "center": [
+            0.6998930070291014,
+            0.1656785853403409
+          ],
+          "source_area": 605,
+          "source_cut_samples": 96,
+          "cut_on_outer_fraction": 0.0,
+          "join_samples": 24,
+          "join_distance_median": 19.99224853515625,
+          "join_gap_median": 4.199981689453125,
+          "join_fraction": 0.04738230571905413
+        },
+        {
+          "piece_id": 1,
+          "component_id": 3,
+          "center": [
+            0.3663070758382284,
+            0.33072520163346725
+          ],
+          "source_area": 37,
+          "source_cut_samples": 37,
+          "cut_on_outer_fraction": 0.0,
+          "join_samples": 25,
+          "join_distance_median": 3.596893310546875,
+          "join_gap_median": 2.79998779296875,
+          "join_fraction": 1.0
+        },
+        {
+          "piece_id": 1,
+          "component_id": 4,
+          "center": [
+            0.2724511376353239,
+            0.15628065112997583
+          ],
+          "source_area": 760,
+          "source_cut_samples": 96,
+          "cut_on_outer_fraction": 0.0,
+          "join_samples": 48,
+          "join_distance_median": 7.69378662109375,
+          "join_gap_median": 2.79998779296875,
+          "join_fraction": 0.6384306177440594
+        },
+        {
+          "piece_id": 2,
+          "component_id": 0,
+          "center": [
+            0.7455653709696276,
+            0.8362644721138938
+          ],
+          "source_area": 783,
+          "source_cut_samples": 96,
+          "cut_on_outer_fraction": 0.0,
+          "join_samples": 48,
+          "join_distance_median": 4.99688720703125,
+          "join_gap_median": 2.1968994140625,
+          "join_fraction": 0.8598045412555213
+        },
+        {
+          "piece_id": 2,
+          "component_id": 1,
+          "center": [
+            0.653664642776054,
+            0.6608083917839657
+          ],
+          "source_area": 42,
+          "source_cut_samples": 42,
+          "cut_on_outer_fraction": 0.0,
+          "join_samples": 23,
+          "join_distance_median": 2.0,
+          "join_gap_median": 1.399993896484375,
+          "join_fraction": 1.0
+        },
+        {
+          "piece_id": 2,
+          "component_id": 2,
+          "center": [
+            0.30689315574352755,
+            0.8247411939949402
+          ],
+          "source_area": 691,
+          "source_cut_samples": 96,
+          "cut_on_outer_fraction": 0.0,
+          "join_samples": 48,
+          "join_distance_median": 18.0,
+          "join_gap_median": 2.1968994140625,
+          "join_fraction": 0.08785264237938013
+        },
+        {
+          "piece_id": 2,
+          "component_id": 3,
+          "center": [
+            0.5419304257659534,
+            0.5617458165984495
+          ],
+          "source_area": 80,
+          "source_cut_samples": 80,
+          "cut_on_outer_fraction": 0.0,
+          "join_samples": 46,
+          "join_distance_median": 2.0,
+          "join_gap_median": 1.399993896484375,
+          "join_fraction": 1.0
+        },
+        {
+          "piece_id": 2,
+          "component_id": 4,
+          "center": [
+            0.39059297519294894,
+            0.6651134093591778
+          ],
+          "source_area": 16,
+          "source_cut_samples": 16,
+          "cut_on_outer_fraction": 0.0
+        },
+        {
+          "piece_id": 3,
+          "component_id": 0,
+          "center": [
+            0.9122314854031688,
+            0.8826116277739506
+          ],
+          "source_area": 30,
+          "source_cut_samples": 30,
+          "cut_on_outer_fraction": 0.0,
+          "join_samples": 15,
+          "join_distance_median": 4.393798828125,
+          "join_gap_median": 2.79998779296875,
+          "join_fraction": 0.9743474728215938
+        },
+        {
+          "piece_id": 3,
+          "component_id": 1,
+          "center": [
+            0.888008220412167,
+            0.8300147409902727
+          ],
+          "source_area": 37,
+          "source_cut_samples": 20,
+          "cut_on_outer_fraction": 0.0
+        },
+        {
+          "piece_id": 3,
+          "component_id": 2,
+          "center": [
+            0.8821754202237564,
+            0.7717871670521718
+          ],
+          "source_area": 162,
+          "source_cut_samples": 14,
+          "cut_on_outer_fraction": 0.0
+        },
+        {
+          "piece_id": 3,
+          "component_id": 3,
+          "center": [
+            0.7354477259981339,
+            0.611201434945926
+          ],
+          "source_area": 616,
+          "source_cut_samples": 96,
+          "cut_on_outer_fraction": 0.0,
+          "join_samples": 32,
+          "join_distance_median": 2.79998779296875,
+          "join_gap_median": 2.498443603515625,
+          "join_fraction": 1.0
+        },
+        {
+          "piece_id": 3,
+          "component_id": 4,
+          "center": [
+            0.5710504481959106,
+            0.5092084319934351
+          ],
+          "source_area": 217,
+          "source_cut_samples": 96,
+          "cut_on_outer_fraction": 0.0,
+          "join_samples": 48,
+          "join_distance_median": 4.0,
+          "join_gap_median": 3.1968994140625,
+          "join_fraction": 1.0
+        },
+        {
+          "piece_id": 3,
+          "component_id": 5,
+          "center": [
+            0.7314979495767822,
+            0.378683097272292
+          ],
+          "source_area": 656,
+          "source_cut_samples": 96,
+          "cut_on_outer_fraction": 0.0,
+          "join_samples": 32,
+          "join_distance_median": 6.393798828125,
+          "join_gap_median": 4.393798828125,
+          "join_fraction": 1.0
+        }
+      ],
+      "source_cut_on_outer_fraction": 0.0
+    },
+    "card_structure_score": 0.932512040186072,
+    "card_structure_confidence": 0.999999999999987,
+    "card_assignment": [
+      0,
+      3,
+      1,
+      2
+    ],
+    "geometry_tier": 3,
+    "card_candidate_source": "card-opposite-boundaries",
+    "raw_texture_score": 0.26339379778695554,
+    "card_structure_reasons": [],
+    "selection_score": 0.8374185217968682,
+    "selection_margin": 0.00025915047558866533,
+    "texture_selection_margin": -0.0026101386807729776,
+    "selection_candidate_count": 24,
+    "card_execution_ready": false,
+    "card_status": "AMBIGUOUS"
+  },
+  "source_pieces": [
+    {
+      "points": [
+        [
+          461,
+          704
+        ],
+        [
+          589,
+          875
+        ],
+        [
+          589,
+          751
+        ]
+      ],
+      "center": [
+        546,
+        776
+      ],
+      "area": 7920.0,
+      "angle": 53.18375007210458,
+      "longest_edge": [
+        [
+          461,
+          704
+        ],
+        [
+          589,
+          875
+        ]
+      ],
+      "solidity": 0.9495833583118518
+    },
+    {
+      "points": [
+        [
+          289,
+          769
+        ],
+        [
+          396,
+          861
+        ],
+        [
+          411,
+          740
+        ]
+      ],
+      "center": [
+        365,
+        790
+      ],
+      "area": 7151.5,
+      "angle": 40.68937417517947,
+      "longest_edge": [
+        [
+          289,
+          769
+        ],
+        [
+          396,
+          861
+        ]
+      ],
+      "solidity": 0.9653752699784017
+    },
+    {
+      "points": [
+        [
+          445,
+          743
+        ],
+        [
+          407,
+          857
+        ],
+        [
+          536,
+          856
+        ]
+      ],
+      "center": [
+        462,
+        818
+      ],
+      "area": 7344.5,
+      "angle": 51.155168343274,
+      "longest_edge": [
+        [
+          536,
+          856
+        ],
+        [
+          445,
+          743
+        ]
+      ],
+      "solidity": 0.9507443365695792
+    },
+    {
+      "points": [
+        [
+          284,
+          851
+        ],
+        [
+          421,
+          1008
+        ],
+        [
+          407,
+          884
+        ]
+      ],
+      "center": [
+        370,
+        914
+      ],
+      "area": 7289.0,
+      "angle": 48.89167629408076,
+      "longest_edge": [
+        [
+          284,
+          851
+        ],
+        [
+          421,
+          1008
+        ]
+      ],
+      "solidity": 0.9516286963901038
+    }
+  ],
+  "pattern_layout": {
+    "0": [
+      [
+        0.0,
+        141.6464743655912
+      ],
+      [
+        213.60009363293827,
+        141.64647436559122
+      ],
+      [
+        114.33047422706818,
+        67.33939083371183
+      ]
+    ],
+    "1": [
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        141.1134295522577
+      ],
+      [
+        101.52825316101021,
+        73.6003655566589
+      ]
+    ],
+    "2": [
+      [
+        213.60009363293827,
+        0.0
+      ],
+      [
+        112.50156122936296,
+        64.95449750281526
+      ],
+      [
+        213.6000936329383,
+        145.08618128546908
+      ]
+    ],
+    "3": [
+      [
+        210.98497854846192,
+        0.0
+      ],
+      [
+        2.6151150844763293,
+        0.0
+      ],
+      [
+        105.2499186231192,
+        70.97955411654951
+      ]
+    ]
+  },
+  "candidate_count": 12,
+  "source_sha256": "eb3304f016e56ca4b6974b593aad8de628dee07fd414e90849ba0b574736372d",
+  "roi": [
+    154,
+    306,
+    505,
+    742
+  ],
+  "environment": "Linux-6.12.75+rpt-rpi-2712-aarch64-with-glibc2.41",
+  "detection": "fresh",
+  "exit_code": 0,
+  "process_wall_seconds": 4.316908490999936
+}

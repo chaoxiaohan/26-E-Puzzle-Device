@@ -33,7 +33,7 @@ flowchart TD
 
 ### 2.1 相机与感兴趣区域
 
-`camera_device.py` 优先选择真正的 UVC 采集节点，过滤 ISP、编码器和元数据节点。`main.py` 负责横竖屏方向、ROI 限制、相机重连和照片保存。照片同时记录 ROI、检测参数和原始轮廓，以便离线复现。回放使用拍摄时对应的 ROI，不覆盖用户当前的 ROI。
+`hardware_devices.py` 优先选择真正的 UVC 采集节点，过滤 ISP、编码器和元数据节点。`main.py` 负责横竖屏方向、ROI 限制、相机重连和照片保存。照片同时记录 ROI、检测参数和原始轮廓，以便离线复现。回放使用拍摄时对应的 ROI，不覆盖用户当前的 ROI。
 
 ### 2.2 颜色分割
 
@@ -185,7 +185,7 @@ flowchart TD
 | 文件 | 主要职责 |
 |---|---|
 | [`main.py`](../puzzle_card_detector/main.py) | 检测、多帧稳定、模式选择、评分准入、状态机 |
-| [`camera_device.py`](../puzzle_card_detector/camera_device.py) | UVC 设备选择与采集 |
+| [`hardware_devices.py`](../puzzle_card_detector/hardware_devices.py) | UVC 设备选择与采集 |
 | [`card_piece_geometry.py`](../puzzle_card_detector/card_piece_geometry.py) | 纸片直边和角点修正 |
 | [`card_corner_solver.py`](../puzzle_card_detector/card_corner_solver.py) | 纸角候选与结构剪枝 |
 | [`card_joint_solver.py`](../puzzle_card_detector/card_joint_solver.py) | 矩形切法、身份朝向与拼缝缓存 |

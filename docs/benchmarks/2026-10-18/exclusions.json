@@ -1,0 +1,96 @@
+{
+  "inspected": 61,
+  "included": 43,
+  "excluded": [
+    {
+      "capture": "20260730_010555_195",
+      "reason": "black background",
+      "sha256": "73544b779d6bd1e49965ca5e04238fedcc719fa31b3194a39ba12d9e39155488"
+    },
+    {
+      "capture": "20260730_010939_401",
+      "reason": "black background",
+      "sha256": "b21bd2a82814a0dbf03719f692b36019baa17c16cfa2f6d82a7e059ef2973ae7"
+    },
+    {
+      "capture": "20260730_011554_330",
+      "reason": "black background",
+      "sha256": "84a97535cf19f792b7a600e58f4c4066e8cd2c21fd0d23004a86071ff14f3799"
+    },
+    {
+      "capture": "20260730_072301_475",
+      "reason": "black background",
+      "sha256": "90810df0486ee437988ba54e930319bb1956727173db58db33e5fe07059c26d9"
+    },
+    {
+      "capture": "20260730_072304_176",
+      "reason": "black background",
+      "sha256": "965fb7823db874ccc24312e405e1cdb42d41d6954460b2838d8da5816669e0db"
+    },
+    {
+      "capture": "20260730_073846_780",
+      "reason": "black background",
+      "sha256": "43b1f78dfbe9291ee9c198c049c3ac95628357c124801d0db1cb0b3726477881"
+    },
+    {
+      "capture": "20260730_073849_648",
+      "reason": "black background",
+      "sha256": "f72b9d0a5300d483aac8a489ddd75c7325659b63f0df86b5338dd4b7be4e94c5"
+    },
+    {
+      "capture": "20260730_085337_562",
+      "reason": "black background",
+      "sha256": "7ba5df90fffd4db08fdfb5ab28d01c378701b50756f1ab2ea16b049a127d06e9"
+    },
+    {
+      "capture": "20260730_090255_052",
+      "reason": "black background",
+      "sha256": "fb41b2090c8adf94f9ddbd13e9b2be56dd2193f73ab4e825a6c641193a7b974f"
+    },
+    {
+      "capture": "20260730_090257_783",
+      "reason": "black background",
+      "sha256": "1155c0e83b34a33d5e2a6076f9c48d87540c6b2a91ba4c85b0b3bae90fe7e6a5"
+    },
+    {
+      "capture": "20260730_092427_022",
+      "reason": "black background",
+      "sha256": "b437789663c244ea18d8593b15f3cc2610ead5353450d954af37fb39e1dc64ff"
+    },
+    {
+      "capture": "20260730_101445_764",
+      "reason": "occluded/no scene",
+      "sha256": "a72496ea569c411badb2cdd2b102e10a1003fb24eebc9048f0ff9752af6adafd"
+    },
+    {
+      "capture": "20260730_102235_051",
+      "reason": "black background",
+      "sha256": "2ba6a82e458eac9266486e79a6f122f9e29faadaaee5640f337e4dc89ba6c04b"
+    },
+    {
+      "capture": "20260730_102332_853",
+      "reason": "black background",
+      "sha256": "4e54b33f9be01bb757a03a7390322cd4cde6e3924bf52e297e94ca7da2581b53"
+    },
+    {
+      "capture": "20260730_120124_023",
+      "reason": "occluded/no scene",
+      "sha256": "dbd34f1541468d0aec4bd2645d161a6637b42363d0157cf839b0033c2a06d9f3"
+    },
+    {
+      "capture": "20260730_141638_397",
+      "reason": "black background",
+      "sha256": "d34207c1275c985e715269073aa52c98fa61e49a8e8517591c576585403ed22e"
+    },
+    {
+      "capture": "20260730_170826_045",
+      "reason": "occluded/no scene",
+      "sha256": "bb1f9e3e80ca19bf830bdfe77fffd5d3bcaf090c23322991471692621113caf0"
+    },
+    {
+      "capture": "20260730_171302_385",
+      "reason": "occluded/no scene",
+      "sha256": "8c05b05aeaaaaa1ee6f1a7c95176d27f8fed0af211d8e080f716e957f102cd2b"
+    }
+  ]
+}

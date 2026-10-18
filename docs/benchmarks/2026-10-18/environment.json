@@ -1,0 +1,165 @@
+{
+  "model": "Raspberry Pi 5 Model B Rev 1.1",
+  "os": "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION=\"13 (trixie)\"\nVERSION_CODENAME=trixie\nDEBIAN_VERSION_FULL=13.4\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+  "python": "3.13.5",
+  "opencv": "4.10.0",
+  "numpy": "2.2.4",
+  "source_hashes": {
+    "card_structure.py": "1963a5d8738bfb99a832b87cc5d0258077106cceace010ffaefa17e4507f3c46",
+    "librectangle_solver.so": "a79518a3f38bbd613e4fb8b6a29706780940d0a30e719b8c976a2c93cc92d1de",
+    "card_strip_solver.py": "2ff0bbbb6e7bac93062d2b234f5699a7d5121a69f6ed1cd50f8358489358981c",
+    "card_corner_solver.py": "60d1d897eb41b6802dd342e07a89d2f2a8300599497b7ee2eb574a62dd6c8b39",
+    "hardware_devices.py": "02f6cacff53f9ef6a76b3148419d537a744e429b5ae66f6a5728a406997908aa",
+    "main.py": "98f9f377585d745e32e817fc9002dfa06d096364baea9ba1e27e9e93e4995c27",
+    "real_capture_replay.py": "f1685cbfa15a42e2f0d27a050437f896af66d5c70c4c0db15b7132c9ed65258b",
+    "cpp_rectangle_solver.py": "40888972ff3e7dbc5f59123cb850fd93360669192dae4db70d5b7c577284ebf0",
+    "ui_bridge.py": "3bed77dc63e31e8638ef09e84dc66be286f6f2a539f1e53cc928ff939dfd6746",
+    "solver_v2.py": "a6ad320e7ab967a36cd09f2596fdb053c9123d0bd84b74a1e3f2810da77aa253",
+    "maix.py": "2a1c00b2ff22c69376edf483a4bc99dcece2d54fb3d594266fd082a72039ff66",
+    "card_face_solver.py": "c83c1fe5815e5ff324b245d4196ada5f73dff9bb1c652f8568a47c25377179ec",
+    "solver_boundary.py": "c9248aa29af800f455ffaf9a8f8dff1efd7838daf42123cbd342d956ab6ac3a9",
+    "rectangle_solver.cpp": "e2eab20b24c85ea15a1abe726afb4106af468503399f0a960a10215466d60179",
+    "card_piece_geometry.py": "882e967c4161df6f48fe84ad4ac0e2b3b6974eb1599395c672b5fcb06f7bb3fe",
+    "hard_frame_replay.py": "39b199854cab1d56bc95a6616cf84109a9f64ea9ec9af538cf425c2863948387",
+    "card_face_replay.py": "146f92c829a05f406cba99db885ae25243d19aea02196a7867fa7c7b4c72d66b",
+    "serial_protocol.py": "a22d67cd95ee91dea70afa44401fc946428c174d94a896a7082cfe0932e59879",
+    "layout_constraints.py": "af9325017d1366b3f1e30334bac987e4a6396977d532ae044a5c02c41329a3e7",
+    "card_graph_solver.py": "3b1ba3c8599c48d3daf2b91efe9df11924c6aa4df1d444fc5472e1d4d6dd39ac",
+    "card_topology_solver.py": "994844bb273bc47c08b258b6e27873042bbe279faa4ecc6d4ee79cd2a084bb97",
+    "solver_hybrid.py": "9883161425e77e53aa39a6ba7c788e39a4479e720d8c3b5e9361e82e0d6988b5",
+    "card_joint_solver.py": "2705a0a78075d1abb0c85e276b2b493e14ee239914963a35f9bcbc3ced5abeab",
+    "card_fan_solver.py": "9da9e563003c70bd270243d9f108da560f3832aca9a88d84d8bf0a776af24050",
+    "template_matcher.py": "4b706b22ad2be7961c9332f34074117ec4e26625fcadc5a787f009885d1114c5",
+    "puzzle_solver.py": "74d2037024cf0fec5dee188d24510c3b008b97172a28c9732854e39e4a5038e0"
+  },
+  "source_verification": [
+    {
+      "file": "card_structure.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "card_strip_solver.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "card_corner_solver.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "hardware_devices.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "main.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "real_capture_replay.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "cpp_rectangle_solver.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "ui_bridge.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "solver_v2.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "maix.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "card_face_solver.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "solver_boundary.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "rectangle_solver.cpp",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "card_piece_geometry.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "hard_frame_replay.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "card_face_replay.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "serial_protocol.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "layout_constraints.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "card_graph_solver.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "card_topology_solver.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "solver_hybrid.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "card_joint_solver.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "card_fan_solver.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "template_matcher.py",
+      "git_present": true,
+      "same": true
+    },
+    {
+      "file": "puzzle_solver.py",
+      "git_present": true,
+      "same": true
+    }
+  ],
+  "runtime_source_commit": "02505cf664dbfa3dc331b585af2628ee79ef9a4b",
+  "benchmark_tool_commit": "c60eed4",
+  "timing_protocol": "3 independent processes per image, fresh detection, NORMAL short_edge_protection=True, CARD actual worker, 10 additional CARD negative controls"
+}

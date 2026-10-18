@@ -1,0 +1,317 @@
+{
+  "capture": "20260730_225714_149",
+  "kind": "plain",
+  "mode": "NORMAL",
+  "repeat": 3,
+  "status": "BEST",
+  "method": "cpp-best-effort",
+  "layout_found": true,
+  "piece_count": 4,
+  "seconds": 0.6003493630000776,
+  "timings_ms": {
+    "image_decode": 16.30188200010707,
+    "detect": 70.65607599997747,
+    "solve": 600.3493630000776,
+    "post_preview": 71.31551700013006,
+    "analysis": 742.3209560001851
+  },
+  "cpu_seconds": 1.2677344970000002,
+  "max_rss_kib": 110736,
+  "telemetry_before": {
+    "temperature_c": 48.5,
+    "frequency_khz": 2400000.0,
+    "throttled": "throttled=0x0"
+  },
+  "telemetry_after": {
+    "temperature_c": 46.85,
+    "frequency_khz": 2400000.0,
+    "throttled": "throttled=0x0"
+  },
+  "score": 0.7728587548758379,
+  "nodes": 8460659,
+  "info": {
+    "ratio": 1.231269192198189,
+    "solve_scale": 0.339805658420143,
+    "width": 84.0,
+    "height": 68.22228683398998,
+    "coverage": 0.8752278376139188,
+    "overlap": 0.0,
+    "internal_quality": 0.9634914916447354,
+    "boundary_quality": 0.9486176282053418,
+    "connected": true,
+    "forced": true,
+    "boundary_safe": true,
+    "method": "cpp-best-effort",
+    "short_edge_protection": true,
+    "best_effort_score": 0.7728587548758379,
+    "best_effort_report": {
+      "coverage": 0.9370275990152465,
+      "internal_match": 0.8328817053284793,
+      "boundary_min_coverage": 0.5089259344805395,
+      "boundary_max_gap_ratio": 0.4690549303612151,
+      "boundary_angle_error": 1.5765500551837346
+    },
+    "execution_mode": "BEST",
+    "constraint_report": {
+      "coverage": 0.9370275990152465,
+      "overlap": 0.0,
+      "outer_piece_ratio": 1.0,
+      "internal_match": 0.8328817053284793,
+      "boundary_min_coverage": 0.5089259344805395,
+      "boundary_max_gap_ratio": 0.4690549303612151,
+      "boundary_angle_error": 1.5765500551837346
+    },
+    "repair": {
+      "valid": true,
+      "forced": true,
+      "stage": "best-effort",
+      "reasons": [
+        "perimeter",
+        "disconnected",
+        "rectangle-boundary"
+      ],
+      "maximum_move": 0.0,
+      "gap": {
+        "applied": false,
+        "reason": "preserve-best-candidate"
+      }
+    }
+  },
+  "source_pieces": [
+    {
+      "points": [
+        [
+          135,
+          27
+        ],
+        [
+          160,
+          114
+        ],
+        [
+          279,
+          86
+        ],
+        [
+          315,
+          31
+        ]
+      ],
+      "center": [
+        216,
+        62
+      ],
+      "area": 10518.5,
+      "angle": 1.2730300200566944,
+      "longest_edge": [
+        [
+          315,
+          31
+        ],
+        [
+          135,
+          27
+        ]
+      ],
+      "solidity": 0.9690897365026718
+    },
+    {
+      "points": [
+        [
+          454,
+          28
+        ],
+        [
+          458,
+          199
+        ],
+        [
+          523,
+          251
+        ],
+        [
+          589,
+          173
+        ],
+        [
+          482,
+          30
+        ]
+      ],
+      "center": [
+        506,
+        145
+      ],
+      "area": 17338.0,
+      "angle": 53.19426333463022,
+      "longest_edge": [
+        [
+          589,
+          173
+        ],
+        [
+          482,
+          30
+        ]
+      ],
+      "solidity": 0.9756619115950592
+    },
+    {
+      "points": [
+        [
+          252,
+          115
+        ],
+        [
+          103,
+          156
+        ],
+        [
+          206,
+          209
+        ]
+      ],
+      "center": [
+        186,
+        159
+      ],
+      "area": 6019.5,
+      "angle": -15.385188353653575,
+      "longest_edge": [
+        [
+          252,
+          115
+        ],
+        [
+          103,
+          156
+        ]
+      ],
+      "solidity": 0.9566150178784267
+    },
+    {
+      "points": [
+        [
+          422,
+          198
+        ],
+        [
+          419,
+          115
+        ],
+        [
+          261,
+          125
+        ],
+        [
+          378,
+          242
+        ]
+      ],
+      "center": [
+        361,
+        164
+      ],
+      "area": 11654.5,
+      "angle": 45.0,
+      "longest_edge": [
+        [
+          261,
+          125
+        ],
+        [
+          378,
+          242
+        ]
+      ],
+      "solidity": 0.9779726441218427
+    }
+  ],
+  "pattern_layout": {
+    "0": [
+      [
+        83.03936046519843,
+        30.722943116884398
+      ],
+      [
+        81.54115487938455,
+        0.0
+      ],
+      [
+        40.0,
+        7.105427357601002e-15
+      ],
+      [
+        23.811596787050163,
+        15.390657381542482
+      ]
+    ],
+    "1": [
+      [
+        17.15384763451206,
+        24.018369866807447
+      ],
+      [
+        55.72507525316527,
+        67.49830001737405
+      ],
+      [
+        84.0,
+        66.72009107938777
+      ],
+      [
+        83.99999999999999,
+        32.000000000000014
+      ],
+      [
+        24.8561207130429,
+        18.391320622906676
+      ]
+    ],
+    "2": [
+      [
+        0.7157750220269321,
+        35.554070766255855
+      ],
+      [
+        39.36175920310405,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ]
+    ],
+    "3": [
+      [
+        1.4210854715202004e-14,
+        40.0
+      ],
+      [
+        1.4210854715202004e-14,
+        68.22228683398998
+      ],
+      [
+        53.77699886140395,
+        66.76575825862028
+      ],
+      [
+        15.481753171907556,
+        25.598369142411606
+      ]
+    ]
+  },
+  "candidate_count": 0,
+  "source_sha256": "d6cb99fac32238817abde2b487b8f6b8744c5d2f5be9b0ecc4d04b8cd44f20ff",
+  "roi": [
+    100,
+    10,
+    520,
+    700
+  ],
+  "environment": "Linux-6.12.75+rpt-rpi-2712-aarch64-with-glibc2.41",
+  "detection": "fresh",
+  "short_edge_protection": true,
+  "exit_code": 0,
+  "process_wall_seconds": 0.9775613700001031
+}

@@ -1,0 +1,256 @@
+{
+  "capture": "20260730_231827_144",
+  "kind": "plain",
+  "mode": "NORMAL",
+  "repeat": 1,
+  "status": "BEST",
+  "method": "cpp-best-effort",
+  "layout_found": true,
+  "piece_count": 3,
+  "seconds": 0.11640044799992211,
+  "timings_ms": {
+    "image_decode": 16.246394000063447,
+    "detect": 41.8088850001368,
+    "solve": 116.40044799992211,
+    "post_preview": 60.983435000025565,
+    "analysis": 219.19276800008447
+  },
+  "cpu_seconds": 0.324574798,
+  "max_rss_kib": 84096,
+  "telemetry_before": {
+    "temperature_c": 46.3,
+    "frequency_khz": 2400000.0,
+    "throttled": "throttled=0x0"
+  },
+  "telemetry_after": {
+    "temperature_c": 47.4,
+    "frequency_khz": 2400000.0,
+    "throttled": "throttled=0x0"
+  },
+  "score": 0.4496838659968846,
+  "nodes": 2453105,
+  "info": {
+    "ratio": 1.18601960249969,
+    "solve_scale": 0.40188734834492035,
+    "width": 83.02137217497831,
+    "height": 70.0,
+    "coverage": 0.7113504556752278,
+    "overlap": 0.0,
+    "internal_quality": 0.23722191472629084,
+    "boundary_quality": 0.8132079414960637,
+    "connected": false,
+    "forced": true,
+    "boundary_safe": true,
+    "method": "cpp-best-effort",
+    "short_edge_protection": true,
+    "best_effort_score": 0.4496838659968846,
+    "best_effort_report": {
+      "coverage": 0.7510086210557608,
+      "internal_match": 0.0,
+      "boundary_min_coverage": 0.4174722389706792,
+      "boundary_max_gap_ratio": 0.5825277610293208,
+      "boundary_angle_error": 1.269002763472868
+    },
+    "execution_mode": "BEST",
+    "constraint_report": {
+      "coverage": 0.7510086210557608,
+      "overlap": 0.0,
+      "outer_piece_ratio": 1.0,
+      "internal_match": 0.0,
+      "boundary_min_coverage": 0.4174722389706792,
+      "boundary_max_gap_ratio": 0.5825277610293208,
+      "boundary_angle_error": 1.269002763472868
+    },
+    "repair": {
+      "valid": true,
+      "forced": true,
+      "stage": "best-effort",
+      "reasons": [
+        "coverage",
+        "internal-edges",
+        "perimeter",
+        "disconnected",
+        "rectangle-boundary"
+      ],
+      "maximum_move": 0.0,
+      "gap": {
+        "applied": false,
+        "reason": "preserve-best-candidate"
+      }
+    }
+  },
+  "source_pieces": [
+    {
+      "points": [
+        [
+          357,
+          69
+        ],
+        [
+          421,
+          126
+        ],
+        [
+          508,
+          95
+        ],
+        [
+          501,
+          72
+        ]
+      ],
+      "center": [
+        437,
+        90
+      ],
+      "area": 5112.5,
+      "angle": 1.1934894239820153,
+      "longest_edge": [
+        [
+          501,
+          72
+        ],
+        [
+          357,
+          69
+        ]
+      ],
+      "solidity": 0.9631688018085908
+    },
+    {
+      "points": [
+        [
+          343,
+          124
+        ],
+        [
+          320,
+          55
+        ],
+        [
+          129,
+          114
+        ],
+        [
+          196,
+          150
+        ]
+      ],
+      "center": [
+        250,
+        107
+      ],
+      "area": 10827.5,
+      "angle": -17.16594605944917,
+      "longest_edge": [
+        [
+          320,
+          55
+        ],
+        [
+          129,
+          114
+        ]
+      ],
+      "solidity": 0.9504059688391485
+    },
+    {
+      "points": [
+        [
+          325,
+          203
+        ],
+        [
+          522,
+          273
+        ],
+        [
+          466,
+          143
+        ]
+      ],
+      "center": [
+        439,
+        206
+      ],
+      "area": 10751.0,
+      "angle": 19.56164946010537,
+      "longest_edge": [
+        [
+          325,
+          203
+        ],
+        [
+          522,
+          273
+        ]
+      ],
+      "solidity": 0.9475586109642165
+    }
+  ],
+  "pattern_layout": {
+    "0": [
+      [
+        83.02137217497831,
+        0.0
+      ],
+      [
+        60.65449651321069,
+        26.192348033559455
+      ],
+      [
+        73.83856431533793,
+        60.88946615407846
+      ],
+      [
+        83.02137217497831,
+        57.884335778863424
+      ]
+    ],
+    "1": [
+      [
+        0.3740259816376863,
+        40.776943272052456
+      ],
+      [
+        1.0213721749783105,
+        70.0
+      ],
+      [
+        81.36065347397665,
+        70.0
+      ],
+      [
+        59.90374067421163,
+        48.22946606308861
+      ]
+    ],
+    "2": [
+      [
+        83.02137217497831,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        38.69954161904101,
+        41.6944693878899
+      ]
+    ]
+  },
+  "candidate_count": 0,
+  "source_sha256": "0f2c55e6800038e9370ed78733e538ab34b03eaf806ca6407f27e4a0ba653df7",
+  "roi": [
+    100,
+    10,
+    520,
+    700
+  ],
+  "environment": "Linux-6.12.75+rpt-rpi-2712-aarch64-with-glibc2.41",
+  "detection": "fresh",
+  "short_edge_protection": true,
+  "exit_code": 0,
+  "process_wall_seconds": 0.454482746000167
+}

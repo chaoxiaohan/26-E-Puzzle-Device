@@ -1,0 +1,3682 @@
+{
+  "date": "2026-10-18",
+  "device": "Raspberry Pi 5 Model B Rev 1.1",
+  "runtime_source_revision": "02505cf",
+  "repeats": 3,
+  "total_runs": 139,
+  "groups": {
+    "all": {
+      "images": 43,
+      "status_counts": {
+        "BEST": 10,
+        "AMBIGUOUS": 14,
+        "VERIFIED": 18,
+        "GEOMETRY_ONLY": 1
+      },
+      "layout_count": 43,
+      "timings_ms": {
+        "detect": {
+          "median_of_image_medians": 74.2664890000242,
+          "max_image_median": 90.18622500002493,
+          "max_single_run": 90.62940199999048
+        },
+        "solve": {
+          "median_of_image_medians": 679.9960519999786,
+          "max_image_median": 6544.516325000018,
+          "max_single_run": 6641.078200000038
+        },
+        "analysis": {
+          "median_of_image_medians": 755.7319129999769,
+          "max_image_median": 6620.092769999928,
+          "max_single_run": 6716.910861999963
+        }
+      }
+    },
+    "cards": {
+      "images": 33,
+      "status_counts": {
+        "AMBIGUOUS": 14,
+        "VERIFIED": 18,
+        "GEOMETRY_ONLY": 1
+      },
+      "layout_count": 33,
+      "timings_ms": {
+        "detect": {
+          "median_of_image_medians": 75.14197099999365,
+          "max_image_median": 90.18622500002493,
+          "max_single_run": 90.62940199999048
+        },
+        "solve": {
+          "median_of_image_medians": 899.3062580000242,
+          "max_image_median": 6544.516325000018,
+          "max_single_run": 6641.078200000038
+        },
+        "analysis": {
+          "median_of_image_medians": 973.136347000036,
+          "max_image_median": 6620.092769999928,
+          "max_single_run": 6716.910861999963
+        }
+      }
+    },
+    "plain": {
+      "images": 10,
+      "status_counts": {
+        "BEST": 10
+      },
+      "layout_count": 10,
+      "timings_ms": {
+        "detect": {
+          "median_of_image_medians": 72.48129499998868,
+          "max_image_median": 77.65904999996565,
+          "max_single_run": 77.76510999997299
+        },
+        "solve": {
+          "median_of_image_medians": 144.27438350003285,
+          "max_image_median": 1034.1435469999851,
+          "max_single_run": 1037.56845099997
+        },
+        "analysis": {
+          "median_of_image_medians": 276.2537510000129,
+          "max_image_median": 1139.6187629998167,
+          "max_single_run": 1142.754947000185
+        }
+      }
+    },
+    "historical_cards": {
+      "images": 31,
+      "status_counts": {
+        "AMBIGUOUS": 12,
+        "VERIFIED": 18,
+        "GEOMETRY_ONLY": 1
+      },
+      "layout_count": 31,
+      "timings_ms": {
+        "detect": {
+          "median_of_image_medians": 75.14197099999365,
+          "max_image_median": 90.18622500002493,
+          "max_single_run": 90.62940199999048
+        },
+        "solve": {
+          "median_of_image_medians": 774.0455670000301,
+          "max_image_median": 4712.780929000019,
+          "max_single_run": 4712.913748999995
+        },
+        "analysis": {
+          "median_of_image_medians": 850.0875409999935,
+          "max_image_median": 4788.679461000015,
+          "max_single_run": 4789.157773999932
+        }
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "G01",
+      "capture": "20260730_225714_149",
+      "kind": "plain",
+      "mode": "NORMAL",
+      "status": "BEST",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 3,
+      "representative_path": "results/normal/run-3/20260730_225714_149",
+      "layout_found": true,
+      "method": "cpp-best-effort",
+      "score": 0.7728587548758379,
+      "nodes": 8460659,
+      "peak_rss_mib": 108.171875,
+      "original_sha256": "d6cb99fac32238817abde2b487b8f6b8744c5d2f5be9b0ecc4d04b8cd44f20ff",
+      "output_sha256": "3a92a0d02193fc8a3c74f56708e98dfc0704e8f013188118797221758d9dd15d",
+      "roi": [
+        100,
+        10,
+        520,
+        700
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 16.313388999833478,
+          "min": 16.30188200010707,
+          "max": 16.352617999928043
+        },
+        "detect": {
+          "median": 70.65607599997747,
+          "min": 70.38985799999864,
+          "max": 70.88521500008937
+        },
+        "solve": {
+          "median": 600.3493630000776,
+          "min": 599.8824129999321,
+          "max": 601.1982009999883
+        },
+        "post_preview": {
+          "median": 71.16014199982601,
+          "min": 71.1153730001115,
+          "max": 71.31551700013006
+        },
+        "analysis": {
+          "median": 742.3209560001851,
+          "min": 741.3876440000422,
+          "max": 743.2435579999037
+        }
+      },
+      "trial_analysis_ms": [
+        741.3876440000422,
+        743.2435579999037,
+        742.3209560001851
+      ],
+      "geometry": {
+        "coverage": 0.9370275990152465,
+        "overlap": 0.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.8328817053284793,
+        "boundary_min_coverage": 0.5089259344805395,
+        "boundary_max_gap_ratio": 0.4690549303612151,
+        "boundary_angle_error": 1.5765500551837346
+      },
+      "selection_margin": null,
+      "execution_ready": false
+    },
+    {
+      "id": "G02",
+      "capture": "20260730_231817_179",
+      "kind": "plain",
+      "mode": "NORMAL",
+      "status": "BEST",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 3,
+      "representative_run": 2,
+      "representative_path": "results/normal/run-2/20260730_231817_179",
+      "layout_found": true,
+      "method": "cpp-best-effort",
+      "score": 0.5895427018781786,
+      "nodes": 2894945,
+      "peak_rss_mib": 82.140625,
+      "original_sha256": "49f4739d7bb1c48e5dad914d0e6599aad30183355af51d25685bbdb89fe817fb",
+      "output_sha256": "19d6d7f6a9981ed7e1331a4d1f40bb929470cb31977dca9908f065519a01f5c0",
+      "roi": [
+        100,
+        10,
+        520,
+        700
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 16.066454000110753,
+          "min": 16.04361699992296,
+          "max": 16.477554999937638
+        },
+        "detect": {
+          "median": 39.86110499999995,
+          "min": 39.77079100013725,
+          "max": 40.701240000089456
+        },
+        "solve": {
+          "median": 118.26815699987492,
+          "min": 117.80699699988872,
+          "max": 118.3440160000373
+        },
+        "post_preview": {
+          "median": 46.36165900001288,
+          "min": 46.292433999951754,
+          "max": 47.527733999913835
+        },
+        "analysis": {
+          "median": 205.1055219999398,
+          "min": 204.56678000005013,
+          "max": 205.26183099991613
+        }
+      },
+      "trial_analysis_ms": [
+        204.56678000005013,
+        205.1055219999398,
+        205.26183099991613
+      ],
+      "geometry": {
+        "coverage": 0.746047891502437,
+        "overlap": 0.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.5003734475046048,
+        "boundary_min_coverage": 0.40844628530034216,
+        "boundary_max_gap_ratio": 0.5915537146996578,
+        "boundary_angle_error": 1.3393142761590284e-14
+      },
+      "selection_margin": null,
+      "execution_ready": false
+    },
+    {
+      "id": "G03",
+      "capture": "20260730_231827_144",
+      "kind": "plain",
+      "mode": "NORMAL",
+      "status": "BEST",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 3,
+      "representative_run": 1,
+      "representative_path": "results/normal/run-1/20260730_231827_144",
+      "layout_found": true,
+      "method": "cpp-best-effort",
+      "score": 0.4496838659968846,
+      "nodes": 2453105,
+      "peak_rss_mib": 82.140625,
+      "original_sha256": "0f2c55e6800038e9370ed78733e538ab34b03eaf806ca6407f27e4a0ba653df7",
+      "output_sha256": "2c836301b5d6ba2d24207a2120be10bb3d75eea0150e3bf6a86e211d4b51e2dc",
+      "roi": [
+        100,
+        10,
+        520,
+        700
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 16.246394000063447,
+          "min": 16.075045999969007,
+          "max": 16.28859199990984
+        },
+        "detect": {
+          "median": 42.11127700000361,
+          "min": 41.8088850001368,
+          "max": 43.19144599980973
+        },
+        "solve": {
+          "median": 116.13503400008085,
+          "min": 115.77927100006491,
+          "max": 116.40044799992211
+        },
+        "post_preview": {
+          "median": 61.11913299992011,
+          "min": 60.983435000025565,
+          "max": 61.86047799997141
+        },
+        "analysis": {
+          "median": 219.19276800008447,
+          "min": 219.00968099998863,
+          "max": 221.186957999862
+        }
+      },
+      "trial_analysis_ms": [
+        219.19276800008447,
+        219.00968099998863,
+        221.186957999862
+      ],
+      "geometry": {
+        "coverage": 0.7510086210557608,
+        "overlap": 0.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.0,
+        "boundary_min_coverage": 0.4174722389706792,
+        "boundary_max_gap_ratio": 0.5825277610293208,
+        "boundary_angle_error": 1.269002763472868
+      },
+      "selection_margin": null,
+      "execution_ready": false
+    },
+    {
+      "id": "G04",
+      "capture": "20260731_222527_772",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "AMBIGUOUS",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 2,
+      "representative_path": "results/card/run-2/20260731_222527_772",
+      "layout_found": true,
+      "method": "card-joint-cpp-best-effort",
+      "score": 0.7701171867725314,
+      "nodes": 2950905,
+      "peak_rss_mib": 99.78125,
+      "original_sha256": "b94879b7e710040c51f969a8d6beeecfbe1edd3fedf7b03cfc30bd31a882b547",
+      "output_sha256": "d7e23acc21e4bc5fe8c911b13c5cd79e749712c3f9a8fa2d6a7468883d0891c7",
+      "roi": [
+        167,
+        344,
+        520,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 20.01493800003118,
+          "min": 19.94349400001738,
+          "max": 20.06438099999741
+        },
+        "detect": {
+          "median": 78.10932300003515,
+          "min": 77.22604299999603,
+          "max": 78.43165200006297
+        },
+        "solve": {
+          "median": 1488.6239989999694,
+          "min": 1482.2636869999997,
+          "max": 1491.078252999955
+        },
+        "post_preview": {
+          "median": 0.01757400002588838,
+          "min": 0.017444000036448415,
+          "max": 0.01998100003675063
+        },
+        "analysis": {
+          "median": 1566.750766000041,
+          "min": 1559.5097110000324,
+          "max": 1569.527479000044
+        }
+      },
+      "trial_analysis_ms": [
+        1569.527479000044,
+        1566.750766000041,
+        1559.5097110000324
+      ],
+      "geometry": {
+        "coverage": 0.8954176225309844,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.5859823677271936,
+        "perimeter_error": 0.9066793651413391,
+        "boundary_min_coverage": 0.0,
+        "boundary_max_gap_ratio": 1.0,
+        "boundary_angle_error": 2.8833739991782936
+      },
+      "selection_margin": 0.19295495252621342,
+      "execution_ready": false
+    },
+    {
+      "id": "G05",
+      "capture": "20260731_224744_511",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "AMBIGUOUS",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 3,
+      "representative_path": "results/card/run-3/20260731_224744_511",
+      "layout_found": true,
+      "method": "card-joint-cpp-best-effort",
+      "score": 0.8241823239115018,
+      "nodes": 3028089,
+      "peak_rss_mib": 100.765625,
+      "original_sha256": "646fabed6762a87f529edfa5233753b0a417d39421e21fd7dae99a4efb6c801b",
+      "output_sha256": "69e44e250e2da518bc216523412173da9464fbde1c395d5f7820fd70d136810b",
+      "roi": [
+        167,
+        344,
+        520,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.305377000023327,
+          "min": 19.30307999998604,
+          "max": 19.436040999949
+        },
+        "detect": {
+          "median": 77.654702000018,
+          "min": 77.28719199997158,
+          "max": 77.84136500004024
+        },
+        "solve": {
+          "median": 1612.5412850000203,
+          "min": 1601.0304519999181,
+          "max": 1616.8382160000192
+        },
+        "post_preview": {
+          "median": 0.021443999912662548,
+          "min": 0.017796000065573025,
+          "max": 0.02253599996038247
+        },
+        "analysis": {
+          "median": 1690.4040939999732,
+          "min": 1678.7029500000017,
+          "max": 1694.1479439999512
+        }
+      },
+      "trial_analysis_ms": [
+        1694.1479439999512,
+        1678.7029500000017,
+        1690.4040939999732
+      ],
+      "geometry": {
+        "coverage": 0.9065092157411636,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.7213915498274468,
+        "perimeter_error": 0.9575201680920572,
+        "boundary_min_coverage": 0.0,
+        "boundary_max_gap_ratio": 1.0,
+        "boundary_angle_error": 1.208877912248714
+      },
+      "selection_margin": 0.2890338052365107,
+      "execution_ready": false
+    },
+    {
+      "id": "G06",
+      "capture": "20260731_230438_607",
+      "kind": "plain",
+      "mode": "NORMAL",
+      "status": "BEST",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 3,
+      "representative_run": 3,
+      "representative_path": "results/normal/run-3/20260731_230438_607",
+      "layout_found": true,
+      "method": "cpp-best-effort",
+      "score": 0.3191833648393194,
+      "nodes": 749791,
+      "peak_rss_mib": 94.25,
+      "original_sha256": "89f6cdcd4c12260e30aecb959a5fbbdfcb028fd2e7556f7222768b5eaf5ae45f",
+      "output_sha256": "4dc78ae16f9f3b4a815aafbaf168a00e846cf4a6e6ff0d454bcaf203994786d1",
+      "roi": [
+        167,
+        344,
+        520,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.90032000003339,
+          "min": 19.87014599990289,
+          "max": 20.199552000121912
+        },
+        "detect": {
+          "median": 72.80549699999028,
+          "min": 72.36205999993217,
+          "max": 73.4414480000396
+        },
+        "solve": {
+          "median": 63.65850500014858,
+          "min": 63.60985099991012,
+          "max": 63.79807199982679
+        },
+        "post_preview": {
+          "median": 41.97196200016151,
+          "min": 41.9341260001147,
+          "max": 42.00147799997467
+        },
+        "analysis": {
+          "median": 178.38731000006192,
+          "min": 178.02204300005542,
+          "max": 179.1736459999811
+        }
+      },
+      "trial_analysis_ms": [
+        179.1736459999811,
+        178.02204300005542,
+        178.38731000006192
+      ],
+      "geometry": {
+        "coverage": 0.7474480151228734,
+        "overlap": 0.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.0,
+        "boundary_min_coverage": 0.0,
+        "boundary_max_gap_ratio": 1.0,
+        "boundary_angle_error": 1.437606968432461e-14
+      },
+      "selection_margin": null,
+      "execution_ready": false
+    },
+    {
+      "id": "G07",
+      "capture": "20260731_230559_738",
+      "kind": "plain",
+      "mode": "NORMAL",
+      "status": "BEST",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 3,
+      "representative_run": 2,
+      "representative_path": "results/normal/run-2/20260731_230559_738",
+      "layout_found": true,
+      "method": "cpp-best-effort",
+      "score": 0.2751104639068025,
+      "nodes": 625000,
+      "peak_rss_mib": 94.265625,
+      "original_sha256": "24ed4cc36e837f8e814d1985c41f24b6f39e42dd34b207757fe88b110a7c8303",
+      "output_sha256": "b1f89b5c99f84f67af175fbfc8c9a2741ec1ea45b8acfd988dfa6e0cc1ce0041",
+      "roi": [
+        167,
+        344,
+        520,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.21405899997808,
+          "min": 19.134438000037335,
+          "max": 19.23253199993269
+        },
+        "detect": {
+          "median": 73.5443779999514,
+          "min": 72.3373299999821,
+          "max": 74.19229000015548
+        },
+        "solve": {
+          "median": 67.02204900011566,
+          "min": 66.71083399987765,
+          "max": 67.42772399979913
+        },
+        "post_preview": {
+          "median": 41.584810000131256,
+          "min": 41.3602329999776,
+          "max": 41.60018099992158
+        },
+        "analysis": {
+          "median": 182.16660799998863,
+          "min": 180.40839699983735,
+          "max": 183.20482400008586
+        }
+      },
+      "trial_analysis_ms": [
+        180.40839699983735,
+        182.16660799998863,
+        183.20482400008586
+      ],
+      "geometry": {
+        "coverage": 0.734720199708758,
+        "overlap": 0.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.0,
+        "boundary_min_coverage": 0.0,
+        "boundary_max_gap_ratio": 1.0,
+        "boundary_angle_error": 12.000000000000032
+      },
+      "selection_margin": null,
+      "execution_ready": false
+    },
+    {
+      "id": "G08",
+      "capture": "20260801_013943_516",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "AMBIGUOUS",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 3,
+      "representative_path": "results/card/run-3/20260801_013943_516",
+      "layout_found": true,
+      "method": "card-joint-cpp-best-effort",
+      "score": 0.7475896195009524,
+      "nodes": 2948068,
+      "peak_rss_mib": 100.3125,
+      "original_sha256": "7b55d7f775d3733647d971c6d8f058131e49b11f8337408ac7d1acff08070e50",
+      "output_sha256": "d434d11c247d37b777645b6a99871c1b06854dd210a4d49ed512961d375ba6cc",
+      "roi": [
+        154,
+        290,
+        520,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.59872300005827,
+          "min": 19.506670000055237,
+          "max": 19.661592000034034
+        },
+        "detect": {
+          "median": 76.5032419999443,
+          "min": 76.39631899996857,
+          "max": 76.74914500000796
+        },
+        "solve": {
+          "median": 1661.1819229999583,
+          "min": 1658.700293000038,
+          "max": 1663.380386999961
+        },
+        "post_preview": {
+          "median": 0.01835199998367898,
+          "min": 0.016592000065429602,
+          "max": 0.018685000100049365
+        },
+        "analysis": {
+          "median": 1737.9476600000316,
+          "min": 1735.1149639999903,
+          "max": 1739.9023140000054
+        }
+      },
+      "trial_analysis_ms": [
+        1735.1149639999903,
+        1739.9023140000054,
+        1737.9476600000316
+      ],
+      "geometry": {
+        "coverage": 0.9016342692584594,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.5411853834722444,
+        "perimeter_error": 0.9497517970121597,
+        "boundary_min_coverage": 0.5788981819458628,
+        "boundary_max_gap_ratio": 0.4211018180541371,
+        "boundary_angle_error": 2.554496609513377
+      },
+      "selection_margin": 0.08135976648268373,
+      "execution_ready": false
+    },
+    {
+      "id": "G09",
+      "capture": "20260801_013955_116",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "AMBIGUOUS",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 2,
+      "representative_path": "results/card/run-2/20260801_013955_116",
+      "layout_found": true,
+      "method": "card-corners-best-effort",
+      "score": 0.8291477565748059,
+      "nodes": 864,
+      "peak_rss_mib": 94.21875,
+      "original_sha256": "4798dd4e98c20de5ca98c3c18ac8d9bc03851ed15b9cdca13cbedd78a551080b",
+      "output_sha256": "2cdc5b2fe7ad174ba5725751941ccc47254c91d88d7376c382b9b9b36c0724b5",
+      "roi": [
+        154,
+        290,
+        520,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.572315999994316,
+          "min": 19.53800199999023,
+          "max": 19.629759000054037
+        },
+        "detect": {
+          "median": 75.91310500004056,
+          "min": 75.78544199998305,
+          "max": 76.00560399998812
+        },
+        "solve": {
+          "median": 774.0455670000301,
+          "min": 769.4235159999607,
+          "max": 777.3690949999263
+        },
+        "post_preview": {
+          "median": 0.04137000007631286,
+          "min": 0.03636999997524981,
+          "max": 0.04488800004764926
+        },
+        "analysis": {
+          "median": 850.0875409999935,
+          "min": 845.2503280000201,
+          "max": 853.3270880000146
+        }
+      },
+      "trial_analysis_ms": [
+        845.2503280000201,
+        850.0875409999935,
+        853.3270880000146
+      ],
+      "geometry": {
+        "coverage": 0.9452703117329406,
+        "overlap": 0.0009664948453608248,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.8084576009846575,
+        "perimeter_error": 0.6766895241563413,
+        "boundary_min_coverage": 0.9706278736526891,
+        "boundary_max_gap_ratio": 0.02937212634731076,
+        "boundary_angle_error": 2.1831291429307127
+      },
+      "selection_margin": 0.3355267437678843,
+      "execution_ready": false
+    },
+    {
+      "id": "G10",
+      "capture": "20260801_014022_101",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "AMBIGUOUS",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 3,
+      "representative_path": "results/card/run-3/20260801_014022_101",
+      "layout_found": true,
+      "method": "card-corners-best-effort",
+      "score": 0.828203096382487,
+      "nodes": 864,
+      "peak_rss_mib": 94.21875,
+      "original_sha256": "d1acb624eee6fe1a6b8a8df18e2dd33352c0aaf507ca1972a47df0221fda9bab",
+      "output_sha256": "69523ebc3c56042d79de39eca87fac81afea36823ad8f3593ebd5cf4164c4ea4",
+      "roi": [
+        154,
+        290,
+        520,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.600685999989764,
+          "min": 19.5285759999706,
+          "max": 19.621408000034535
+        },
+        "detect": {
+          "median": 73.81229300005998,
+          "min": 73.66098099998908,
+          "max": 74.52965000004497
+        },
+        "solve": {
+          "median": 899.3062580000242,
+          "min": 898.3298709999872,
+          "max": 900.7126349999908
+        },
+        "post_preview": {
+          "median": 0.016666999954395578,
+          "min": 0.016314000049533206,
+          "max": 0.017795999951886188
+        },
+        "analysis": {
+          "median": 973.136347000036,
+          "min": 972.0075189999307,
+          "max": 975.2585990000853
+        }
+      },
+      "trial_analysis_ms": [
+        975.2585990000853,
+        972.0075189999307,
+        973.136347000036
+      ],
+      "geometry": {
+        "coverage": 0.9051744460160301,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.6070696297102715,
+        "perimeter_error": 0.9399775189688462,
+        "boundary_min_coverage": 0.0,
+        "boundary_max_gap_ratio": 1.0,
+        "boundary_angle_error": 3.3120048495851795
+      },
+      "selection_margin": 0.3401354999572048,
+      "execution_ready": false
+    },
+    {
+      "id": "G11",
+      "capture": "20260801_014027_873",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "VERIFIED",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 2,
+      "representative_path": "results/card/run-2/20260801_014027_873",
+      "layout_found": true,
+      "method": "card-corners-best-effort",
+      "score": 0.8271519325196265,
+      "nodes": 864,
+      "peak_rss_mib": 94.203125,
+      "original_sha256": "fc7201da9c64df0e3e0715b2e1482d3187c4fcb8316a4e59d3eba1e77b8bc05c",
+      "output_sha256": "d0a86826eb75b975593f588da13f2e16f81ecc2c99d819c492eca178c00a1b1c",
+      "roi": [
+        154,
+        290,
+        520,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.620684999949844,
+          "min": 19.556909000016276,
+          "max": 19.65129600000637
+        },
+        "detect": {
+          "median": 77.53772400008074,
+          "min": 77.52788899995267,
+          "max": 77.91049399997974
+        },
+        "solve": {
+          "median": 407.0025630001055,
+          "min": 406.8634559999964,
+          "max": 420.7172179999361
+        },
+        "post_preview": {
+          "median": 0.03577699999368633,
+          "min": 0.03462899996975466,
+          "max": 0.03962899995713087
+        },
+        "analysis": {
+          "median": 484.81357899993327,
+          "min": 484.56508100002793,
+          "max": 498.29071900001054
+        }
+      },
+      "trial_analysis_ms": [
+        498.29071900001054,
+        484.81357899993327,
+        484.56508100002793
+      ],
+      "geometry": {
+        "coverage": 0.9298853329828115,
+        "overlap": 0.004755240429595379,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.8036461307410794,
+        "perimeter_error": 0.6613213755904892,
+        "boundary_min_coverage": 0.9353475715612285,
+        "boundary_max_gap_ratio": 0.057308479884379655,
+        "boundary_angle_error": 0.8678522944642065
+      },
+      "selection_margin": 0.3145609175730143,
+      "execution_ready": true
+    },
+    {
+      "id": "G12",
+      "capture": "20260801_014047_329",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "VERIFIED",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 3,
+      "representative_path": "results/card/run-3/20260801_014047_329",
+      "layout_found": true,
+      "method": "card-corners-best-effort",
+      "score": 0.8432898496869732,
+      "nodes": 96,
+      "peak_rss_mib": 94.203125,
+      "original_sha256": "d1503a387571b3670fc908eb0aa8ccaf5bb1999829789112a9e13fd324e5b3c3",
+      "output_sha256": "1e3adb7421b4fcda50dca7250961c0d235ebcc3fbc75f3d79e046d9cedcc20f3",
+      "roi": [
+        154,
+        290,
+        520,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.433059000107278,
+          "min": 19.167971999991096,
+          "max": 24.0357129999893
+        },
+        "detect": {
+          "median": 72.97082700006285,
+          "min": 72.23547199998848,
+          "max": 78.48387199999252
+        },
+        "solve": {
+          "median": 752.8265049999163,
+          "min": 751.1503480000101,
+          "max": 760.1420050000343
+        },
+        "post_preview": {
+          "median": 0.04248099992310017,
+          "min": 0.04048100004183652,
+          "max": 0.04725899998447858
+        },
+        "analysis": {
+          "median": 829.6814789999871,
+          "min": 825.837813000021,
+          "max": 832.4199579999458
+        }
+      },
+      "trial_analysis_ms": [
+        832.4199579999458,
+        825.837813000021,
+        829.6814789999871
+      ],
+      "geometry": {
+        "coverage": 0.9508224571044487,
+        "overlap": 0.004320946619690221,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.9779506271866123,
+        "perimeter_error": 0.6945402869315933,
+        "boundary_min_coverage": 0.9810869079839242,
+        "boundary_max_gap_ratio": 0.01891308656345268,
+        "boundary_angle_error": 1.3085508116541857
+      },
+      "selection_margin": 0.13031601840910878,
+      "execution_ready": true
+    },
+    {
+      "id": "G13",
+      "capture": "20260801_014107_758",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "VERIFIED",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 1,
+      "representative_path": "results/card/run-1/20260801_014107_758",
+      "layout_found": true,
+      "method": "card-corners-best-effort",
+      "score": 0.8048314001870518,
+      "nodes": 96,
+      "peak_rss_mib": 94.21875,
+      "original_sha256": "007be8928175578be41ad1c3fce0ff09bd779bc0b27a6b11e8777abc179bb03a",
+      "output_sha256": "171b9c6f39ee2da057cb7109fbf969e020572d8ec018f2ea27da47a45f6aebfb",
+      "roi": [
+        154,
+        290,
+        520,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.419985000013185,
+          "min": 19.375543000023754,
+          "max": 19.467114999997648
+        },
+        "detect": {
+          "median": 75.14197099999365,
+          "min": 74.83286699994096,
+          "max": 75.92971600001874
+        },
+        "solve": {
+          "median": 747.5485390000358,
+          "min": 744.0922230000524,
+          "max": 749.9981870000738
+        },
+        "post_preview": {
+          "median": 0.04229599994687305,
+          "min": 0.0422399999706613,
+          "max": 0.04879499999788095
+        },
+        "analysis": {
+          "median": 822.4302009999747,
+          "min": 819.2764340000167,
+          "max": 825.9701990000394
+        }
+      },
+      "trial_analysis_ms": [
+        822.4302009999747,
+        825.9701990000394,
+        819.2764340000167
+      ],
+      "geometry": {
+        "coverage": 0.9348771156967308,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.9736828693108,
+        "perimeter_error": 0.9975430706003615,
+        "boundary_min_coverage": 0.9666240741804002,
+        "boundary_max_gap_ratio": 0.029512500016060244,
+        "boundary_angle_error": 1.2880221981198232
+      },
+      "selection_margin": 0.10603983154762697,
+      "execution_ready": true
+    },
+    {
+      "id": "G14",
+      "capture": "20260801_014147_961",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "AMBIGUOUS",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 2,
+      "representative_path": "results/card/run-2/20260801_014147_961",
+      "layout_found": true,
+      "method": "card-joint-cpp-best-effort",
+      "score": 0.8277555218518411,
+      "nodes": 1992955,
+      "peak_rss_mib": 95.734375,
+      "original_sha256": "2c3c5aed3e2d3e89b02f9101a426dd6d28404e5108a278ac16510b891d081c4b",
+      "output_sha256": "57b1785c859c07f3c9819b4bd6cfc0269832a6ff7da2c1fb6bc47afe0b189ab4",
+      "roi": [
+        154,
+        290,
+        520,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.4305230000964,
+          "min": 19.40657900001952,
+          "max": 19.442280999896866
+        },
+        "detect": {
+          "median": 75.7209050000256,
+          "min": 75.54585200000474,
+          "max": 76.46561399997154
+        },
+        "solve": {
+          "median": 941.8662169999834,
+          "min": 941.0365629998978,
+          "max": 968.1369370000539
+        },
+        "post_preview": {
+          "median": 0.01681399999142741,
+          "min": 0.01624100002572959,
+          "max": 0.02072200004477054
+        },
+        "analysis": {
+          "median": 1017.6078440000538,
+          "min": 1016.5986559999283,
+          "max": 1044.6193650000168
+        }
+      },
+      "trial_analysis_ms": [
+        1044.6193650000168,
+        1017.6078440000538,
+        1016.5986559999283
+      ],
+      "geometry": {
+        "coverage": 0.9076713213913917,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.8258738194067119,
+        "perimeter_error": 1.006133971813869,
+        "boundary_min_coverage": 0.33735305354091333,
+        "boundary_max_gap_ratio": 0.6626469464590866,
+        "boundary_angle_error": 2.054436561687007
+      },
+      "selection_margin": 0.021509216838020095,
+      "execution_ready": false
+    },
+    {
+      "id": "G15",
+      "capture": "20260801_032606_145",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "VERIFIED",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 1,
+      "representative_path": "results/card/run-1/20260801_032606_145",
+      "layout_found": true,
+      "method": "card-corners",
+      "score": 0.8630619411573626,
+      "nodes": 1536,
+      "peak_rss_mib": 94.203125,
+      "original_sha256": "3471626d5d26ef3b436d68651a504775feb0a80f2672692bd7f8773e643b72fd",
+      "output_sha256": "ac1df196cb7de73f5e8669ab650cb6d94c0d5f4a339dd47ca790ced21ecbb593",
+      "roi": [
+        154,
+        290,
+        520,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.64648099999522,
+          "min": 19.635092000044096,
+          "max": 19.704757999988942
+        },
+        "detect": {
+          "median": 70.76146300005348,
+          "min": 70.6971470000326,
+          "max": 71.3605240000561
+        },
+        "solve": {
+          "median": 3686.141422999981,
+          "min": 3679.9058149999837,
+          "max": 3719.381207999959
+        },
+        "post_preview": {
+          "median": 0.07146099994770339,
+          "min": 0.06899900006374082,
+          "max": 0.07733200004622631
+        },
+        "analysis": {
+          "median": 3756.9802180000806,
+          "min": 3750.674422999964,
+          "max": 3790.8107310000787
+        }
+      },
+      "trial_analysis_ms": [
+        3756.9802180000806,
+        3750.674422999964,
+        3790.8107310000787
+      ],
+      "geometry": {
+        "coverage": 0.9810332340870684,
+        "overlap": 0.005246640379818138,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.9741016493813854,
+        "perimeter_error": 0.0068968361940668025,
+        "boundary_min_coverage": 1.0,
+        "boundary_max_gap_ratio": 0.0,
+        "boundary_angle_error": 1.3428712869788748
+      },
+      "selection_margin": 0.13135829055707604,
+      "execution_ready": true
+    },
+    {
+      "id": "G16",
+      "capture": "20260801_032800_758",
+      "kind": "plain",
+      "mode": "NORMAL",
+      "status": "BEST",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 1,
+      "representative_path": "results/normal/run-1/20260801_032800_758",
+      "layout_found": true,
+      "method": "cpp-best-effort",
+      "score": 0.677262328839928,
+      "nodes": 8594909,
+      "peak_rss_mib": 110.28125,
+      "original_sha256": "00d167a62d332078af708a1bb67d8e1dfd5741c21f963f4f9a81996768f6ee3a",
+      "output_sha256": "969c2acf4f1b554f2d0e79528c3b19df814bb233b4428e0d5c3f19954e127226",
+      "roi": [
+        154,
+        290,
+        520,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.369985999901473,
+          "min": 19.101880999869536,
+          "max": 19.376347999923382
+        },
+        "detect": {
+          "median": 71.89108300008229,
+          "min": 71.54259499998261,
+          "max": 72.10392100000718
+        },
+        "solve": {
+          "median": 422.03705099996114,
+          "min": 421.54611199998726,
+          "max": 422.16828999994505
+        },
+        "post_preview": {
+          "median": 82.70466899989515,
+          "min": 82.66755999989073,
+          "max": 88.29069700004766
+        },
+        "analysis": {
+          "median": 576.3175929998852,
+          "min": 576.2843149998389,
+          "max": 582.350070000075
+        }
+      },
+      "trial_analysis_ms": [
+        576.3175929998852,
+        576.2843149998389,
+        582.350070000075
+      ],
+      "geometry": {
+        "coverage": 0.8536152914720636,
+        "overlap": 0.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.6637443627929269,
+        "boundary_min_coverage": 0.393604479293323,
+        "boundary_max_gap_ratio": 0.4239303662006348,
+        "boundary_angle_error": 1.7828804512858902
+      },
+      "selection_margin": null,
+      "execution_ready": false
+    },
+    {
+      "id": "G17",
+      "capture": "20260801_045442_457",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "AMBIGUOUS",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 2,
+      "representative_path": "results/card/run-2/20260801_045442_457",
+      "layout_found": true,
+      "method": "card-corners-best-effort",
+      "score": 0.8297397783458609,
+      "nodes": 576,
+      "peak_rss_mib": 93.5,
+      "original_sha256": "99841cb907e5479fb9749608c994ff5e0b90cb4ddb244d0c59e42701445009b7",
+      "output_sha256": "2c208ce6a9746ae768862824626fbd39b5f829769e4eea9f327084bc37ad8e92",
+      "roi": [
+        154,
+        290,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 20.14143500002774,
+          "min": 20.107879999955003,
+          "max": 20.14532299995153
+        },
+        "detect": {
+          "median": 75.15715700003511,
+          "min": 74.40342999996119,
+          "max": 76.17413800005579
+        },
+        "solve": {
+          "median": 679.9960519999786,
+          "min": 677.9457850000199,
+          "max": 680.5568300000004
+        },
+        "post_preview": {
+          "median": 0.016740999967623793,
+          "min": 0.015185000052042597,
+          "max": 0.017925999941326154
+        },
+        "analysis": {
+          "median": 755.7319129999769,
+          "min": 752.3659559999487,
+          "max": 756.1853750000864
+        }
+      },
+      "trial_analysis_ms": [
+        756.1853750000864,
+        755.7319129999769,
+        752.3659559999487
+      ],
+      "geometry": {
+        "coverage": 0.9538217066581917,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.9590706627228283,
+        "perimeter_error": 0.9026976707680038,
+        "boundary_min_coverage": 0.9626306090575798,
+        "boundary_max_gap_ratio": 0.031102462992162662,
+        "boundary_angle_error": 0.8732564846845835
+      },
+      "selection_margin": 0.30685434409539547,
+      "execution_ready": false
+    },
+    {
+      "id": "G18",
+      "capture": "20260801_060309_056",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "VERIFIED",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 2,
+      "representative_path": "results/card/run-2/20260801_060309_056",
+      "layout_found": true,
+      "method": "card-corners-best-effort",
+      "score": 0.8900925309117154,
+      "nodes": 96,
+      "peak_rss_mib": 93.515625,
+      "original_sha256": "29c47797cc18b24cdc313f1849895ed411348cac32e91bb87008f0522e4d3505",
+      "output_sha256": "52a0ce8dd5f71a1522fdb0048f29fd6a2bd2321a5e777044d3f9a9f39a46edd5",
+      "roi": [
+        154,
+        290,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 20.09763900002781,
+          "min": 20.089602999973977,
+          "max": 20.10521299996526
+        },
+        "detect": {
+          "median": 73.83571900004426,
+          "min": 73.54644600002302,
+          "max": 74.61572299996533
+        },
+        "solve": {
+          "median": 265.665322000018,
+          "min": 265.4471040000317,
+          "max": 267.58589999997184
+        },
+        "post_preview": {
+          "median": 0.014426000007006223,
+          "min": 0.014426000007006223,
+          "max": 0.016017999996620347
+        },
+        "analysis": {
+          "median": 339.29884100007257,
+          "min": 339.22619400004805,
+          "max": 342.2160489999442
+        }
+      },
+      "trial_analysis_ms": [
+        342.2160489999442,
+        339.29884100007257,
+        339.22619400004805
+      ],
+      "geometry": {
+        "coverage": 0.9189185211350523,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.7594772708850042,
+        "perimeter_error": 0.7275867453668771,
+        "boundary_min_coverage": 0.41935217590152013,
+        "boundary_max_gap_ratio": 0.5454438145273008,
+        "boundary_angle_error": 1.8745909239690672
+      },
+      "selection_margin": 0.3390057535677258,
+      "execution_ready": true
+    },
+    {
+      "id": "G19",
+      "capture": "20260801_062401_006",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "VERIFIED",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 2,
+      "representative_path": "results/card/run-2/20260801_062401_006",
+      "layout_found": true,
+      "method": "card-corners-best-effort",
+      "score": 0.862938189273174,
+      "nodes": 96,
+      "peak_rss_mib": 93.484375,
+      "original_sha256": "045f7c11ecf4b0e767cabcac39ee27f141d76152a03c52b2435ba2baf5c66969",
+      "output_sha256": "807635a32f576abf53b9857ade56b38955f0fabae2d67298b03187ec136b7f70",
+      "roi": [
+        154,
+        290,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.359376000011252,
+          "min": 19.30500600008145,
+          "max": 19.468965999976717
+        },
+        "detect": {
+          "median": 70.1472890000332,
+          "min": 70.04893800001355,
+          "max": 70.65398299994285
+        },
+        "solve": {
+          "median": 402.13089600001695,
+          "min": 401.2143570000717,
+          "max": 403.5044490000246
+        },
+        "post_preview": {
+          "median": 0.015703999906691024,
+          "min": 0.015426000004481466,
+          "max": 0.016406999975515646
+        },
+        "analysis": {
+          "median": 472.29459200002566,
+          "min": 471.2789989999919,
+          "max": 474.1738579999719
+        }
+      },
+      "trial_analysis_ms": [
+        474.1738579999719,
+        472.29459200002566,
+        471.2789989999919
+      ],
+      "geometry": {
+        "coverage": 0.9206699346405228,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.8345239686483669,
+        "perimeter_error": 0.9863722637371503,
+        "boundary_min_coverage": 0.6391856498034502,
+        "boundary_max_gap_ratio": 0.34019697616529493,
+        "boundary_angle_error": 3.6348332091374425
+      },
+      "selection_margin": 0.24302389591367124,
+      "execution_ready": true
+    },
+    {
+      "id": "G20",
+      "capture": "20260801_062529_588",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "VERIFIED",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 1,
+      "representative_path": "results/card/run-1/20260801_062529_588",
+      "layout_found": true,
+      "method": "card-corners-best-effort",
+      "score": 0.8746534343833703,
+      "nodes": 96,
+      "peak_rss_mib": 93.484375,
+      "original_sha256": "6ab4cb6ca6bd9a3c3e93351bb9f05002702040181c4bf24d4dfddc1c2d24122a",
+      "output_sha256": "eaf549a93c48f37865763e5722643ac24f5e9930974bc02cf469a632107f945e",
+      "roi": [
+        154,
+        290,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.378597000013542,
+          "min": 19.33739499997955,
+          "max": 19.39724600003956
+        },
+        "detect": {
+          "median": 74.43926300004478,
+          "min": 73.89280999996117,
+          "max": 74.67707400007839
+        },
+        "solve": {
+          "median": 192.21659799995905,
+          "min": 191.96619400008785,
+          "max": 193.0963749999819
+        },
+        "post_preview": {
+          "median": 0.017092999996748404,
+          "min": 0.016296000012516743,
+          "max": 0.018037000018011895
+        },
+        "analysis": {
+          "median": 266.91170900005545,
+          "min": 265.87530000006154,
+          "max": 267.5527310000234
+        }
+      },
+      "trial_analysis_ms": [
+        266.91170900005545,
+        265.87530000006154,
+        267.5527310000234
+      ],
+      "geometry": {
+        "coverage": 0.9347976739281088,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.7641886352454451,
+        "perimeter_error": 0.9745699193734941,
+        "boundary_min_coverage": 0.43806725031569493,
+        "boundary_max_gap_ratio": 0.5266677348306714,
+        "boundary_angle_error": 2.2103163896163065
+      },
+      "selection_margin": 0.0,
+      "execution_ready": true
+    },
+    {
+      "id": "G21",
+      "capture": "20260801_065112_551",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "VERIFIED",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 1,
+      "representative_path": "results/card/run-1/20260801_065112_551",
+      "layout_found": true,
+      "method": "card-corners-best-effort",
+      "score": 0.838725090665728,
+      "nodes": 432,
+      "peak_rss_mib": 93.515625,
+      "original_sha256": "69338602d7b37999dca8ed6b3e5d85792e4fcd0f0a613b4a50e66b736417cf48",
+      "output_sha256": "3605ff9967d0d4d5769e5c983db21d1dbe4bfb4fc6560671fc298c225083a691",
+      "roi": [
+        154,
+        290,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 20.11682500005918,
+          "min": 19.91851399998268,
+          "max": 20.17117499997312
+        },
+        "detect": {
+          "median": 74.2664890000242,
+          "min": 73.92103200004385,
+          "max": 74.56455699991693
+        },
+        "solve": {
+          "median": 494.73804399997334,
+          "min": 493.58874500001093,
+          "max": 495.69939000002705
+        },
+        "post_preview": {
+          "median": 0.034405999940645415,
+          "min": 0.033628999972279416,
+          "max": 0.03486900004645577
+        },
+        "analysis": {
+          "median": 569.0389389999382,
+          "min": 567.5434060000271,
+          "max": 570.2988159999904
+        }
+      },
+      "trial_analysis_ms": [
+        569.0389389999382,
+        567.5434060000271,
+        570.2988159999904
+      ],
+      "geometry": {
+        "coverage": 0.9318308205635195,
+        "overlap": 0.0042789174493326745,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.576186383636854,
+        "perimeter_error": 0.3854059002021048,
+        "boundary_min_coverage": 0.0,
+        "boundary_max_gap_ratio": 1.0,
+        "boundary_angle_error": 2.5273630762231813
+      },
+      "selection_margin": 0.34033608366965595,
+      "execution_ready": true
+    },
+    {
+      "id": "G22",
+      "capture": "20260801_115637_683",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "AMBIGUOUS",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 3,
+      "representative_path": "results/card/run-3/20260801_115637_683",
+      "layout_found": true,
+      "method": "card-joint-cpp-best-effort",
+      "score": 0.761670145219355,
+      "nodes": 972058,
+      "peak_rss_mib": 111.75,
+      "original_sha256": "fb3d5eafd8c2364edef3b790b618d344a24fe30cf4845ff7bc6652cf17a6a5df",
+      "output_sha256": "69a690853c463dc268d1da40aaccef3993b68c420f273e9ea4079a8d6681f62e",
+      "roi": [
+        154,
+        306,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.96741999994356,
+          "min": 19.918050999990555,
+          "max": 20.06086200003665
+        },
+        "detect": {
+          "median": 73.53251999995791,
+          "min": 73.38748699999087,
+          "max": 73.7288880000051
+        },
+        "solve": {
+          "median": 4248.987902000067,
+          "min": 4230.632238999988,
+          "max": 4259.541829
+        },
+        "post_preview": {
+          "median": 0.04101700005776365,
+          "min": 0.03851799999665673,
+          "max": 0.04314699992846727
+        },
+        "analysis": {
+          "median": 4322.5635689999535,
+          "min": 4304.3996449999895,
+          "max": 4332.970333000048
+        }
+      },
+      "trial_analysis_ms": [
+        4332.970333000048,
+        4304.3996449999895,
+        4322.5635689999535
+      ],
+      "geometry": {
+        "coverage": 0.9077348318713451,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.7642414111972258,
+        "perimeter_error": 1.1883659472523436,
+        "boundary_min_coverage": 0.5786845452663587,
+        "boundary_max_gap_ratio": 0.39649008186595447,
+        "boundary_angle_error": 1.1020925913031272
+      },
+      "selection_margin": 0.0,
+      "execution_ready": false
+    },
+    {
+      "id": "G23",
+      "capture": "20260801_115701_361",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "AMBIGUOUS",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 3,
+      "representative_path": "results/card/run-3/20260801_115701_361",
+      "layout_found": true,
+      "method": "card-opposite-boundaries",
+      "score": 0.8374185217968682,
+      "nodes": 2937,
+      "peak_rss_mib": 93.5,
+      "original_sha256": "eb3304f016e56ca4b6974b593aad8de628dee07fd414e90849ba0b574736372d",
+      "output_sha256": "1c3fdbd32a33a741f0c2b7ae6e7f6303d432c243c80df6e58d29924fdc8dcdfc",
+      "roi": [
+        154,
+        306,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.849532999955954,
+          "min": 19.837996000092062,
+          "max": 19.871792000003552
+        },
+        "detect": {
+          "median": 71.30356199991184,
+          "min": 71.28415500005758,
+          "max": 71.34459900009915
+        },
+        "solve": {
+          "median": 4009.078187,
+          "min": 4004.949531999955,
+          "max": 4011.4639649999617
+        },
+        "post_preview": {
+          "median": 0.0619620000179566,
+          "min": 0.06025899995165673,
+          "max": 0.06218400005764124
+        },
+        "analysis": {
+          "median": 4080.4439329999695,
+          "min": 4076.354390000006,
+          "max": 4082.8100820000373
+        }
+      },
+      "trial_analysis_ms": [
+        4076.354390000006,
+        4082.8100820000373,
+        4080.4439329999695
+      ],
+      "geometry": {
+        "coverage": 0.9619263255933456,
+        "overlap": 0.005427626296688827,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.9655550541256975,
+        "perimeter_error": 0.6981436123599961,
+        "boundary_min_coverage": 0.972617986785422,
+        "boundary_max_gap_ratio": 0.02738201321457796,
+        "boundary_angle_error": 1.1223977242224208e-14
+      },
+      "selection_margin": 0.00025915047558866533,
+      "execution_ready": false
+    },
+    {
+      "id": "G24",
+      "capture": "20260801_115722_048",
+      "kind": "plain",
+      "mode": "NORMAL",
+      "status": "BEST",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 1,
+      "representative_path": "results/normal/run-1/20260801_115722_048",
+      "layout_found": true,
+      "method": "cpp-best-effort",
+      "score": 0.4626464823311963,
+      "nodes": 5719091,
+      "peak_rss_mib": 107.25,
+      "original_sha256": "569e96c9eafeeddd7fd73c53c44e9e8a32a4f74f4f633cbb73a4f5cc31d72685",
+      "output_sha256": "c1e6feb2acad1edd72dda7def79601eaefd01b921f7c0b7ee0303702c90cacd6",
+      "roi": [
+        154,
+        306,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.63837300013438,
+          "min": 19.629213999905915,
+          "max": 19.76771599993299
+        },
+        "detect": {
+          "median": 72.15709299998707,
+          "min": 71.81376800008366,
+          "max": 73.03233899983752
+        },
+        "solve": {
+          "median": 245.52567399996406,
+          "min": 244.99581199984277,
+          "max": 245.8891549999862
+        },
+        "post_preview": {
+          "median": 66.8017550001423,
+          "min": 66.24255700012327,
+          "max": 66.84483000003638
+        },
+        "analysis": {
+          "median": 384.1842720000841,
+          "min": 383.3954619999531,
+          "max": 385.723248999966
+        }
+      },
+      "trial_analysis_ms": [
+        384.1842720000841,
+        383.3954619999531,
+        385.723248999966
+      ],
+      "geometry": {
+        "coverage": 0.9076852546469951,
+        "overlap": 0.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.8040737322045648,
+        "boundary_min_coverage": 0.0,
+        "boundary_max_gap_ratio": 1.0,
+        "boundary_angle_error": 7.999999999999998
+      },
+      "selection_margin": null,
+      "execution_ready": false
+    },
+    {
+      "id": "G25",
+      "capture": "20260801_121207_250",
+      "kind": "plain",
+      "mode": "NORMAL",
+      "status": "BEST",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 2,
+      "representative_run": 3,
+      "representative_path": "results/normal/run-3/20260801_121207_250",
+      "layout_found": true,
+      "method": "last-resort-grid",
+      "score": 0.1425760992309042,
+      "nodes": 5764,
+      "peak_rss_mib": 93.5,
+      "original_sha256": "89097e33d46caf1bf72ee6ae643e3ffa93d043aeb3a0b5ea90947ede04685b43",
+      "output_sha256": "647e5b0615047c8140b9dff49ed09ac2874275843ba6a44c7917ebd74972069a",
+      "roi": [
+        154,
+        306,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.951733999960197,
+          "min": 19.81571500004975,
+          "max": 19.965966000199842
+        },
+        "detect": {
+          "median": 72.89208899987898,
+          "min": 72.76810400003342,
+          "max": 73.0918719998499
+        },
+        "solve": {
+          "median": 1034.1435469999851,
+          "min": 1033.394595000118,
+          "max": 1037.56845099997
+        },
+        "post_preview": {
+          "median": 32.418392000181484,
+          "min": 32.38334399998166,
+          "max": 32.505580999895756
+        },
+        "analysis": {
+          "median": 1139.6187629998167,
+          "min": 1138.7922649998927,
+          "max": 1142.754947000185
+        }
+      },
+      "trial_analysis_ms": [
+        1142.754947000185,
+        1138.7922649998927,
+        1139.6187629998167
+      ],
+      "geometry": {
+        "coverage": 0.36271906532129583,
+        "overlap": 0.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.0,
+        "boundary_min_coverage": 0.0,
+        "boundary_max_gap_ratio": 1.0,
+        "boundary_angle_error": 9.298200501573147
+      },
+      "selection_margin": null,
+      "execution_ready": false
+    },
+    {
+      "id": "G26",
+      "capture": "20260801_184457_395",
+      "kind": "plain",
+      "mode": "NORMAL",
+      "status": "BEST",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 2,
+      "representative_path": "results/normal/run-2/20260801_184457_395",
+      "layout_found": true,
+      "method": "cpp-best-effort",
+      "score": 0.43486920668442886,
+      "nodes": 1616553,
+      "peak_rss_mib": 98.28125,
+      "original_sha256": "85df50ff33639c514abf66d9f3ccb7ae6a97d1e4147cc202402023ecec8a4615",
+      "output_sha256": "abd4bcb40af0a6abeabe50ec7f892cf7bad9ddf7d0a2ee87fba1d1e2062e1221",
+      "roi": [
+        92,
+        281,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.746251000015036,
+          "min": 19.548740999880465,
+          "max": 19.8170090000076
+        },
+        "detect": {
+          "median": 75.24691499997971,
+          "min": 74.53903600003287,
+          "max": 75.39484800008722
+        },
+        "solve": {
+          "median": 123.8126089999696,
+          "min": 123.73499899990748,
+          "max": 125.79829000014797
+        },
+        "post_preview": {
+          "median": 53.47634600002493,
+          "min": 53.42167200001313,
+          "max": 53.499248999969495
+        },
+        "analysis": {
+          "median": 252.70670600002632,
+          "min": 251.69570699995347,
+          "max": 254.5215510001526
+        }
+      },
+      "trial_analysis_ms": [
+        254.5215510001526,
+        252.70670600002632,
+        251.69570699995347
+      ],
+      "geometry": {
+        "coverage": 0.7546733879437093,
+        "overlap": 0.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.10754503803323431,
+        "boundary_min_coverage": 0.3101340656797296,
+        "boundary_max_gap_ratio": 0.679611650485437,
+        "boundary_angle_error": 5.102165252358174
+      },
+      "selection_margin": null,
+      "execution_ready": false
+    },
+    {
+      "id": "G27",
+      "capture": "20260801_185703_491",
+      "kind": "joker",
+      "mode": "CARD",
+      "status": "VERIFIED",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 3,
+      "representative_path": "results/card/run-3/20260801_185703_491",
+      "layout_found": true,
+      "method": "card-joint-cpp-best-effort",
+      "score": 0.8613761595382536,
+      "nodes": 2097738,
+      "peak_rss_mib": 96.78125,
+      "original_sha256": "cc834ff6420e2747cb5367326da6f704e503bc5971b02882def6dc5b01cc9bcd",
+      "output_sha256": "d570306a673307523eb56350d854cd1d29211adb07111fa624bcd3344d5f8699",
+      "roi": [
+        92,
+        281,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.937346000006073,
+          "min": 19.62444499997673,
+          "max": 19.98743799993008
+        },
+        "detect": {
+          "median": 77.58577699996749,
+          "min": 77.27443199996742,
+          "max": 77.95617800002219
+        },
+        "solve": {
+          "median": 4336.763708000035,
+          "min": 4312.446157000068,
+          "max": 4398.922285000026
+        },
+        "post_preview": {
+          "median": 0.02392500005043985,
+          "min": 0.023758999986966955,
+          "max": 0.023999999939405825
+        },
+        "analysis": {
+          "median": 4414.743885999997,
+          "min": 4390.055693000022,
+          "max": 4476.220642000044
+        }
+      },
+      "trial_analysis_ms": [
+        4476.220642000044,
+        4390.055693000022,
+        4414.743885999997
+      ],
+      "geometry": {
+        "coverage": 0.9382716049382716,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.9728406557198364,
+        "perimeter_error": 1.0554440608685178,
+        "boundary_min_coverage": 0.9386784353375097,
+        "boundary_max_gap_ratio": 0.039117509968077974,
+        "boundary_angle_error": 1.4253298024365118
+      },
+      "selection_margin": 0.1360579104342845,
+      "execution_ready": true
+    },
+    {
+      "id": "G28",
+      "capture": "20260801_192239_246",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "GEOMETRY_ONLY",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 1,
+      "representative_path": "results/card/run-1/20260801_192239_246",
+      "layout_found": true,
+      "method": "card-corners-best-effort",
+      "score": 0.8373749293678813,
+      "nodes": 288,
+      "peak_rss_mib": 93.5,
+      "original_sha256": "96a70d015fd2a0d7af0161ce05359ff6bbf05de3ad9686ba0fcd24018f91afef",
+      "output_sha256": "5f1a07c3e2ed16ce6f4632c940157346f53c1b597318f43cd6f7be511209c08e",
+      "roi": [
+        92,
+        281,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 20.141176000038286,
+          "min": 20.141101000035633,
+          "max": 20.149693999996998
+        },
+        "detect": {
+          "median": 76.7034609999655,
+          "min": 76.64970199994059,
+          "max": 76.98256700007278
+        },
+        "solve": {
+          "median": 369.5139039999731,
+          "min": 368.73535899997023,
+          "max": 370.53819599998405
+        },
+        "post_preview": {
+          "median": 0.018073999967782584,
+          "min": 0.017147999983535556,
+          "max": 0.021537000066018663
+        },
+        "analysis": {
+          "median": 446.51454500001364,
+          "min": 445.45596799991927,
+          "max": 447.20943499999066
+        }
+      },
+      "trial_analysis_ms": [
+        446.51454500001364,
+        447.20943499999066,
+        445.45596799991927
+      ],
+      "geometry": {
+        "coverage": 0.9065600072311482,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.47796306364320806,
+        "perimeter_error": 0.6596781999550638,
+        "boundary_min_coverage": 0.46577544055491504,
+        "boundary_max_gap_ratio": 0.5228190795741045,
+        "boundary_angle_error": 1.8776327975613447
+      },
+      "selection_margin": 0.3090541319447715,
+      "execution_ready": false
+    },
+    {
+      "id": "G29",
+      "capture": "20260801_192916_754",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "AMBIGUOUS",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 2,
+      "representative_path": "results/card/run-2/20260801_192916_754",
+      "layout_found": true,
+      "method": "card-corners-best-effort",
+      "score": 0.8610069359427579,
+      "nodes": 96,
+      "peak_rss_mib": 93.53125,
+      "original_sha256": "ee1e2b90f3d811c9efb27a9082fd8a738567e8a981e3acb4025c56afd3f3f508",
+      "output_sha256": "347345e3ef4d996229fe7c68c9ced20d48ee37372d2864d48e4a889c3889dc13",
+      "roi": [
+        92,
+        281,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.81949599996824,
+          "min": 19.80838599990875,
+          "max": 19.831588999977612
+        },
+        "detect": {
+          "median": 72.32213499992213,
+          "min": 71.69272200007981,
+          "max": 73.49041099996612
+        },
+        "solve": {
+          "median": 429.94172299995626,
+          "min": 429.1715709999835,
+          "max": 431.6326210000625
+        },
+        "post_preview": {
+          "median": 0.04168399993886851,
+          "min": 0.03588800007037207,
+          "max": 0.042498999960116635
+        },
+        "analysis": {
+          "median": 501.6769439999962,
+          "min": 501.529593999976,
+          "max": 505.1647159999675
+        }
+      },
+      "trial_analysis_ms": [
+        505.1647159999675,
+        501.6769439999962,
+        501.529593999976
+      ],
+      "geometry": {
+        "coverage": 0.9065515272623466,
+        "overlap": 0.005095632315158436,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.7412084390680693,
+        "perimeter_error": 0.5162950888168736,
+        "boundary_min_coverage": 0.30438175379772886,
+        "boundary_max_gap_ratio": 0.6901874233972708,
+        "boundary_angle_error": 2.843804268781263
+      },
+      "selection_margin": 0.24856579090187014,
+      "execution_ready": false
+    },
+    {
+      "id": "G30",
+      "capture": "20260801_214215_813",
+      "kind": "plain",
+      "mode": "NORMAL",
+      "status": "BEST",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 3,
+      "representative_path": "results/normal/run-3/20260801_214215_813",
+      "layout_found": true,
+      "method": "cpp-best-effort",
+      "score": 0.8366911296817633,
+      "nodes": 2655271,
+      "peak_rss_mib": 94.25,
+      "original_sha256": "839ad616a93f693777ed118adec55b192fc8df2535e41115f950a0ec1d369528",
+      "output_sha256": "71cda82c88ad25941f71008f8c435abf439f7bc213a20b864783335b850a6324",
+      "roi": [
+        92,
+        281,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 20.789234999938344,
+          "min": 20.758001999865883,
+          "max": 20.86188199996286
+        },
+        "detect": {
+          "median": 77.65904999996565,
+          "min": 77.20397699995374,
+          "max": 77.76510999997299
+        },
+        "solve": {
+          "median": 164.7361580000961,
+          "min": 164.67091899994557,
+          "max": 167.17627399998491
+        },
+        "post_preview": {
+          "median": 57.312976000048366,
+          "min": 57.21796500006349,
+          "max": 57.364767000080974
+        },
+        "analysis": {
+          "median": 299.80079599999954,
+          "min": 299.61317300012524,
+          "max": 301.693226999987
+        }
+      },
+      "trial_analysis_ms": [
+        299.61317300012524,
+        301.693226999987,
+        299.80079599999954
+      ],
+      "geometry": {
+        "coverage": 0.9136438494995989,
+        "overlap": 0.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.7608398597860695,
+        "boundary_min_coverage": 0.8148677407567634,
+        "boundary_max_gap_ratio": 0.18513225924323667,
+        "boundary_angle_error": 2.840321982111607
+      },
+      "selection_margin": null,
+      "execution_ready": false
+    },
+    {
+      "id": "G31",
+      "capture": "20260801_215755_916",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "VERIFIED",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 3,
+      "representative_path": "results/card/run-3/20260801_215755_916",
+      "layout_found": true,
+      "method": "card-corners",
+      "score": 0.9053398662951098,
+      "nodes": 1536,
+      "peak_rss_mib": 93.53125,
+      "original_sha256": "9a987b1bd7a6e75f72995fdb69ba9fd93b267fa4bd1e72a767eedd25c3b352e3",
+      "output_sha256": "258e356555fea167f01936675408f768ae3d3d61afa52d718fa12e1c5d69af50",
+      "roi": [
+        92,
+        281,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 20.076066000001447,
+          "min": 20.06715900006384,
+          "max": 20.130638000068757
+        },
+        "detect": {
+          "median": 72.53553999998985,
+          "min": 72.20784200001162,
+          "max": 72.74185000005673
+        },
+        "solve": {
+          "median": 3982.5358719999713,
+          "min": 3978.271841000037,
+          "max": 3983.865519999995
+        },
+        "post_preview": {
+          "median": 0.07696199998008524,
+          "min": 0.07290600001397252,
+          "max": 0.07968400007030141
+        },
+        "analysis": {
+          "median": 4055.354684000008,
+          "min": 4050.880287000041,
+          "max": 4056.1530460000768
+        }
+      },
+      "trial_analysis_ms": [
+        4050.880287000041,
+        4056.1530460000768,
+        4055.354684000008
+      ],
+      "geometry": {
+        "coverage": 0.9788969895352874,
+        "overlap": 0.0021904809138851692,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.9859202129354719,
+        "perimeter_error": 0.2783568983702006,
+        "boundary_min_coverage": 0.9854585326404377,
+        "boundary_max_gap_ratio": 0.010086255287090125,
+        "boundary_angle_error": 0.7513318096175736
+      },
+      "selection_margin": 0.099705501732547,
+      "execution_ready": true
+    },
+    {
+      "id": "G32",
+      "capture": "20260801_215940_303",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "VERIFIED",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 3,
+      "representative_path": "results/card/run-3/20260801_215940_303",
+      "layout_found": true,
+      "method": "card-corners-best-effort",
+      "score": 0.8803005211079165,
+      "nodes": 96,
+      "peak_rss_mib": 93.515625,
+      "original_sha256": "6cb5047d73645a5e00a0d50a524e146355ec7cfaddbbd87877edb96faa29be16",
+      "output_sha256": "acccb9f971f97057819156e9fbc1c7b2f9fced51ecda9a3c6f452bf01218d104",
+      "roi": [
+        92,
+        281,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 20.173620000036863,
+          "min": 20.169045999978152,
+          "max": 20.251950999977453
+        },
+        "detect": {
+          "median": 73.5256869999148,
+          "min": 73.48861299999498,
+          "max": 73.5378159999982
+        },
+        "solve": {
+          "median": 500.9577350000427,
+          "min": 500.1494589999993,
+          "max": 501.76684999996723
+        },
+        "post_preview": {
+          "median": 0.040832000081536535,
+          "min": 0.037722000001849665,
+          "max": 0.04129599994939781
+        },
+        "analysis": {
+          "median": 574.4876439999871,
+          "min": 573.7159779999956,
+          "max": 575.3423879999673
+        }
+      },
+      "trial_analysis_ms": [
+        573.7159779999956,
+        575.3423879999673,
+        574.4876439999871
+      ],
+      "geometry": {
+        "coverage": 0.9613410408368147,
+        "overlap": 0.0026231419411250363,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.9749575912230684,
+        "perimeter_error": 0.8044920006704266,
+        "boundary_min_coverage": 0.9645843386746894,
+        "boundary_max_gap_ratio": 0.03379765228193876,
+        "boundary_angle_error": 0.6363067393382409
+      },
+      "selection_margin": 0.27668904788896365,
+      "execution_ready": true
+    },
+    {
+      "id": "G33",
+      "capture": "20260801_224410_692",
+      "kind": "joker",
+      "mode": "CARD",
+      "status": "AMBIGUOUS",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 3,
+      "representative_path": "results/card/run-3/20260801_224410_692",
+      "layout_found": true,
+      "method": "card-joint-cpp-best-effort",
+      "score": 0.8587302529555765,
+      "nodes": 1917700,
+      "peak_rss_mib": 96.734375,
+      "original_sha256": "02c61a43985c120010ffe7187c1d7f1c04b002aa1de1acd0598e2aad25e1f39e",
+      "output_sha256": "fa17ba53adf3122e39d31b40937f4b1f10782529429a4ef9a0757763f1bd2e78",
+      "roi": [
+        92,
+        281,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.60227799997938,
+          "min": 19.597168000018428,
+          "max": 19.655092999983026
+        },
+        "detect": {
+          "median": 74.44533699992917,
+          "min": 74.31469100004051,
+          "max": 74.52627899999698
+        },
+        "solve": {
+          "median": 3665.68801599999,
+          "min": 3664.909054999953,
+          "max": 3678.3051610000257
+        },
+        "post_preview": {
+          "median": 0.0243700000055469,
+          "min": 0.023907000013423385,
+          "max": 0.025684999968689226
+        },
+        "analysis": {
+          "median": 3740.1572599999326,
+          "min": 3739.4597039999553,
+          "max": 3752.645537000035
+        }
+      },
+      "trial_analysis_ms": [
+        3752.645537000035,
+        3739.4597039999553,
+        3740.1572599999326
+      ],
+      "geometry": {
+        "coverage": 0.920774647887324,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.9630446608529989,
+        "perimeter_error": 0.9830480940182218,
+        "boundary_min_coverage": 0.9355582967187976,
+        "boundary_max_gap_ratio": 0.03840096899316477,
+        "boundary_angle_error": 1.8857703074208005
+      },
+      "selection_margin": 0.17511325439242242,
+      "execution_ready": false
+    },
+    {
+      "id": "G34",
+      "capture": "20260801_224437_055",
+      "kind": "joker",
+      "mode": "CARD",
+      "status": "VERIFIED",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 1,
+      "representative_path": "results/card/run-1/20260801_224437_055",
+      "layout_found": true,
+      "method": "card-joint-cpp-best-effort",
+      "score": 0.8518884418479151,
+      "nodes": 2211734,
+      "peak_rss_mib": 126.15625,
+      "original_sha256": "59724e1c47a83649355e8fafd32186a3f322f8c624a96cde74f92d39f95f713c",
+      "output_sha256": "98788390234c4069715ac888a1dd12dfa097f311b4c8018cd622abf9222ba4fb",
+      "roi": [
+        92,
+        281,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.667277000053218,
+          "min": 19.638667000094756,
+          "max": 19.67383199996675
+        },
+        "detect": {
+          "median": 76.05300900002021,
+          "min": 75.85979200007387,
+          "max": 76.20506199998545
+        },
+        "solve": {
+          "median": 4712.780929000019,
+          "min": 4711.613080999996,
+          "max": 4712.913748999995
+        },
+        "post_preview": {
+          "median": 0.03896299995176378,
+          "min": 0.03873999992265453,
+          "max": 0.06183300001794123
+        },
+        "analysis": {
+          "median": 4788.679461000015,
+          "min": 4787.727923000034,
+          "max": 4789.157773999932
+        }
+      },
+      "trial_analysis_ms": [
+        4788.679461000015,
+        4789.157773999932,
+        4787.727923000034
+      ],
+      "geometry": {
+        "coverage": 0.8988670235178452,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.758044451658057,
+        "perimeter_error": 0.982312647835017,
+        "boundary_min_coverage": 0.6074913266349528,
+        "boundary_max_gap_ratio": 0.38958494094550017,
+        "boundary_angle_error": 1.552255323291618
+      },
+      "selection_margin": 0.23492570536833757,
+      "execution_ready": true
+    },
+    {
+      "id": "G35",
+      "capture": "20260801_225239_323",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "VERIFIED",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 3,
+      "representative_path": "results/card/run-3/20260801_225239_323",
+      "layout_found": true,
+      "method": "card-corners-best-effort",
+      "score": 0.8009756057736143,
+      "nodes": 72,
+      "peak_rss_mib": 93.515625,
+      "original_sha256": "c9189b9a1341432609dc37c44157149870921e6136ecf99dacf89764f9b2fc46",
+      "output_sha256": "5dca45c4c554a2477c8a5765ded09dde926b4892fca36b312975b4e8fa12aa54",
+      "roi": [
+        92,
+        281,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.791701000031026,
+          "min": 19.758608000074673,
+          "max": 19.804681999971763
+        },
+        "detect": {
+          "median": 76.54774100001305,
+          "min": 75.87797700000465,
+          "max": 77.20263600003818
+        },
+        "solve": {
+          "median": 201.8978019999622,
+          "min": 200.28951900007996,
+          "max": 203.69650999998612
+        },
+        "post_preview": {
+          "median": 0.014591999956792279,
+          "min": 0.013834000014867343,
+          "max": 0.015777000044181477
+        },
+        "analysis": {
+          "median": 279.11427200001526,
+          "min": 276.1820880000414,
+          "max": 280.26002800004335
+        }
+      },
+      "trial_analysis_ms": [
+        276.1820880000414,
+        280.26002800004335,
+        279.11427200001526
+      ],
+      "geometry": {
+        "coverage": 0.9463150420265205,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.7738041624071167,
+        "perimeter_error": 0.7691681451967625,
+        "boundary_min_coverage": 0.0,
+        "boundary_max_gap_ratio": 1.0,
+        "boundary_angle_error": 2.72830566523251
+      },
+      "selection_margin": 0.0,
+      "execution_ready": true
+    },
+    {
+      "id": "G36",
+      "capture": "20260801_225517_181",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "VERIFIED",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 1,
+      "representative_path": "results/card/run-1/20260801_225517_181",
+      "layout_found": true,
+      "method": "card-corners",
+      "score": 0.8749260699114481,
+      "nodes": 96,
+      "peak_rss_mib": 93.5,
+      "original_sha256": "681958aa779b751803b3f2be506aa70d08b8bb73e3b30b76c4ed077cadf514a5",
+      "output_sha256": "c2495c30db2ae367a9a400517e8310d4da09ef70578c1acf5546ec21b487b4a0",
+      "roi": [
+        92,
+        281,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.66579500003718,
+          "min": 19.407412000077784,
+          "max": 19.699295000009442
+        },
+        "detect": {
+          "median": 71.77659100000255,
+          "min": 71.56537299999854,
+          "max": 72.2379329999967
+        },
+        "solve": {
+          "median": 468.35948099999314,
+          "min": 464.3234630000279,
+          "max": 468.3972420000373
+        },
+        "post_preview": {
+          "median": 0.039442999991479155,
+          "min": 0.03635099994880875,
+          "max": 0.04207300003145065
+        },
+        "analysis": {
+          "median": 539.9989659999846,
+          "min": 536.139497000022,
+          "max": 540.6394870000213
+        }
+      },
+      "trial_analysis_ms": [
+        539.9989659999846,
+        540.6394870000213,
+        536.139497000022
+      ],
+      "geometry": {
+        "coverage": 0.9434767759562842,
+        "overlap": 0.0017076502732240437,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.9703732551730686,
+        "perimeter_error": 0.7947692930073209,
+        "boundary_min_coverage": 0.9397057730663304,
+        "boundary_max_gap_ratio": 0.0365796654806866,
+        "boundary_angle_error": 3.151771976084194
+      },
+      "selection_margin": 0.2829145073111152,
+      "execution_ready": true
+    },
+    {
+      "id": "G37",
+      "capture": "20260801_225637_008",
+      "kind": "joker",
+      "mode": "CARD",
+      "status": "AMBIGUOUS",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 3,
+      "representative_path": "results/card/run-3/20260801_225637_008",
+      "layout_found": true,
+      "method": "card-joint-cpp-best-effort",
+      "score": 0.743143621444377,
+      "nodes": 2059356,
+      "peak_rss_mib": 97.234375,
+      "original_sha256": "d25b2f7cc1af3ee69f24fa0549711ae5377f3e529d76d61ec235abe91d69333a",
+      "output_sha256": "dd1c543b7bf363d8478d83bcffc3e77f7b93f585f12fc8fbe9dd368c5adf2455",
+      "roi": [
+        92,
+        281,
+        505,
+        742
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.633870000006937,
+          "min": 19.57068700005493,
+          "max": 19.649814000104016
+        },
+        "detect": {
+          "median": 72.3377279999795,
+          "min": 71.85110700004316,
+          "max": 72.93966199995339
+        },
+        "solve": {
+          "median": 4366.206819000013,
+          "min": 4339.624549000064,
+          "max": 4372.856077000051
+        },
+        "post_preview": {
+          "median": 0.02496199999768578,
+          "min": 0.024295999992318684,
+          "max": 0.028183999916109315
+        },
+        "analysis": {
+          "median": 4438.082222000048,
+          "min": 4411.987239000041,
+          "max": 4445.823922999921
+        }
+      },
+      "trial_analysis_ms": [
+        4445.823922999921,
+        4411.987239000041,
+        4438.082222000048
+      ],
+      "geometry": {
+        "coverage": 0.9137431048069345,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.9119051678505327,
+        "perimeter_error": 1.0250960512789977,
+        "boundary_min_coverage": 0.6298414208669205,
+        "boundary_max_gap_ratio": 0.36485982954604107,
+        "boundary_angle_error": 0.9440643658300549
+      },
+      "selection_margin": 0.0593148734604545,
+      "execution_ready": false
+    },
+    {
+      "id": "G38",
+      "capture": "20260802_013324_510",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "VERIFIED",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 3,
+      "representative_path": "results/card/run-3/20260802_013324_510",
+      "layout_found": true,
+      "method": "card-corners-best-effort",
+      "score": 0.848180256899461,
+      "nodes": 864,
+      "peak_rss_mib": 99.3125,
+      "original_sha256": "ae0e6279b5c19939c43e2382d7e5c629b14947474e8c7e1d85658d80def8619a",
+      "output_sha256": "3eeb3e1ae152223e847ff1a722172edff801dedcf11bd7fe4813dc0c46b4a158",
+      "roi": [
+        61,
+        244,
+        550,
+        829
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 20.34596800001509,
+          "min": 20.34133799998017,
+          "max": 20.444947999976648
+        },
+        "detect": {
+          "median": 90.18622500002493,
+          "min": 89.4087030000037,
+          "max": 90.62940199999048
+        },
+        "solve": {
+          "median": 533.6121560000038,
+          "min": 533.4482560000424,
+          "max": 534.7208199999613
+        },
+        "post_preview": {
+          "median": 0.03436899999087473,
+          "min": 0.032981000003928784,
+          "max": 0.03601800005981204
+        },
+        "analysis": {
+          "median": 624.162503999969,
+          "min": 623.6688500000582,
+          "max": 624.2775760000541
+        }
+      },
+      "trial_analysis_ms": [
+        623.6688500000582,
+        624.2775760000541,
+        624.162503999969
+      ],
+      "geometry": {
+        "coverage": 0.9147319347319347,
+        "overlap": 0.002533022533022533,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.7981987872920908,
+        "perimeter_error": 0.6993431532337546,
+        "boundary_min_coverage": 0.9170493916017147,
+        "boundary_max_gap_ratio": 0.06429624903952112,
+        "boundary_angle_error": 1.1387931131143585
+      },
+      "selection_margin": 0.3262550343498637,
+      "execution_ready": true
+    },
+    {
+      "id": "G39",
+      "capture": "20260802_014532_605",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "VERIFIED",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 3,
+      "representative_path": "results/card/run-3/20260802_014532_605",
+      "layout_found": true,
+      "method": "card-corners",
+      "score": 0.8495214107244753,
+      "nodes": 96,
+      "peak_rss_mib": 99.296875,
+      "original_sha256": "a8aa6b9be59b5c068ad702aaeb49b82034ebbd5f5560ce34bbcbf1cb33594de5",
+      "output_sha256": "ec8c10d132adf862a330f96e14668a7d8f36951041ff9d0dab4d8d9368757fa0",
+      "roi": [
+        61,
+        244,
+        550,
+        829
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 20.39039400006004,
+          "min": 20.30943199997637,
+          "max": 20.40246699993986
+        },
+        "detect": {
+          "median": 81.23957899999823,
+          "min": 81.0773779999181,
+          "max": 82.04439600001479
+        },
+        "solve": {
+          "median": 451.21171100004176,
+          "min": 450.5552069999794,
+          "max": 453.51574200003597
+        },
+        "post_preview": {
+          "median": 0.03946200001792022,
+          "min": 0.035555000067688525,
+          "max": 0.041277000036643585
+        },
+        "analysis": {
+          "median": 532.3303659999965,
+          "min": 531.8303410000453,
+          "max": 535.5996000000687
+        }
+      },
+      "trial_analysis_ms": [
+        531.8303410000453,
+        535.5996000000687,
+        532.3303659999965
+      ],
+      "geometry": {
+        "coverage": 0.964337333198884,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.9873078462321185,
+        "perimeter_error": 0.6778293461470309,
+        "boundary_min_coverage": 0.9864826091793368,
+        "boundary_max_gap_ratio": 0.006773094617109619,
+        "boundary_angle_error": 0.7355616703811584
+      },
+      "selection_margin": 0.24977314163898634,
+      "execution_ready": true
+    },
+    {
+      "id": "G40",
+      "capture": "20260802_014544_004",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "VERIFIED",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 3,
+      "representative_path": "results/card/run-3/20260802_014544_004",
+      "layout_found": true,
+      "method": "card-corners-best-effort",
+      "score": 0.8538331438800149,
+      "nodes": 1536,
+      "peak_rss_mib": 99.28125,
+      "original_sha256": "936ea2f347076d3ecee0064bd14586a9f13dbf847bae08985637f388ded9a4a2",
+      "output_sha256": "babc52ab90a22fd3761f0e0d40ee5ce0fe925fff9c3242a3be81f701f779aaef",
+      "roi": [
+        61,
+        244,
+        550,
+        829
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 20.302136000054816,
+          "min": 20.129084000018338,
+          "max": 20.370338000020638
+        },
+        "detect": {
+          "median": 82.53616499996497,
+          "min": 82.4263519999704,
+          "max": 82.75925500004178
+        },
+        "solve": {
+          "median": 3791.803394999988,
+          "min": 3777.5094290000197,
+          "max": 3885.0501059999942
+        },
+        "post_preview": {
+          "median": 0.030906999995750084,
+          "min": 0.030685000069752277,
+          "max": 0.03560999994078884
+        },
+        "analysis": {
+          "median": 3874.370466999949,
+          "min": 3859.96646600006,
+          "max": 3967.844970999977
+        }
+      },
+      "trial_analysis_ms": [
+        3967.844970999977,
+        3859.96646600006,
+        3874.370466999949
+      ],
+      "geometry": {
+        "coverage": 0.933966814586147,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.9830257424674653,
+        "perimeter_error": 0.8920741703450291,
+        "boundary_min_coverage": 0.9204348326215961,
+        "boundary_max_gap_ratio": 0.0486501285869786,
+        "boundary_angle_error": 2.3697035729073
+      },
+      "selection_margin": 0.08775455485780614,
+      "execution_ready": true
+    },
+    {
+      "id": "G41",
+      "capture": "20260802_014700_604",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "VERIFIED",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 1,
+      "representative_path": "results/card/run-1/20260802_014700_604",
+      "layout_found": true,
+      "method": "card-corners-best-effort",
+      "score": 0.8514404297934042,
+      "nodes": 1536,
+      "peak_rss_mib": 99.265625,
+      "original_sha256": "c39d62a218265bdc94f37ccd794671ea173087ac8d540453cf45131675b5af4e",
+      "output_sha256": "9868d03812e01a53940dd4f3f4af6162ca94dc32a9a7b50a9ac98093af426b88",
+      "roi": [
+        61,
+        244,
+        550,
+        829
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 20.28380299998389,
+          "min": 20.14628699998866,
+          "max": 20.33450500005074
+        },
+        "detect": {
+          "median": 81.17333900008816,
+          "min": 80.87595599999986,
+          "max": 81.746163000048
+        },
+        "solve": {
+          "median": 3787.8443399999924,
+          "min": 3787.3322990000133,
+          "max": 3788.52370300001
+        },
+        "post_preview": {
+          "median": 0.03062899997985369,
+          "min": 0.02959199991892092,
+          "max": 0.034851000009439304
+        },
+        "analysis": {
+          "median": 3869.1080539999803,
+          "min": 3869.0483080000604,
+          "max": 3869.434510000019
+        }
+      },
+      "trial_analysis_ms": [
+        3869.1080539999803,
+        3869.434510000019,
+        3869.0483080000604
+      ],
+      "geometry": {
+        "coverage": 0.934674255579137,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.987294931408697,
+        "perimeter_error": 0.8606449461824762,
+        "boundary_min_coverage": 0.9274289829385284,
+        "boundary_max_gap_ratio": 0.04664277374284507,
+        "boundary_angle_error": 1.983948825668598
+      },
+      "selection_margin": 0.10826931413629781,
+      "execution_ready": true
+    },
+    {
+      "id": "G42",
+      "capture": "20261016_213503_271",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "AMBIGUOUS",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 2,
+      "representative_path": "results/card/run-2/20261016_213503_271",
+      "layout_found": true,
+      "method": "card-corners-best-effort",
+      "score": 0.8481970167410922,
+      "nodes": 1536,
+      "peak_rss_mib": 103.40625,
+      "original_sha256": "6a992c96afe6a0f8e88bf3317f9679827c5b86c09e1164afa2214938a8dcb532",
+      "output_sha256": "c4d973235cd0419d6cb5822a23164ef5eab0d3eecab9393abb32c4f9c701ba25",
+      "roi": [
+        86,
+        277,
+        549,
+        729
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.778071000018826,
+          "min": 19.77255300005254,
+          "max": 19.848180999929355
+        },
+        "detect": {
+          "median": 74.01952899999742,
+          "min": 73.47931799995422,
+          "max": 74.84864299999572
+        },
+        "solve": {
+          "median": 6438.523066000016,
+          "min": 6435.755202999985,
+          "max": 6475.190014999953
+        },
+        "post_preview": {
+          "median": 0.03542500007824856,
+          "min": 0.03133300003810291,
+          "max": 0.036537000028147304
+        },
+        "analysis": {
+          "median": 6513.40304200005,
+          "min": 6509.269946000018,
+          "max": 6549.246080999978
+        }
+      },
+      "trial_analysis_ms": [
+        6509.269946000018,
+        6513.40304200005,
+        6549.246080999978
+      ],
+      "geometry": {
+        "coverage": 0.9426740064851821,
+        "overlap": 4.5245456602066206e-05,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.9667857155665588,
+        "perimeter_error": 0.8670291047434449,
+        "boundary_min_coverage": 0.975795179793585,
+        "boundary_max_gap_ratio": 0.02325073108021492,
+        "boundary_angle_error": 1.8134898019579504
+      },
+      "selection_margin": 0.0075538076246057795,
+      "execution_ready": false
+    },
+    {
+      "id": "G43",
+      "capture": "20261016_213811_526",
+      "kind": "poker",
+      "mode": "CARD",
+      "status": "AMBIGUOUS",
+      "status_stable": true,
+      "image_stable": true,
+      "piece_count": 4,
+      "representative_run": 2,
+      "representative_path": "results/card/run-2/20261016_213811_526",
+      "layout_found": true,
+      "method": "card-corners-best-effort",
+      "score": 0.8408477623163944,
+      "nodes": 1536,
+      "peak_rss_mib": 103.40625,
+      "original_sha256": "642d5c5c83bb0ac8b518d724fcfb4b286efb9f9324ac644cfddf17a331618828",
+      "output_sha256": "275106fa0876b31a12a8f74eddeb4d11f6af7e6bd5cfc0e8dea151cea21c4145",
+      "roi": [
+        86,
+        277,
+        549,
+        729
+      ],
+      "timings_ms": {
+        "image_decode": {
+          "median": 19.87803300005453,
+          "min": 19.870755000056306,
+          "max": 19.905513000026076
+        },
+        "detect": {
+          "median": 75.80149599994002,
+          "min": 75.54300099991451,
+          "max": 75.8846060000451
+        },
+        "solve": {
+          "median": 6544.516325000018,
+          "min": 6498.998264999955,
+          "max": 6641.078200000038
+        },
+        "post_preview": {
+          "median": 0.033333000033053395,
+          "min": 0.031165999985205417,
+          "max": 0.0334439999960523
+        },
+        "analysis": {
+          "median": 6620.092769999928,
+          "min": 6574.916204000033,
+          "max": 6716.910861999963
+        }
+      },
+      "trial_analysis_ms": [
+        6574.916204000033,
+        6620.092769999928,
+        6716.910861999963
+      ],
+      "geometry": {
+        "coverage": 0.9472449643608408,
+        "overlap": 0.0,
+        "corners": 1.0,
+        "outer_piece_ratio": 1.0,
+        "internal_match": 0.9665039378090979,
+        "perimeter_error": 0.8814473586494538,
+        "boundary_min_coverage": 0.9364133945449282,
+        "boundary_max_gap_ratio": 0.04347134838565447,
+        "boundary_angle_error": 1.4258720618356322
+      },
+      "selection_margin": 0.023168370238818015,
+      "execution_ready": false
+    }
+  ],
+  "reference_checks": [
+    {
+      "capture": "20260731_222527_772",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260731_222527_772",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260731_222527_772",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260731_224744_511",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260731_224744_511",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260731_224744_511",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_013943_516",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_013943_516",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_013943_516",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_013955_116",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_013955_116",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_013955_116",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_014022_101",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_014022_101",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_014022_101",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_014027_873",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_014027_873",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_014027_873",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_014047_329",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_014047_329",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_014047_329",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_014107_758",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_014107_758",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_014107_758",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_014147_961",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_014147_961",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_014147_961",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_032606_145",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_032606_145",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_032606_145",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_045442_457",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_045442_457",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_045442_457",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_060309_056",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_060309_056",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_060309_056",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_062401_006",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_062401_006",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_062401_006",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_062529_588",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_062529_588",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_062529_588",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_065112_551",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_065112_551",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_065112_551",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_115637_683",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_115637_683",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_115637_683",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_115701_361",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_115701_361",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_115701_361",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_185703_491",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_185703_491",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_185703_491",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_192239_246",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_192239_246",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_192239_246",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_192916_754",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_192916_754",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_192916_754",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_215755_916",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_215755_916",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_215755_916",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_215940_303",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_215940_303",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_215940_303",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_224410_692",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_224410_692",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_224410_692",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_224437_055",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_224437_055",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_224437_055",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_225239_323",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_225239_323",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_225239_323",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_225517_181",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_225517_181",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_225517_181",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_225637_008",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_225637_008",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260801_225637_008",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260802_013324_510",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260802_013324_510",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260802_013324_510",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260802_014532_605",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260802_014532_605",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260802_014532_605",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260802_014544_004",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260802_014544_004",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260802_014544_004",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260802_014700_604",
+      "repeat": 1,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260802_014700_604",
+      "repeat": 2,
+      "status_equal": true,
+      "png_identical": true
+    },
+    {
+      "capture": "20260802_014700_604",
+      "repeat": 3,
+      "status_equal": true,
+      "png_identical": true
+    }
+  ],
+  "reference_identical": true,
+  "negative_control": {
+    "images": 10,
+    "auto_approved": 0,
+    "statuses": {
+      "WEAK_TEXTURE": 3,
+      "GEOMETRY_ONLY": 2,
+      "NO_LAYOUT": 5
+    }
+  },
+  "temperature_min_c": 39.15,
+  "temperature_max_c": 50.15,
+  "throttle_values": [
+    "throttled=0x0"
+  ],
+  "peak_process_rss_mib": 126.265625,
+  "all_statuses_stable": true,
+  "all_primary_images_stable": true
+}
