@@ -1,85 +1,75 @@
-# 26 电赛 E 题：拼图装置
+# 2026 电赛 E 题 · 拼图装置
 
-树莓派 5 上运行的拼图装置工程，包含视觉后端、Flutter 控制台、平台串口通信与坐标标定。
+本页为项目总览；当前代码与安装入口在 [`raspberry-pi5`](https://github.com/chaoxiaohan/26-E-Puzzle-Device/tree/raspberry-pi5) 分支，鲁班猫版本在 [`lubancat-1`](https://github.com/chaoxiaohan/26-E-Puzzle-Device/tree/lubancat-1)。
 
-## 功能
+绿色背景上的碎片识别、普通矩形重组与扑克图案拼接。当前扑克模式联合比较碎片身份、朝向和邻接，可处理四个相似矩形；求解期间暂停实时视觉计算。
 
-- 第一问模板学习与普通几何拼图；
-- 白底扑克牌碎片拼图；
-- USB 摄像头实时识别、ROI 与阈值调参；
-- 碎片抓取、旋转、放置动作规划；
-- 串口平台控制与六点仿射标定；
-- Flutter 横屏控制界面。
+**当前稳定分支 `raspberry-pi5` · 原生 ARM64 编译 · OpenCV / NumPy / C++ / Flutter**
 
-## 目录
+[完整算法说明](https://github.com/chaoxiaohan/26-E-Puzzle-Device/blob/raspberry-pi5/docs/VISION_ALGORITHM.md) · [实测数据与全部图像](https://github.com/chaoxiaohan/26-E-Puzzle-Device/blob/raspberry-pi5/docs/benchmarks/2026-10-18/README.md) · [部署与回滚](https://github.com/chaoxiaohan/26-E-Puzzle-Device/blob/raspberry-pi5/README-PI5.md) · [设计报告 PDF](https://github.com/chaoxiaohan/26-E-Puzzle-Device/blob/raspberry-pi5/docs/reports/pi5-design-20261018.pdf) · [可编辑 Word](https://github.com/chaoxiaohan/26-E-Puzzle-Device/blob/raspberry-pi5/docs/reports/pi5-design-20261018.docx)
 
-- `backend/`：OpenCV 视觉、拼图求解、动作规划、串口协议；
-- `flutter_ui/`：Flutter Linux 控制台；
-- `docs/`：串口通信协议；
-- `deploy_pi5.sh`：树莓派 5 一键部署与启动脚本。
+![四片相似矩形的扑克拼接](https://raw.githubusercontent.com/chaoxiaohan/26-E-Puzzle-Device/raspberry-pi5/docs/benchmarks/2026-10-18/pairs/G31.png)
 
-## 硬件与系统环境
+## 最新板端测试
 
-- Raspberry Pi 5，64 位 Raspberry Pi OS / Debian；
-- USB 摄像头，默认 `/dev/video0`，MJPG、1280×720；
-- 1024×600 或更高分辨率横屏；
-- 可选：CH340 USB 串口平台控制器；
-- Python 3、OpenCV、NumPy、pyserial；
-- ARM64 Flutter SDK。默认位置为 `/home/pi5/flutter`。
+2026-10-18，在真实 Raspberry Pi 5 上重跑 **43 张绿底实拍图**，每张三次，加 10 次扑克负样本，共 **139 次有效运行**。黑色工作背景与遮挡图排除；绿色背景上的深色无印刷碎片保留。
 
-## 一键部署
+| 分组 | 图片 | 求解中位数 | 总分析中位数 | 总分析单次最大 |
+|---|---:|---:|---:|---:|
+| 历史扑克 | 31 | 0.774 s | 0.850 s | 4.789 s |
+| 全部扑克 含新增两图 | 33 | 0.899 s | 0.973 s | 6.717 s |
+| 无印刷碎片 NORMAL | 10 | 0.144 s | 0.276 s | 1.143 s |
 
-在树莓派桌面终端执行：
+中位数先按每图三次计算，再对图片汇总。总分析包含重新检测、求解及主预览生成，不含相机曝光、多帧等待、文件读写、进程启动和机械动作。CARD 求解时间已包含函数内候选渲染，不能与纯搜索耗时等同。
+
+- **回归稳定**：31 张历史扑克 × 3 次，主预览 PNG 与上次参考逐像素一致，状态相同。
+- **自动准入**：33 张扑克中 18 张 `VERIFIED`、14 张 `AMBIGUOUS`、1 张 `GEOMETRY_ONLY`。这不是 33 张全部自动通过。
+- **普通模式问题**：10 张均为 `BEST` 保底布局，其中 5 张漏检至不足四片。不能把短耗时写成完整拼图成功率。
+- **负样本**：10 张无印刷图片按 CARD 测试，自动放行 0 张。
+- **资源**：最高温度 50.15°C，所有采样降频标记 `0x0`；测试进程峰值 RSS 126.3 MiB。
+
+完整原图、拼接图、三次耗时及异常均公开保留在[测试档案](https://github.com/chaoxiaohan/26-E-Puzzle-Device/blob/raspberry-pi5/docs/benchmarks/2026-10-18/README.md)。离线结果不代替机械抓取、放置精度和整机限时验证。
+
+## 算法怎样工作
+
+![视觉处理流程](https://raw.githubusercontent.com/chaoxiaohan/26-E-Puzzle-Device/raspberry-pi5/docs/benchmarks/2026-10-18/figures/pipeline.png)
+
+1. 自动估计绿色颜色簇，提取碎片轮廓、角点与朝向；在线通过多帧匹配与中值稳定轮廓。
+2. FIRST 匹配已学习的目标模板；NORMAL 搜索几何矩形；CARD 生成纸角、扇形、条带、矩形拓扑或邻接图候选。
+3. 用拼缝连续性、角标、主体图案及源图断口评价候选；始终保留每片的真实身份和方向。
+4. 结合几何约束、印刷置信度和竞争差值，输出首选、候选列表及自动执行状态。
+5. 由六点标定映射至平台坐标，通过串口协议连接下位机。当前报告不宣称完整机械闭环已通过。
+
+没有使用 OCR、神经网络或 NPU；具体缓存、剪枝、评分权重和准入条件见[算法说明](https://github.com/chaoxiaohan/26-E-Puzzle-Device/blob/raspberry-pi5/docs/VISION_ALGORITHM.md)。
+
+## 构建与运行
+
+在树莓派桌面终端执行，使用当前稳定分支：
 
 ```bash
-git clone https://github.com/chaoxiaohan/26-E-Puzzle-Device.git
+git clone --branch raspberry-pi5 https://github.com/chaoxiaohan/26-E-Puzzle-Device.git
 cd 26-E-Puzzle-Device
-chmod +x deploy_pi5.sh
-./deploy_pi5.sh
+bash deploy_pi5.sh --check
+bash deploy_pi5.sh --prepare-only
 ```
 
-脚本会安装系统依赖，部署后端至 `~/puzzle_card_detector`、部署 Flutter 前端至
-`~/puzzle_flutter_ui`，编译 C++ 求解器和 Flutter Linux 程序，并启动控制台。
-
-若 Flutter 不在默认位置：
+准备完成后按[部署文档](https://github.com/chaoxiaohan/26-E-Puzzle-Device/blob/raspberry-pi5/README-PI5.md)切换发布目录。既有设备保留参数、原程序备份及照片；不要用仓库默认 JSON 覆盖现场标定。日常启动：
 
 ```bash
-FLUTTER_BIN=/opt/flutter/bin/flutter ./deploy_pi5.sh
+bash "$HOME/puzzle_flutter_ui/start_ui.sh"
 ```
 
-首次部署前需要先准备 ARM64 Flutter SDK。项目已经验证过的默认路径是
-`/home/pi5/flutter/bin/flutter`。
+## 当前树莓派分支的目录与版本
 
-## 日常启动
+| 路径 | 内容 |
+|---|---|
+| `puzzle_card_detector/` | 检测、求解、图案、标定、串口及桥接 |
+| `puzzle_flutter_ui/` | Flutter 控制界面 |
+| `tools/` | 部署、回归与板端基准工具 |
+| `docs/VISION_ALGORITHM.md` | 当前完整视觉算法说明 |
+| `docs/benchmarks/2026-10-18/` | 43 张原图、输出、图集及数据 |
+| `docs/reports/` | Word 与 PDF 设计报告 |
 
-已部署后，直接执行：
+`lubancat-1` 保留鲁班猫平台版本，`raspberry-pi5-adapt-20261016` 保留树莓派适配开发记录；`main` 是项目导航和旧目录结构，不作为本次安装入口。升级前快照为 `backup/pi5-before-adapt-20261016`，本次文档工作前快照为 `backup/pi5-before-report-20261018`。
 
-```bash
-~/puzzle_flutter_ui/start_all.sh
-```
-
-前端会在视觉后端未运行时自动启动后端。只启动后端调试：
-
-```bash
-cd ~/puzzle_card_detector
-./start.sh
-```
-
-无显示器测试：
-
-```bash
-cd ~/puzzle_card_detector
-PUZZLE_HEADLESS=1 python3 main.py
-```
-
-## 运行时文件
-
-以下文件是现场设备相关配置，不建议覆盖或提交：
-
-- `vision_settings.json`：ROI、阈值和背景设置；
-- `serial_settings.json`：串口设备与波特率；
-- `roi_settings.json`、`templates.json`：标定与第一问模板；
-- `captures/`：拍照记录；
-- `librectangle_solver.so`、`flutter_ui/build/`：编译产物。
-
-`deploy_pi5.sh` 更新代码时会保留这些文件。
+本次没有修改板端运行算法、标定或 ROI。运行代码基线 `02505cf`，算法基线 `6de9e25`；原生构建、真实相机和只读串口记录见 [2026-10-16 板端验证](https://github.com/chaoxiaohan/26-E-Puzzle-Device/blob/raspberry-pi5/docs/pi5-board-validation-20261016.json)。
